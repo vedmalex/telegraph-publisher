@@ -305,4 +305,21 @@ export class TelegraphPublisher {
   private stripHtmlTags(text: string): string {
     return text.replace(/<[^>]*>/g, '').trim();
   }
+
+  /**
+   * Checks if the given array of Telegraph nodes exceeds the Telegra.ph content size limit (64 KB).
+   * @param nodes The array of TelegraphNode objects.
+   * @throws Error if the content size exceeds 64 KB.
+   */
+  checkContentSize(nodes: TelegraphNode[]): void {
+    const contentJson = JSON.stringify(nodes);
+    const byteSize = new TextEncoder().encode(contentJson).length;
+    const maxBytes = 64 * 1024; // 64 KB
+
+    if (byteSize > maxBytes) {
+      throw new Error(
+        `Content size (${(byteSize / 1024).toFixed(2)} KB) exceeds the Telegra.ph limit of ${(maxBytes / 1024).toFixed(0)} KB. Please reduce the content size.`
+      );
+    }
+  }
 }

@@ -78,6 +78,18 @@ program.command('publish')
 
       const author = options.author || "Anonymous";
 
+      const publisher = new TelegraphPublisher(); // Create publisher instance once
+
+      // Perform content size check before dry run or actual publishing
+      try {
+        console.log("📏 Checking content size...");
+        publisher.checkContentSize(telegraphNodes); // Validate content size
+        console.log("✅ Content size is within limits.");
+      } catch (sizeError: any) {
+        console.error("❌ Content size validation failed:", sizeError.message);
+        process.exit(1);
+      }
+
       if (options.dryRun) {
         console.log("🚀 Dry Run Mode: Article will not be published.");
         console.log(`Proposed Title: ${articleTitle}`);
@@ -88,7 +100,6 @@ program.command('publish')
       }
 
       console.log("🔧 Creating Telegraph account...");
-      const publisher = new TelegraphPublisher();
       const account = await publisher.createAccount(author, author, options.authorUrl);
 
       console.log(`✅ Account created: ${account.short_name}`);
