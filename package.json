@@ -4,7 +4,7 @@
   "type": "module",
   "private": false,
   "bin": {
-    "telegraph-publisher": "./dist/cli.js"
+    "telegraph-publisher": "dist/cli.js"
   },
   "scripts": {
     "prepublish": "bun run build",
@@ -22,5 +22,6 @@
   "dependencies": {
     "commander": "^14.0.0",
     "mrkdwny": "^0.8.0"
-  }
+  },
+  "version": "1.0.0"
 }

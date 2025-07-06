@@ -2,39 +2,51 @@ import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 
 /**
- * Removes specific formatting from a Markdown file:
+ * Removes specific Markdown formatting from a given string content.
  * - Markdown styling (bold, italic, strikethrough, links, images, headings, lists, blockquotes, code blocks)
  * - Replaces multiple newlines with a single newline.
  * - Removes leading/trailing whitespace from each line.
- * Overwrites the original file.
+ * @param content The Markdown content as a string.
+ * @returns The cleaned content string.
+ */
+export function cleanMarkdownString(content: string): string {
+    // Remove Markdown styling (bold, italic, strikethrough, links, images, headings, lists, blockquotes, code blocks)
+    let cleanedContent = content.replace(/\*\*(.*?)\*\*/g, '$1'); // Bold
+    cleanedContent = cleanedContent.replace(/__(.*?)__/g, '$1'); // Bold
+    cleanedContent = cleanedContent.replace(/\*(.*?)\*/g, '$1');  // Italic
+    cleanedContent = cleanedContent.replace(/_(.*?)_/g, '$1');  // Italic
+    cleanedContent = cleanedContent.replace(/~~(.*?)~~/g, '$1'); // Strikethrough
+    cleanedContent = cleanedContent.replace(/\[(.*?)\]\(.*?\)/g, '$1'); // Links
+    cleanedContent = cleanedContent.replace(/!\[(.*?)\]\(.*?\)/g, '$1'); // Images
+    cleanedContent = cleanedContent.replace(/^#+\s/gm, ''); // Headings
+    cleanedContent = cleanedContent.replace(/^[*-]\s/gm, ''); // Lists
+    cleanedContent = cleanedContent.replace(/^>\s/gm, ''); // Blockquotes
+    cleanedContent = cleanedContent.replace(/```[\s\S]*?```/g, ''); // Code blocks
+    cleanedContent = cleanedContent.replace(/`/g, ''); // Inline code
+    cleanedContent = cleanedContent.replace(/^-{3,}\s*$/gm, ''); // Horizontal rules (---, ***, ___)
+    cleanedContent = cleanedContent.replace(/^\d+\.\s/gm, ''); // Ordered lists (1. Item)
+
+    // Replace multiple newlines with a single newline
+    cleanedContent = cleanedContent.replace(/\n{2,}/g, '\n');
+
+    // Remove leading/trailing whitespace from each line
+    cleanedContent = cleanedContent.split('\n').map(line => line.trim()).join('\n');
+
+    return cleanedContent;
+}
+
+/**
+ * Reads a Markdown file, cleans its content, and overwrites the original file.
  * @param filePath The path to the Markdown file.
  */
 export function cleanMarkdownFile(filePath: string) {
     try {
         const fullPath = resolve(process.cwd(), filePath);
-        let content = readFileSync(fullPath, 'utf8');
+        const content = readFileSync(fullPath, 'utf8');
 
-        // Remove Markdown styling (bold, italic, strikethrough, links, images, headings, lists, blockquotes, code blocks)
-        content = content.replace(/\*\*(.*?)\*\*/g, '$1'); // Bold
-        content = content.replace(/__(.*?)__/g, '$1'); // Bold
-        content = content.replace(/\*(.*?)\*/g, '$1');  // Italic
-        content = content.replace(/_(.*?)_/g, '$1');  // Italic
-        content = content.replace(/~~(.*?)~~/g, '$1'); // Strikethrough
-        content = content.replace(/\[(.*?)\]\(.*?\)/g, '$1'); // Links
-        content = content.replace(/!\[(.*?)\]\(.*?\)/g, '$1'); // Images
-        content = content.replace(/^#+\s/gm, ''); // Headings
-        content = content.replace(/^[*-]\s/gm, ''); // Lists
-        content = content.replace(/^>\s/gm, ''); // Blockquotes
-        content = content.replace(/```[\s\S]*?```/g, ''); // Code blocks
-        content = content.replace(/`/g, ''); // Inline code
+        const cleanedContent = cleanMarkdownString(content);
 
-        // Replace multiple newlines with a single newline
-        content = content.replace(/\n{2,}/g, '\n');
-
-        // Remove leading/trailing whitespace from each line
-        content = content.split('\n').map(line => line.trim()).join('\n');
-
-        writeFileSync(fullPath, content, 'utf8');
+        writeFileSync(fullPath, cleanedContent, 'utf8');
         console.log(`Successfully cleaned: ${filePath}`);
     } catch (error: any) {
         if (error.code === 'ENOENT') {

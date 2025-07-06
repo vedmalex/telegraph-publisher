@@ -4,7 +4,8 @@ import { Command } from 'commander';
 import { TelegraphPublisher } from "./telegraphPublisher";
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
-import { cleanMarkdownFile } from "./clean_mr";
+import { cleanMarkdownString, cleanMarkdownFile } from "./clean_mr";
+import { convertMarkdownToHtml, validateContentStructure } from "./markdownConverter";
 
 const program = new Command();
 
@@ -19,6 +20,7 @@ program.command('publish')
   .option('-t, --title <title>', 'Title of the article (defaults to filename)')
   .option('-a, --author <name>', "Author's name")
   .option('-u, --author-url <url>', "Author's URL")
+  .option('--dry-run', 'Process the file but do not publish to Telegra.ph, showing the resulting HTML')
   .action(async (options) => {
     if (!options.file) {
       console.error("❌ Error: File path must be specified using --file");
@@ -34,10 +36,31 @@ program.command('publish')
 
     try {
       console.log("📝 Reading file...");
-      const markdownContent = readFileSync(filePath, "utf-8");
+      let markdownContent = readFileSync(filePath, "utf-8");
+
+      console.log("🔎 Validating content structure...");
+      if (!validateContentStructure(markdownContent)) {
+        console.error("❌ Error: Content structure validation failed. Please check the file format.");
+        process.exit(1);
+      }
+      console.log("✅ Content structure validated.");
+
+      console.log("🧹 Cleaning Markdown content...");
+      const cleanedMarkdownContent = cleanMarkdownString(markdownContent);
 
       const title = options.title || filePath.split('/').pop()?.replace(/\.md$/, '') || "Untitled";
       const author = options.author || "Anonymous";
+
+      if (options.dryRun) {
+        console.log("🚀 Dry Run Mode: Article will not be published.");
+        const htmlContent = convertMarkdownToHtml(cleanedMarkdownContent);
+        console.log("\n--- Cleaned Markdown (Dry Run) ---\n");
+        console.log(cleanedMarkdownContent);
+        console.log("\n--- Converted HTML (Dry Run) ---\n");
+        console.log(htmlContent);
+        console.log("\n------------------------------------------\n");
+        return;
+      }
 
       console.log("🔧 Creating Telegraph account...");
       const publisher = new TelegraphPublisher();
@@ -47,7 +70,7 @@ program.command('publish')
       console.log(`🔗 Access Token: ${account.access_token}`);
 
       console.log("📤 Publishing article...");
-      const page = await publisher.publishMarkdown(title, markdownContent);
+      const page = await publisher.publishMarkdown(title, cleanedMarkdownContent);
 
       console.log("🎉 Article successfully published!");
       console.log(`📄 Title: ${page.title}`);
