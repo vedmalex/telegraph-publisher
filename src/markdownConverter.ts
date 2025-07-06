@@ -1,6 +1,139 @@
 import type { TelegraphNode } from "./telegraphPublisher"; // Import TelegraphNode interface
 
 /**
+ * Escapes special characters in a string to be used safely in a regular expression.
+ * @param text The string to escape.
+ * @returns The escaped string.
+ */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Validates cleaned content to ensure it does not contain unsupported syntax, like raw HTML tags.
+ * @param content The content string (expected to be Markdown, potentially with HTML, which we want to disallow).
+ * @throws Error if unsupported syntax (HTML tags) is found.
+ */
+export function validateCleanedContent(content: string): void {
+  // This regex specifically looks for HTML-like tags, not Markdown syntax.
+  // It should detect things like <p>, <div>, <span>, etc.
+  const htmlTagRegex = /<\/?\w+\b[^>]*>/;
+  if (htmlTagRegex.test(content)) {
+    throw new Error("Content contains unsupported HTML tags. Only Markdown formatting is allowed.");
+  }
+}
+
+/**
+ * Extracts the first heading from Markdown content and returns it as a title,
+ * along with the remaining content.
+ * @param markdown The raw Markdown content.
+ * @returns An object containing the extracted title (or null) and the modified content.
+ */
+export function extractTitleAndContent(markdown: string): { title: string | null; content: string } {
+  const lines = markdown.split(/\r?\n/);
+  let title: string | null = null;
+  let contentStartIndex = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]?.trim() || '';
+    if (line === '') {
+      contentStartIndex++;
+      continue; // Skip empty lines at the beginning
+    }
+
+    const headingMatch = line.match(/^(#+)\s*(.*)/);
+    // Check if the first non-empty line is a heading or bold/italic text that looks like a title
+    const boldItalicMatch = line.match(/^(?:\*{2}|__)(.*?)(?:\*{2}|__)$|^\*(.*?)\*$|^_(.*?)_$/);
+
+    if (headingMatch && headingMatch.length > 2 && headingMatch[2] !== undefined) {
+      const headingText = headingMatch[2];
+      title = headingText.trim();
+      contentStartIndex = i + 1;
+      break;
+    } else if (boldItalicMatch) {
+        // If it's a bold/italic line, consider it a title if no heading was found yet
+        title = (boldItalicMatch[1] || boldItalicMatch[2] || boldItalicMatch[3] || '').trim();
+        contentStartIndex = i + 1;
+        break;
+    }
+    // If the first non-empty line is not a recognized title format, treat entire content as is
+    break;
+  }
+
+  const remainingContent = lines.slice(contentStartIndex).join('\n');
+
+  return { title, content: remainingContent };
+}
+
+/**
+ * Parses a Markdown table and converts it to a nested list structure.
+ * @param tableLines Array of lines that form the table
+ * @returns TelegraphNode representing the nested list structure
+ */
+function parseTable(tableLines: string[]): TelegraphNode {
+  if (tableLines.length < 3) {
+    // Not a valid table, return as paragraphs
+    return { tag: 'p', children: [tableLines.join('\n')] };
+  }
+
+  // Parse header row
+  const headerLine = tableLines[0];
+  if (!headerLine) {
+    return { tag: 'p', children: [tableLines.join('\n')] };
+  }
+  // Split by | but keep empty cells, then remove first and last empty cells
+  const allHeaders = headerLine.split('|').map(cell => cell.trim());
+  const headers = allHeaders.slice(1, -1).filter(cell => cell !== '');
+
+  // Skip separator line (tableLines[1])
+
+  // Parse data rows
+  const dataRows = tableLines.slice(2);
+  const listItems: TelegraphNode[] = [];
+
+    dataRows.forEach((row, index) => {
+    // Split by | but keep empty cells (don't filter them out)
+    const allCells = row.split('|').map(cell => cell.trim());
+    // Remove first and last empty cells (they're from leading/trailing |)
+    const cells = allCells.slice(1, -1);
+
+    if (cells.length === 0) return; // Skip empty rows
+
+    // Create nested list for this row
+    const nestedItems: TelegraphNode[] = [];
+
+    // Use the number of headers as the reference
+    const numColumns = headers.length;
+
+    for (let i = 0; i < numColumns; i++) {
+      const header = headers[i] || `Колонка ${i + 1}`;
+      const value = cells[i] || '';
+      nestedItems.push({
+        tag: 'li',
+        children: [`${header}: ${value}`]
+      });
+    }
+
+    // Create the main list item with number and nested list
+    listItems.push({
+      tag: 'li',
+      children: [
+        `${index + 1}`,
+        {
+          tag: 'ul',
+          children: nestedItems
+        }
+      ]
+    });
+  });
+
+  return {
+    tag: 'ol',
+    children: listItems
+  };
+}
+
+/**
  * Converts Markdown content directly into an array of TelegraphNode objects.
  * This function replaces the need for an intermediate HTML conversion step and 'mrkdwny' library.
  * It directly parses Markdown elements into the structure expected by the Telegra.ph API.
@@ -12,65 +145,135 @@ export function convertMarkdownToTelegraphNodes(markdown: string): TelegraphNode
   const lines = markdown.split(/\r?\n/);
 
   let inCodeBlock = false;
+  let codeBlockContent: string[] = [];
+
   let inList = false;
   let currentListTag: 'ul' | 'ol' | '' = '';
   let currentListItems: TelegraphNode[] = [];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] || ''; // Ensure line is always a string
+  let inBlockquote = false;
+  let blockquoteContent: string[] = [];
 
-    // Handle code blocks
+  let inTable = false;
+  let tableLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i] || '';
+
+    // Handle code blocks first (they have highest priority)
     if (line.startsWith('```')) {
-      inCodeBlock = !inCodeBlock;
-      if (!inCodeBlock) { // End of code block
-        const codeContent = currentListItems.map(node => {
-          if (node.children && node.children[0]) {
-            return String(node.children[0]);
-          }
-          return '';
-        }).join('\n');
-        nodes.push({ tag: "code", children: [codeContent] });
-        currentListItems = []; // Clear for next use
+      if (inCodeBlock) { // End of code block
+        // Close any open blocks first
+        if (inTable) {
+          nodes.push(parseTable(tableLines));
+          inTable = false;
+          tableLines = [];
+        }
+        if (inList) {
+          nodes.push({ tag: currentListTag, children: currentListItems });
+          inList = false;
+          currentListItems = [];
+        }
+        if (inBlockquote) {
+          nodes.push({ tag: "blockquote", children: processInlineMarkdown(blockquoteContent.join('\n')) });
+          inBlockquote = false;
+          blockquoteContent = [];
+        }
+
+        nodes.push({ tag: "pre", children: [{ tag: "code", children: [codeBlockContent.join('\n').trimEnd()] }] });
+        codeBlockContent = [];
+        inCodeBlock = false;
+      } else { // Start of code block
+        // Close any open blocks first
+        if (inTable) {
+          nodes.push(parseTable(tableLines));
+          inTable = false;
+          tableLines = [];
+        }
+        if (inList) {
+          nodes.push({ tag: currentListTag, children: currentListItems });
+          inList = false;
+          currentListItems = [];
+        }
+        if (inBlockquote) {
+          nodes.push({ tag: "blockquote", children: processInlineMarkdown(blockquoteContent.join('\n')) });
+          inBlockquote = false;
+          blockquoteContent = [];
+        }
+
+        inCodeBlock = true;
       }
       continue;
     }
 
     if (inCodeBlock) {
-      currentListItems.push({ tag: "text", children: [line] });
+      codeBlockContent.push(line);
       continue;
     }
 
-    // Handle headings
-    const headingMatch = line.match(/^(#+)\s*(.*)/);
-    if (headingMatch && headingMatch[1] && headingMatch[2] !== undefined) {
-      if (inList) { // If was in a list, close it first
-        nodes.push({ tag: currentListTag, children: currentListItems });
-        inList = false;
-        currentListItems = [];
+    // Handle table detection and parsing
+    const isTableLine = line.includes('|') && line.trim() !== '';
+    const isTableSeparator = /^\s*\|?[\s\-\|:]+\|?\s*$/.test(line);
+
+    if (isTableLine || isTableSeparator) {
+      if (!inTable) {
+        // Close any open blocks first
+        if (inList) {
+          nodes.push({ tag: currentListTag, children: currentListItems });
+          inList = false;
+          currentListItems = [];
+        }
+        if (inBlockquote) {
+          nodes.push({ tag: "blockquote", children: processInlineMarkdown(blockquoteContent.join('\n')) });
+          inBlockquote = false;
+          blockquoteContent = [];
+        }
+
+        inTable = true;
+        tableLines = [];
       }
-      const level = headingMatch[1].length;
-      const text = headingMatch[2] || ''; // Use nullish coalescing
-      nodes.push({ tag: `h${level}`, children: processInlineMarkdown(text) });
+      tableLines.push(line);
       continue;
+    } else if (inTable) {
+      // End of table
+      nodes.push(parseTable(tableLines));
+      inTable = false;
+      tableLines = [];
+      // Continue processing current line
     }
 
     // Handle blockquotes
-    const blockquoteMatch = line.match(/^>\s*(.*)/);
-    if (blockquoteMatch && blockquoteMatch[1] !== undefined) {
-      if (inList) { // If was in a list, close it first
-        nodes.push({ tag: currentListTag, children: currentListItems });
-        inList = false;
-        currentListItems = [];
+    if (line.startsWith('>')) {
+      if (!inBlockquote) {
+        // If previously in a list, close it first
+        if (inList) {
+          nodes.push({ tag: currentListTag, children: currentListItems });
+          inList = false;
+          currentListItems = [];
+        }
+        inBlockquote = true;
+        blockquoteContent = [];
       }
-      const text = blockquoteMatch[1] || ''; // Use nullish coalescing
-      nodes.push({ tag: "blockquote", children: processInlineMarkdown(text) });
+      blockquoteContent.push(line.substring(1).trimStart()); // Remove '>' and leading space
       continue;
+    } else if (inBlockquote) {
+      // If not a blockquote line, but was in blockquote, close it
+      nodes.push({ tag: "blockquote", children: processInlineMarkdown(blockquoteContent.join('\n')) });
+      inBlockquote = false;
+      blockquoteContent = [];
+      // Process current line as a new element
     }
 
     // Handle lists
     const listItemMatch = line.match(/^(-|\*)\s+(.*)|(\d+)\.\s+(.*)/);
     if (listItemMatch) {
       if (!inList) {
+        // If previously in a blockquote, close it first
+        if (inBlockquote) {
+          nodes.push({ tag: "blockquote", children: processInlineMarkdown(blockquoteContent.join('\n')) });
+          inBlockquote = false;
+          blockquoteContent = [];
+        }
         inList = true;
         currentListTag = listItemMatch[1] ? 'ul' : 'ol';
         currentListItems = [];
@@ -85,29 +288,53 @@ export function convertMarkdownToTelegraphNodes(markdown: string): TelegraphNode
         currentListItems.push({ tag: "li", children: processInlineMarkdown(textContent.trim()) });
       }
       continue;
-    } else if (inList) { // Continue list if the next line is indented or empty (for multiline list items)
-      const nextLine = lines[i + 1]; // Can be string or undefined
-      // Check if next line is indented or empty, for now, just consider empty lines close the list
-      if (line.trim() === '' && i + 1 < lines.length && (nextLine || '').trim() !== '') {
-        // Treat as a new paragraph within the list item or new list item if indented
-        currentListItems.push({ tag: "p", children: processInlineMarkdown(line.trim()) }); // This might need refinement
-        continue;
-      } else if (line.trim() !== '') { // If it's not a list item, assume it's a new paragraph closing the list
+    } else if (inList) {
+      // If not a list item, but was in a list, close it
+      if (line.trim() === '') { // Empty line closes a list
         nodes.push({ tag: currentListTag, children: currentListItems });
         inList = false;
         currentListItems = [];
-        // Process the current line as a paragraph
-        nodes.push({ tag: "p", children: processInlineMarkdown(line.trim()) });
-        continue;
+        continue; // Don't add empty paragraph for the empty line
+      } else { // New content, close list and process as new paragraph
+        nodes.push({ tag: currentListTag, children: currentListItems });
+        inList = false;
+        currentListItems = [];
+        // Process current line as a new element (paragraph)
       }
+    }
+
+    // Handle headings
+    const headingMatch = line.match(/^(#+)\s*(.*)/);
+    if (headingMatch && headingMatch[1] && headingMatch[2] !== undefined) {
+      // Close any open blocks before adding a heading
+      if (inList) {
+        nodes.push({ tag: currentListTag, children: currentListItems });
+        inList = false;
+        currentListItems = [];
+      }
+      if (inBlockquote) {
+        nodes.push({ tag: "blockquote", children: processInlineMarkdown(blockquoteContent.join('\n')) });
+        inBlockquote = false;
+        blockquoteContent = [];
+      }
+      const level = Math.min(6, headingMatch[1].length); // Map # to h1, ## to h2, etc.
+      const text = headingMatch[2] || '';
+      nodes.push({ tag: `h${level}`, children: processInlineMarkdown(text) });
+      continue;
     }
 
     // Handle horizontal rules (simple check for now)
     if (line.match(/^[*-]{3,}\s*$/)) {
-      if (inList) { // Close list before hr
+      // Close any open blocks before adding HR
+      if (inList) {
         nodes.push({ tag: currentListTag, children: currentListItems });
         inList = false;
         currentListItems = [];
+      }
+      if (inBlockquote) {
+        nodes.push({ tag: "blockquote", children: processInlineMarkdown(blockquoteContent.join('\n')) });
+        inBlockquote = false;
+        blockquoteContent = [];
       }
       nodes.push({ tag: "hr" });
       continue;
@@ -115,175 +342,149 @@ export function convertMarkdownToTelegraphNodes(markdown: string): TelegraphNode
 
     // Handle empty lines or plain paragraphs
     if (line.trim() === '') {
-      if (inList) {
-        const nextLine = lines[i + 1]; // Can be string or undefined
-        // Empty line within a list might mean multi-paragraph list item or end of list
-        // For now, close the list if followed by non-list content
-        if (i + 1 < lines.length && !(nextLine || '').match(/^(-|\*)\s+(.*)|(\d+)\.\s+(.*)/) && (nextLine || '').trim() !== '') {
-          nodes.push({ tag: currentListTag, children: currentListItems });
-          inList = false;
-          currentListItems = [];
-        } else if (i + 1 < lines.length && (nextLine || '').trim() === '') {
-            // Multiple empty lines, keep the list open but don't add to content
-            continue;
-        } else {
-          // Empty line, could be part of a multi-line list item, just continue
-          continue; // Don't add empty node
-        }
-      } else {
-        // Plain empty line, represent as a paragraph with empty content if it's not a sequence of multiple empty lines
-        const lastNode = nodes[nodes.length - 1];
-        if (nodes.length > 0 && typeof lastNode === 'object' && lastNode.tag === 'p' && lastNode.children && lastNode.children.length === 1 && lastNode.children[0] === '') {
-            // If the last node was an empty paragraph, skip adding another one
-            continue;
-        }
+      // Do not add empty paragraphs if previous node was also an empty paragraph
+      const lastNode = nodes[nodes.length - 1];
+      if (nodes.length > 0 && typeof lastNode === 'object' && lastNode.tag === 'p' && (!lastNode.children || lastNode.children.length === 0 || (lastNode.children.length === 1 && lastNode.children[0] === ''))) {
+          continue; // Skip adding redundant empty paragraph
+      }
+      if (!inList && !inBlockquote && !inCodeBlock && !inTable) { // Only add empty paragraph if not inside a block
         nodes.push({ tag: "p", children: [""] });
       }
       continue;
     }
 
-    // Default: treat as a paragraph
-    if (inList) { // If in a list, treat as part of the current list item
-        // This case needs more sophisticated logic for multi-line list items
-        // For simplicity, for now, assume single line list items or new paragraphs
-        nodes.push({ tag: currentListTag, children: currentListItems });
-        inList = false;
-        currentListItems = [];
-        nodes.push({ tag: "p", children: processInlineMarkdown(line.trim()) });
-    } else {
-        nodes.push({ tag: "p", children: processInlineMarkdown(line.trim()) });
+    // If we reach here, it's a plain paragraph line
+    // Close any open blocks (lists, blockquotes) if this line is not part of them
+    if (inList) {
+      nodes.push({ tag: currentListTag, children: currentListItems });
+      inList = false;
+      currentListItems = [];
     }
+    if (inBlockquote) {
+      nodes.push({ tag: "blockquote", children: processInlineMarkdown(blockquoteContent.join('\n')) });
+      inBlockquote = false;
+      blockquoteContent = [];
+    }
+
+    nodes.push({ tag: "p", children: processInlineMarkdown(line) });
   }
 
-  // Close any open lists at the end of the file
+  // After loop, close any open blocks
+  if (inCodeBlock) {
+    nodes.push({ tag: "pre", children: [{ tag: "code", children: [codeBlockContent.join('\n').trimEnd()] }] }); // Trim end for final code block
+  }
   if (inList) {
     nodes.push({ tag: currentListTag, children: currentListItems });
   }
+  if (inBlockquote) {
+    nodes.push({ tag: "blockquote", children: processInlineMarkdown(blockquoteContent.join('\n')) });
+  }
+  if (inTable) {
+    nodes.push(parseTable(tableLines));
+  }
 
-  return nodes.filter(node => {
-    if (typeof node === 'object' && node.tag === 'p' && node.children && node.children.length === 1 && node.children[0] === '') {
-        return false; // Filter out empty paragraphs unless they are intentional breaks
-    }
-    return true;
-  });
+  // Filter out any empty paragraph nodes that might have been created unnecessarily
+  return nodes.filter(node =>
+    !(node.tag === 'p' && (!node.children || node.children.length === 0 || (node.children.length === 1 && node.children[0] === '')))
+  );
 }
 
-/**
- * Processes inline Markdown elements (bold, italic, links, code) within a given string.
- * @param text The text containing inline Markdown.
- * @returns An array of strings or TelegraphNode objects.
- */
 function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
   const result: (string | TelegraphNode)[] = [];
-  // Using a more robust regex to capture various inline elements and plain text
-  const inlineRegex = /(\*\*(.+?)\*\*)|(__(.+?)__)|(\*(.+?)\*)|(_(.+?)_)|(?:\[([^\]]+?)\]\((.+?)\))|(`([^`]+?)`)|([^*_`\[\]<>]+)/g;
+  let currentIndex = 0;
 
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
+  // Define patterns for different inline elements
+  const patterns = [
+    { regex: /\*\*(.*?)\*\*/g, tag: 'strong' },
+    { regex: /__(.*?)__/g, tag: 'strong' },
+    { regex: /\*(.*?)\*/g, tag: 'em' },
+    { regex: /_(.*?)_/g, tag: 'em' },
+    { regex: /`(.*?)`/g, tag: 'code' },
+    { regex: /\[(.*?)\]\((.*?)\)/g, tag: 'a', isLink: true }
+  ];
 
-  while ((match = inlineRegex.exec(text)) !== null) {
-    // Add any plain text before the current match
-    if (match.index > lastIndex) {
-      result.push(text.substring(lastIndex, match.index));
-    }
+  // Find all matches with their positions
+  const matches: Array<{
+    index: number;
+    length: number;
+    tag: string;
+    content: string;
+    href?: string;
+  }> = [];
 
-    // Determine which group matched and process accordingly
-    if (match[1] && match[2]) { // **bold**
-      result.push({ tag: "strong", children: processInlineMarkdown(match[2]) });
-    } else if (match[3] && match[4]) { // __bold__
-      result.push({ tag: "strong", children: processInlineMarkdown(match[4]) });
-    } else if (match[5] && match[6]) { // *italic*
-      result.push({ tag: "em", children: processInlineMarkdown(match[6]) });
-    } else if (match[7] && match[8]) { // _italic_
-      result.push({ tag: "em", children: processInlineMarkdown(match[8]) });
-    } else if (match[9] && match[10]) { // [link text](url)
-      const linkText = match[9];
-      const url = match[10];
-      result.push({ tag: "a", attrs: { href: url }, children: processInlineMarkdown(linkText) });
-    } else if (match[11] && match[12]) { // `code`
-      result.push({ tag: "code", children: [match[12]] });
-    } else if (match[13]) { // Plain text (must be the last alternative)
-      result.push(match[13]);
-    }
-
-    lastIndex = inlineRegex.lastIndex;
-  }
-
-  // Add any remaining plain text after the last match
-  if (lastIndex < text.length) {
-    result.push(text.substring(lastIndex));
-  }
-
-  return result.filter(item => typeof item === 'string' ? item.trim() !== '' : true);
-}
-
-/**
- * Validates the structure of the Markdown content for shloka1.1.1.md.
- * Checks for specific headings and patterns.
- * @param markdownContent The Markdown content as a string.
- * @returns True if the content structure is valid, false otherwise.
- */
-export function validateContentStructure(markdownContent: string): boolean {
-  console.log("🔎 Starting content structure validation for шлока1.1.1.md...");
-
-  let isValid = true;
-
-  // Check for the main heading
-  if (!markdownContent.includes('### **Связный пословный перевод Шримад-Бхагаватам 1.1.1**')) {
-    console.error("❌ Validation Error: Missing main heading '### **Связный пословный перевод Шримад-Бхагаватам 1.1.1**'");
-    isValid = false;
-  }
-
-  // Check for 'Полный текст:' section
-  if (!markdownContent.includes('**Полный текст:**')) {
-    console.error("❌ Validation Error: Missing section '**Полный текст:**'");
-    isValid = false;
-  }
-
-  // Check for 'Разбор и связный перевод:' section
-  if (!markdownContent.includes('**Разбор и связный перевод:**')) {
-    console.error("❌ Validation Error: Missing section '**Разбор и связный перевод:**'");
-    isValid = false;
-  }
-
-  // Check for 'Часть N: ...' headings and corresponding blockquotes/Svyazno patterns
-  const partHeadings = markdownContent.match(/\*\*Часть (\d+):\s(.*?)\*\*/g);
-  if (!partHeadings || partHeadings.length < 5) { // Assuming there are at least 5 parts based on the file
-    console.error("❌ Validation Error: Insufficient 'Часть N: ...' headings found.");
-    isValid = false;
-  }
-
-  partHeadings?.forEach(heading => {
-    const partNumberMatch = heading.match(/Часть (\d+):/);
-    if (partNumberMatch) {
-      const partNumber = partNumberMatch[1];
-      // Check for corresponding blockquote pattern for each part
-      const blockquoteRegex = new RegExp(`>\\s*\\*\\*.*?\\*\\*`, 'm');
-      if (!markdownContent.includes(heading) || !blockquoteRegex.test(markdownContent.substring(markdownContent.indexOf(heading)))) {
-        console.error(`❌ Validation Error: Missing or malformed blockquote for '${heading}'.`);
-        isValid = false;
-      }
-
-      // Check for corresponding 'Связно:' pattern for each part
-      const svyaznoRegex = new RegExp(`\\*\\*Связно:\\*\\*\\s*«.*?»`, 'm');
-      if (!markdownContent.includes(heading) || !svyaznoRegex.test(markdownContent.substring(markdownContent.indexOf(heading)))) {
-        console.error(`❌ Validation Error: Missing or malformed 'Связно:' for '${heading}'.`);
-        isValid = false;
+  for (const pattern of patterns) {
+    pattern.regex.lastIndex = 0; // Reset regex
+    let match;
+    while ((match = pattern.regex.exec(text)) !== null) {
+      if (match.index !== undefined) {
+        if (pattern.isLink) {
+          // For links, we have both text and href
+          matches.push({
+            index: match.index,
+            length: match[0].length,
+            tag: pattern.tag,
+            content: match[1] || '',
+            href: match[2] || ''
+          });
+        } else {
+          matches.push({
+            index: match.index,
+            length: match[0].length,
+            tag: pattern.tag,
+            content: match[1] || ''
+          });
+        }
       }
     }
-  });
-
-  // Check for 'Итоговый связный перевод в едином тексте:' section
-  if (!markdownContent.includes('### **Итоговый связный перевод в едином тексте:**')) {
-    console.error("❌ Validation Error: Missing final section '### **Итоговый связный перевод в едином тексте:**'");
-    isValid = false;
   }
 
-  if (isValid) {
-    console.log("✅ Content structure validated successfully.");
-  } else {
-    console.log("⚠️  Content structure validation failed. Please review the errors above.");
+  // Sort matches by index to process them in order
+  matches.sort((a, b) => a.index - b.index);
+
+  // Process matches and build result
+  for (const match of matches) {
+    // Add plain text before this match
+    if (match.index > currentIndex) {
+      const plainText = text.substring(currentIndex, match.index);
+      if (plainText) {
+        result.push(plainText);
+      }
+    }
+
+    // Skip if this match overlaps with previous processed content
+    if (match.index < currentIndex) {
+      continue;
+    }
+
+    // Add the formatted element
+    if (match.tag === 'a' && match.href !== undefined) {
+      result.push({
+        tag: 'a',
+        attrs: { href: match.href },
+        children: [match.content]
+      });
+    } else {
+      result.push({
+        tag: match.tag,
+        children: [match.content]
+      });
+    }
+
+    currentIndex = match.index + match.length;
   }
 
-  return isValid;
+  // Add any remaining plain text
+  if (currentIndex < text.length) {
+    const remainingText = text.substring(currentIndex);
+    if (remainingText) {
+      result.push(remainingText);
+    }
+  }
+
+  // If no matches found, return the original text
+  if (result.length === 0) {
+    return [text];
+  }
+
+  return result;
 }

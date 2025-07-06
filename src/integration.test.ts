@@ -1,39 +1,172 @@
-import { test, expect } from "bun:test";
+import { test, expect, describe } from 'bun:test';
 import { readFileSync } from "fs";
-import { validateContentStructure, convertMarkdownToTelegraphNodes } from "./markdownConverter";
+import { extractTitleAndContent, convertMarkdownToTelegraphNodes, validateCleanedContent } from "./markdownConverter";
 import { cleanMarkdownString } from "./clean_mr";
 
-test("integration test: validate, clean, and convert real shloka file", async () => {
-  // Read the real file
-  const filePath = "шлока1.1.1.md";
-  const content = readFileSync(filePath, "utf-8");
+// Mock content for end-to-end and integration tests
+const mockMarkdownContent = `
+# My Test Article
 
-  // Step 1: Validate structure
-  const isValid = validateContentStructure(content);
-  expect(isValid).toBe(true);
+This is some **bold text** and *italic text*.
 
-  // Step 2: Clean markdown
-  const cleanedContent = cleanMarkdownString(content);
-  expect(cleanedContent).toBeDefined();
-  expect(cleanedContent.length).toBeGreaterThan(0);
+> This is a blockquote.
 
-  // Step 3: Convert to Telegraph nodes
-  const telegraphNodes = convertMarkdownToTelegraphNodes(cleanedContent);
-  expect(telegraphNodes).toBeDefined();
-  expect(telegraphNodes.length).toBeGreaterThan(0);
+## Subheading
 
-  // Check that we have the expected structure
-  const hasHeadings = telegraphNodes.some(node => node.tag && node.tag.startsWith('h'));
-  const hasBlockquotes = telegraphNodes.some(node => node.tag === 'blockquote');
-  const hasStrongElements = telegraphNodes.some(node =>
-    node.children && node.children.some(child =>
-      typeof child === 'object' && child.tag === 'strong'
-    )
-  );
+- List item 1
+- List item 2
 
-  expect(hasHeadings).toBe(true);
-  expect(hasBlockquotes).toBe(true);
-  expect(hasStrongElements).toBe(true);
+\`\`\`typescript
+const a = 1;
+const b = 2;
+\`\`\`
 
-  console.log(`✅ Integration test passed: processed ${telegraphNodes.length} Telegraph nodes`);
+Another paragraph.
+`;
+
+describe('Integration Tests', () => {
+  test('end-to-end: should extract title, convert markdown, and retain formatting', () => {
+    // 1. Extract title and content
+    const { title: extractedTitle, content: remainingContent } = extractTitleAndContent(mockMarkdownContent);
+    expect(extractedTitle).toBe('My Test Article');
+
+    // 2. Clean the extracted title
+    const cleanedTitle = cleanMarkdownString(extractedTitle || '');
+    expect(cleanedTitle).toBe('My Test Article');
+
+    // 3. Validate remaining content for unwanted HTML tags (should pass as it's pure markdown)
+    expect(() => validateCleanedContent(remainingContent)).not.toThrow();
+
+    // 4. Convert remaining content to Telegraph Nodes
+    const telegraphNodes = convertMarkdownToTelegraphNodes(remainingContent);
+
+    // 5. Assertions on Telegraph Nodes structure and content
+    expect(telegraphNodes).toBeInstanceOf(Array);
+    expect(telegraphNodes.length).toBeGreaterThan(0);
+
+    // Check for presence of expected elements based on original markdown formatting
+    // Paragraph with bold and italic text
+    const firstParagraph = telegraphNodes[0];
+    expect(firstParagraph).toEqual({
+      tag: 'p',
+      children: [
+        'This is some ',
+        { tag: 'strong', children: ['bold text'] },
+        ' and ',
+        { tag: 'em', children: ['italic text'] },
+        '.'
+      ]
+    });
+
+    // Blockquote
+    const blockquote = telegraphNodes[1];
+    expect(blockquote).toEqual({
+      tag: 'blockquote',
+      children: ['This is a blockquote.']
+    });
+
+    // Subheading (H2) converted to h2 by correct mapping
+    const subheading = telegraphNodes[2];
+    expect(subheading).toEqual({
+      tag: 'h2',
+      children: ['Subheading']
+    });
+
+    // List items
+    const ulElement = telegraphNodes[3];
+    expect(ulElement).toEqual({
+      tag: 'ul',
+      children: [
+        { tag: 'li', children: ['List item 1'] },
+        { tag: 'li', children: ['List item 2'] }
+      ]
+    });
+
+    // Code block
+    const preElement = telegraphNodes[4];
+    expect(preElement).toEqual({
+      tag: 'pre',
+      children: [{
+        tag: 'code',
+        children: ['const a = 1;\nconst b = 2;']
+      }]
+    });
+
+    // Last paragraph
+    const lastParagraph = telegraphNodes[5];
+    expect(lastParagraph).toEqual({
+      tag: 'p',
+      children: ['Another paragraph.']
+    });
+
+    // Ensure no unexpected raw HTML tags are present (validateCleanedContent already checks this)
+    const hasUnexpectedRawHtml = JSON.stringify(telegraphNodes).includes('<') && !JSON.stringify(telegraphNodes).includes('<blockquote>'); // Basic check for raw HTML tags that shouldn't be there
+    expect(hasUnexpectedRawHtml).toBe(false);
+  });
+
+  test('end-to-end: should convert tables to nested lists', () => {
+    const tableMarkdown = `# Таблица товаров
+
+| Название | Цена | В наличии |
+|----------|------|-----------|
+| Товар 1  | 100  | Да        |
+| Товар 2  | 200  | Нет       |
+
+Конец таблицы.`;
+
+    // 1. Extract title and content
+    const { title: extractedTitle, content: remainingContent } = extractTitleAndContent(tableMarkdown);
+    expect(extractedTitle).toBe('Таблица товаров');
+
+    // 2. Clean the extracted title
+    const cleanedTitle = cleanMarkdownString(extractedTitle || '');
+    expect(cleanedTitle).toBe('Таблица товаров');
+
+    // 3. Validate remaining content
+    expect(() => validateCleanedContent(remainingContent)).not.toThrow();
+
+    // 4. Convert remaining content to Telegraph Nodes
+    const telegraphNodes = convertMarkdownToTelegraphNodes(remainingContent);
+
+    // 5. Verify table conversion
+    expect(telegraphNodes).toEqual([
+      {
+        tag: 'ol',
+        children: [
+          {
+            tag: 'li',
+            children: [
+              '1',
+              {
+                tag: 'ul',
+                children: [
+                  { tag: 'li', children: ['Название: Товар 1'] },
+                  { tag: 'li', children: ['Цена: 100'] },
+                  { tag: 'li', children: ['В наличии: Да'] }
+                ]
+              }
+            ]
+          },
+          {
+            tag: 'li',
+            children: [
+              '2',
+              {
+                tag: 'ul',
+                children: [
+                  { tag: 'li', children: ['Название: Товар 2'] },
+                  { tag: 'li', children: ['Цена: 200'] },
+                  { tag: 'li', children: ['В наличии: Нет'] }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        tag: 'p',
+        children: ['Конец таблицы.']
+      }
+    ]);
+  });
 });

@@ -1,24 +1,26 @@
 import { test, expect } from "bun:test";
-import { convertMarkdownToTelegraphNodes, validateContentStructure } from './markdownConverter';
+import { convertMarkdownToTelegraphNodes, extractTitleAndContent, validateCleanedContent } from './markdownConverter';
 import type { TelegraphNode } from './telegraphPublisher';
+import { cleanMarkdownString } from './clean_mr';
 
 test("should convert simple paragraph to Telegraph node", () => {
-  const markdown = 'This is a simple paragraph.';
+  const markdown = 'Hello, World!';
   const result = convertMarkdownToTelegraphNodes(markdown);
 
   expect(result).toEqual([
-    { tag: 'p', children: ['This is a simple paragraph.'] }
+    { tag: 'p', children: ['Hello, World!'] }
   ]);
 });
 
 test("should convert headings to Telegraph nodes", () => {
-  const markdown = '# Heading 1\n## Heading 2\n### Heading 3';
+  const markdown = '# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4';
   const result = convertMarkdownToTelegraphNodes(markdown);
 
   expect(result).toEqual([
     { tag: 'h1', children: ['Heading 1'] },
     { tag: 'h2', children: ['Heading 2'] },
-    { tag: 'h3', children: ['Heading 3'] }
+    { tag: 'h3', children: ['Heading 3'] },
+    { tag: 'h4', children: ['Heading 4'] }
   ]);
 });
 
@@ -59,33 +61,32 @@ test("should convert italic text to em nodes", () => {
 });
 
 test("should convert blockquotes to blockquote nodes", () => {
-  const markdown = '> This is a blockquote\n> with multiple lines';
+  const markdown = '> This is a blockquote\n> with multiple lines\n\nAnother paragraph after quote.';
   const result = convertMarkdownToTelegraphNodes(markdown);
 
   expect(result).toEqual([
-    { tag: 'blockquote', children: ['This is a blockquote'] },
-    { tag: 'blockquote', children: ['with multiple lines'] }
+    { tag: 'blockquote', children: ['This is a blockquote\nwith multiple lines'] },
+    { tag: 'p', children: ['Another paragraph after quote.'] }
   ]);
 });
 
 test("should convert unordered lists to ul nodes", () => {
-  const markdown = '- Item 1\n- Item 2\n- Item 3';
+  const markdown = '- List item 1\n* List item 2';
   const result = convertMarkdownToTelegraphNodes(markdown);
 
   expect(result).toEqual([
     {
       tag: 'ul',
       children: [
-        { tag: 'li', children: ['Item 1'] },
-        { tag: 'li', children: ['Item 2'] },
-        { tag: 'li', children: ['Item 3'] }
+        { tag: 'li', children: ['List item 1'] },
+        { tag: 'li', children: ['List item 2'] }
       ]
     }
   ]);
 });
 
 test("should convert ordered lists to ol nodes", () => {
-  const markdown = '1. First item\n2. Second item\n3. Third item';
+  const markdown = '1. First item\n2. Second item';
   const result = convertMarkdownToTelegraphNodes(markdown);
 
   expect(result).toEqual([
@@ -93,8 +94,7 @@ test("should convert ordered lists to ol nodes", () => {
       tag: 'ol',
       children: [
         { tag: 'li', children: ['First item'] },
-        { tag: 'li', children: ['Second item'] },
-        { tag: 'li', children: ['Third item'] }
+        { tag: 'li', children: ['Second item'] }
       ]
     }
   ]);
@@ -136,69 +136,230 @@ test("should handle complex nested markdown", () => {
   const markdown = '## **Bold Heading**\n\nThis is a paragraph with **bold** and *italic* text.\n\n- List item with `code`\n- Another item';
   const result = convertMarkdownToTelegraphNodes(markdown);
 
-  expect(result.length).toBeGreaterThan(0);
+  expect(result.length).toBe(3);
   expect(result[0]?.tag).toBe('h2');
   expect(result[1]?.tag).toBe('p');
   expect(result[2]?.tag).toBe('ul');
 });
 
-test("should validate correct shloka structure", () => {
-  const validMarkdown = `### **Связный пословный перевод Шримад-Бхагаватам 1.1.1**
-
-**Полный текст:**
-
-**Разбор и связный перевод:**
-
-**Часть 1: Обращение и объект поклонения**
-
-> **ом̇ намо бхагавате ва̄судева̄йа**
-
-**Связно:** «Ом, с почтением я склоняюсь»
-
-**Часть 2: Определение Абсолютной Истины**
-
-> **джанма̄дй асйа йато 'нвайа̄д итараташ́ ча̄ртхешв абхиджн̃ах̣ свара̄т̣**
-
-**Связно:** «От Которого происходит сотворение»
-
-**Часть 3: Источник знания**
-
-> **тене брахма хр̣да̄ йа а̄ди-кавайе мухйанти йат сӯрайах̣**
-
-**Связно:** «Тот, Кто вложил ведическое знание»
-
-**Часть 4: Природа иллюзии**
-
-> **теджо-ва̄ри-мр̣да̄м̇ йатха̄ винимайо йатра три-сарго 'мр̣ша̄**
-
-**Связно:** «Подобно тому как происходит обманчивое смешение»
-
-**Часть 5: Заключение**
-
-> **дха̄мна̄ свена сада̄ нираста-кухакам̇ сатйам̇ парам̇ дхӣмахи**
-
-**Связно:** «На Него, Кто Своей собственной обителью»
-
-### **Итоговый связный перевод в едином тексте:**`;
-
-  const result = validateContentStructure(validMarkdown);
-  expect(result).toBe(true);
+test('extractTitleAndContent: should extract H1 title and remaining content', () => {
+  const markdown = '# My Title\n\nContent goes here.';
+  const { title, content } = extractTitleAndContent(markdown);
+  expect(title).toBe('My Title');
+  expect(content).toBe('\nContent goes here.');
 });
 
-test("should fail validation for missing main heading", () => {
-  const invalidMarkdown = `**Полный текст:**
-
-**Разбор и связный перевод:**`;
-
-  const result = validateContentStructure(invalidMarkdown);
-  expect(result).toBe(false);
+test('extractTitleAndContent: should extract H2 title and remaining content', () => {
+  const markdown = '## My Subtitle\nContent.';
+  const { title, content } = extractTitleAndContent(markdown);
+  expect(title).toBe('My Subtitle');
+  expect(content).toBe('Content.');
 });
 
-test("should fail validation for missing required sections", () => {
-  const invalidMarkdown = `### **Связный пословный перевод Шримад-Бхагаватам 1.1.1**
+test('extractTitleAndContent: should return null title if no heading is found as first non-empty line', () => {
+  const markdown = 'Just plain text.\nAnother line.';
+  const { title, content } = extractTitleAndContent(markdown);
+  expect(title).toBeNull();
+  expect(content).toBe('Just plain text.\nAnother line.');
+});
 
-Some content but missing required sections.`;
+test('extractTitleAndContent: should handle leading empty lines before heading', () => {
+  const markdown = '\n\n# Title\nContent';
+  const { title, content } = extractTitleAndContent(markdown);
+  expect(title).toBe('Title');
+  expect(content).toBe('Content');
+});
 
-  const result = validateContentStructure(invalidMarkdown);
-  expect(result).toBe(false);
+test('extractTitleAndContent: should handle leading empty lines before non-heading content', () => {
+  const markdown = '\n\nPlain text.';
+  const { title, content } = extractTitleAndContent(markdown);
+  expect(title).toBeNull();
+  expect(content).toBe('Plain text.');
+});
+
+test('extractTitleAndContent: should handle empty markdown string', () => {
+  const markdown = '';
+  const { title, content } = extractTitleAndContent(markdown);
+  expect(title).toBeNull();
+  expect(content).toBe('');
+});
+
+test('extractTitleAndContent: should remove leading empty lines from content after title extraction', () => {
+  const markdown = '# Title\n\n\nContent';
+  const { title, content } = extractTitleAndContent(markdown);
+  expect(title).toBe('Title');
+  expect(content).toBe('\n\nContent');
+});
+
+test('extractTitleAndContent: should extract title with inline formatting and remove it from content', () => {
+  const markdown = '# My **Bold** *Title*\nContent.';
+  const { title, content } = extractTitleAndContent(markdown);
+  expect(title).toBe('My **Bold** *Title*');
+  expect(content).toBe('Content.');
+});
+
+test('extractTitleAndContent: should extract bold/italic line as title if no heading is found', () => {
+  const markdown = '**This is a Bold Title**\nContent here.\n';
+  const { title, content } = extractTitleAndContent(markdown);
+  expect(title).toBe('This is a Bold Title');
+  expect(content).toBe('Content here.\n');
+
+  const markdown2 = '*This is an Italic Title*\nContent here.\n';
+  const { title: title2, content: content2 } = extractTitleAndContent(markdown2);
+  expect(title2).toBe('This is an Italic Title');
+  expect(content2).toBe('Content here.\n');
+
+  const markdown3 = '__Another Bold Title__\nContent here.';
+  const { title: title3, content: content3 } = extractTitleAndContent(markdown3);
+  expect(title3).toBe('Another Bold Title');
+  expect(content3).toBe('Content here.');
+
+  const markdown4 = '_Another Italic Title_\nContent here.';
+  const { title: title4, content: content4 } = extractTitleAndContent(markdown4);
+  expect(title4).toBe('Another Italic Title');
+  expect(content4).toBe('Content here.');
+});
+
+test('cleanMarkdownString: should remove only heading and inline markdown formatting from a title string', () => {
+  const titleString = '# My **Bold** *Title* `with code` [and link](http://example.com).';
+  const expectedCleanTitle = 'My Bold Title with code and link.';
+  const cleanedTitle = cleanMarkdownString(titleString);
+  expect(cleanedTitle).toBe(expectedCleanTitle);
+});
+
+test('cleanMarkdownString: should handle a title string with no markdown', () => {
+  const titleString = 'A Plain Title';
+  const expectedCleanTitle = 'A Plain Title';
+  const cleanedTitle = cleanMarkdownString(titleString);
+  expect(cleanedTitle).toBe(expectedCleanTitle);
+});
+
+test('cleanMarkdownString: should handle an empty title string', () => {
+  const titleString = '';
+  const expectedCleanTitle = '';
+  const cleanedTitle = cleanMarkdownString(titleString);
+  expect(cleanedTitle).toBe(expectedCleanTitle);
+});
+
+test('validateCleanedContent: should pass for content without HTML tags', () => {
+  const content = 'This is plain Markdown content with **bold** text and - list items.';
+  expect(() => validateCleanedContent(content)).not.toThrow();
+});
+
+test('validateCleanedContent: should throw error for content with HTML tags', () => {
+  const content = 'This text contains <p>HTML</p> tags.';
+  expect(() => validateCleanedContent(content)).toThrow("Content contains unsupported HTML tags. Only Markdown formatting is allowed.");
+});
+
+test('validateCleanedContent: should throw error for content with incomplete HTML tags', () => {
+  const content = 'This text contains <p>incomplete HTML tags.';
+  expect(() => validateCleanedContent(content)).toThrow("Content contains unsupported HTML tags. Only Markdown formatting is allowed.");
+});
+
+test('validateCleanedContent: should pass for content with angle brackets that are not HTML tags', () => {
+  const content = 'This text has < and > symbols but no HTML.';
+  expect(() => validateCleanedContent(content)).not.toThrow();
+});
+
+test("should convert tables to nested lists", () => {
+  const markdown = `| Название | Значение | Описание |
+|----------|----------|----------|
+| Первый   | 100      | Тест 1   |
+| Второй   | 200      | Тест 2   |
+| Третий   | 300      | Тест 3   |`;
+
+  const result = convertMarkdownToTelegraphNodes(markdown);
+
+  expect(result).toEqual([
+    {
+      tag: 'ol',
+      children: [
+        {
+          tag: 'li',
+          children: [
+            '1',
+            {
+              tag: 'ul',
+              children: [
+                { tag: 'li', children: ['Название: Первый'] },
+                { tag: 'li', children: ['Значение: 100'] },
+                { tag: 'li', children: ['Описание: Тест 1'] }
+              ]
+            }
+          ]
+        },
+        {
+          tag: 'li',
+          children: [
+            '2',
+            {
+              tag: 'ul',
+              children: [
+                { tag: 'li', children: ['Название: Второй'] },
+                { tag: 'li', children: ['Значение: 200'] },
+                { tag: 'li', children: ['Описание: Тест 2'] }
+              ]
+            }
+          ]
+        },
+        {
+          tag: 'li',
+          children: [
+            '3',
+            {
+              tag: 'ul',
+              children: [
+                { tag: 'li', children: ['Название: Третий'] },
+                { tag: 'li', children: ['Значение: 300'] },
+                { tag: 'li', children: ['Описание: Тест 3'] }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]);
+});
+
+test("should handle table with empty cells", () => {
+  const markdown = `| Колонка 1 | Колонка 2 |
+|-----------|-----------|
+| Значение  |           |
+|           | Другое    |`;
+
+  const result = convertMarkdownToTelegraphNodes(markdown);
+
+  expect(result).toEqual([
+    {
+      tag: 'ol',
+      children: [
+        {
+          tag: 'li',
+          children: [
+            '1',
+            {
+              tag: 'ul',
+              children: [
+                { tag: 'li', children: ['Колонка 1: Значение'] },
+                { tag: 'li', children: ['Колонка 2: '] }
+              ]
+            }
+          ]
+        },
+        {
+          tag: 'li',
+          children: [
+            '2',
+            {
+              tag: 'ul',
+              children: [
+                { tag: 'li', children: ['Колонка 1: '] },
+                { tag: 'li', children: ['Колонка 2: Другое'] }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]);
 });

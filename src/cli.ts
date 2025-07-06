@@ -5,7 +5,7 @@ import { TelegraphPublisher } from "./telegraphPublisher";
 import { readFileSync, existsSync } from "fs";
 import { resolve, join } from "path";
 import { cleanMarkdownString, cleanMarkdownFile } from "./clean_mr";
-import { convertMarkdownToTelegraphNodes, validateContentStructure } from "./markdownConverter";
+import { convertMarkdownToTelegraphNodes, extractTitleAndContent, validateCleanedContent } from "./markdownConverter";
 
 // Read package.json to get the version
 const packageJsonPath = join(__dirname, '..', 'package.json');
@@ -22,7 +22,7 @@ program
 program.command('publish')
   .description('Publish a Markdown file to Telegra.ph')
   .option('-f, --file <path>', 'Path to the Markdown file to publish')
-  .option('-t, --title <title>', 'Title of the article (defaults to filename)')
+  .option('-t, --title <title>', 'Title of the article (defaults to filename, or first heading in file if found)')
   .option('-a, --author <name>', "Author's name")
   .option('-u, --author-url <url>', "Author's URL")
   .option('--dry-run', 'Process the file but do not publish to Telegra.ph, showing the resulting Telegraph Nodes (JSON).')
@@ -42,25 +42,45 @@ program.command('publish')
     try {
       console.log("📝 Reading file...");
       let markdownContent = readFileSync(filePath, "utf-8");
+      console.log("--- Raw Markdown Content (Diagnostic) ---");
+      console.log(markdownContent.substring(0, 500) + '...'); // Log first 500 chars to avoid huge output
+      console.log("-----------------------------------------");
 
-      console.log("🔎 Validating content structure...");
-      if (!validateContentStructure(markdownContent)) {
-        console.error("❌ Error: Content structure validation failed. Please check the file format.");
+      let articleTitle: string | null = options.title || null;
+      let contentToPublish = markdownContent; // This will be the content passed to convertMarkdownToTelegraphNodes
+
+      if (!articleTitle) {
+        console.log("🔎 Attempting to extract title from content...");
+        const { title: extractedTitle, content: remainingContent } = extractTitleAndContent(markdownContent);
+        if (extractedTitle) {
+          articleTitle = cleanMarkdownString(extractedTitle); // ONLY clean the extracted title
+          contentToPublish = remainingContent;
+          console.log(`✅ Extracted and cleaned title from content: "${articleTitle}"`);
+        } else {
+          console.error("❌ Error: No title provided and no heading found in the content. Please provide a title using --title option or add a heading to the markdown file.");
+          process.exit(1);
+        }
+      }
+
+      // Validate contentToPublish (which is original markdown content, possibly without the first heading)
+      try {
+        console.log("✅ Validating content for unsupported HTML tags...");
+        validateCleanedContent(contentToPublish); // Validate for raw HTML tags in original markdown
+        console.log("✨ Content validated successfully for HTML tags.");
+      } catch (validationError: any) {
+        console.error("❌ Content validation failed:", validationError.message);
         process.exit(1);
       }
-      console.log("✅ Content structure validated.");
 
-      console.log("🧹 Cleaning Markdown content...");
-      const cleanedMarkdownContent = cleanMarkdownString(markdownContent);
+      console.log("⚙️ Converting Markdown to Telegraph Nodes...");
+      const telegraphNodes = convertMarkdownToTelegraphNodes(contentToPublish); // Pass original markdown content (possibly without title)
+      console.log("✅ Markdown converted to Telegraph Nodes.");
 
-      const title = options.title || filePath.split('/').pop()?.replace(/\.md$/, '') || "Untitled";
       const author = options.author || "Anonymous";
 
       if (options.dryRun) {
         console.log("🚀 Dry Run Mode: Article will not be published.");
-        const telegraphNodes = convertMarkdownToTelegraphNodes(cleanedMarkdownContent);
-        console.log("\n--- Cleaned Markdown (Dry Run) ---\n");
-        console.log(cleanedMarkdownContent);
+        console.log(`Proposed Title: ${articleTitle}`);
         console.log("\n--- Converted Telegraph Nodes (Dry Run) ---\n");
         console.log(JSON.stringify(telegraphNodes, null, 2));
         console.log("\n------------------------------------------\n");
@@ -75,7 +95,13 @@ program.command('publish')
       console.log(`🔗 Access Token: ${account.access_token}`);
 
       console.log("📤 Publishing article...");
-      const page = await publisher.publishMarkdown(title, cleanedMarkdownContent);
+      // Ensure articleTitle is not null before passing it to publishMarkdown
+      if (!articleTitle) {
+        console.error("❌ Internal Error: Article title is null after extraction/validation.");
+        process.exit(1);
+      }
+      // Pass telegraphNodes directly to publishNodes, not cleanedMarkdownContent to publishMarkdown
+      const page = await publisher.publishNodes(articleTitle, telegraphNodes);
 
       console.log("🎉 Article successfully published!");
       console.log(`📄 Title: ${page.title}`);
