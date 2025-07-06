@@ -1,14 +1,16 @@
 {
   "name": "telegraph-publisher",
-  "module": "index.ts",
+  "module": "dist/cli.js",
   "type": "module",
-  "private": true,
+  "private": false,
+  "bin": {
+    "telegraph-publisher": "./dist/cli.js"
+  },
   "scripts": {
+    "prepublish": "bun run build",
     "test": "bun test",
-    "publish": "bun src/cli.ts",
     "build": "bun build src/cli.ts --outdir dist --target node",
-    "dev": "bun --watch src/cli.ts",
-    "clean-md": "bun src/clean_mr.ts"
+    "dev": "bun --watch src/cli.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -18,6 +20,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "commander": "^14.0.0",
     "mrkdwny": "^0.8.0"
   }
 }
