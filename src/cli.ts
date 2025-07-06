@@ -3,12 +3,12 @@
 import { Command } from 'commander';
 import { TelegraphPublisher } from "./telegraphPublisher";
 import { readFileSync, existsSync } from "fs";
-import { resolve } from "path";
+import { resolve, join } from "path";
 import { cleanMarkdownString, cleanMarkdownFile } from "./clean_mr";
 import { convertMarkdownToTelegraphNodes, validateContentStructure } from "./markdownConverter";
 
 // Read package.json to get the version
-const packageJsonPath = resolve(process.cwd(), 'package.json');
+const packageJsonPath = join(__dirname, '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 const appVersion = packageJson.version;
 
