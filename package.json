@@ -1,0 +1,23 @@
+{
+  "name": "telegraph-publisher",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "publish": "bun src/cli.ts",
+    "build": "bun build src/cli.ts --outdir dist --target node",
+    "dev": "bun --watch src/cli.ts",
+    "clean-md": "bun src/clean_mr.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.0.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "mrkdwny": "^0.8.0"
+  }
+}
