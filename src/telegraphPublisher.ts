@@ -1,4 +1,4 @@
-import { convertMarkdownToHtml } from "./markdownConverter";
+import { convertMarkdownToTelegraphNodes } from "./markdownConverter";
 
 interface ApiResponse<T> {
   ok: boolean;
@@ -122,66 +122,115 @@ export class TelegraphPublisher {
   }
 
   async publishMarkdown(title: string, markdownContent: string): Promise<TelegraphPage> {
-    const htmlContent = convertMarkdownToHtml(markdownContent);
-    return this.publishHtml(title, htmlContent);
+    const nodes = convertMarkdownToTelegraphNodes(markdownContent);
+    return this.publishNodes(title, nodes);
+  }
+
+  async publishNodes(title: string, nodes: TelegraphNode[]): Promise<TelegraphPage> {
+    const payload = {
+      access_token: this.accessToken,
+      title,
+      content: JSON.stringify(nodes),
+    };
+
+    const response = await fetch(`${this.apiBase}/createPage`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json() as ApiResponse<TelegraphPage>;
+    if (!data.ok) {
+      throw new Error(`Telegraph API error: ${data.error}`);
+    }
+
+    if (!data.result) {
+      throw new Error('Telegraph API returned empty result');
+    }
+
+    return data.result;
   }
 
   private htmlToNodes(html: string): TelegraphNode[] {
-    // Simple HTML to Telegraph Node conversion
-    // This is a basic implementation that handles common HTML tags
     const nodes: TelegraphNode[] = [];
-
-    // Remove HTML comments and clean up
-    const cleanHtml = html.replace(/<!--[\s\S]*?-->/g, '').trim();
+    let cleanHtml = html.replace(/<!--[\s\S]*?-->/g, '').trim();
 
     if (!cleanHtml) {
       return [{ tag: "p", children: [""] }];
     }
 
-    // For now, let's implement a simple approach:
-    // Split by common block elements and convert each
-    const blockElements = cleanHtml.split(/(<\/?(?:h[1-6]|p|div|br)\s*\/?>)/i);
+    // Regex to capture block-level elements or plain text segments
+    // Captures: <tag>content</tag> OR <br/> OR plain_text
+    const blockRegex = /(<h[1-6]>([\s\S]*?)<\/h[1-6]>|<p>([\s\S]*?)<\/p>|<ul>([\s\S]*?)<\/ul>|<ol>([\s\S]*?)<\/ol>|<li>([\s\S]*?)<\/li>|<blockquote>([\s\S]*?)<\/blockquote>|<br\s*\/?>)|([^<]+)/gi;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
 
-    for (const element of blockElements) {
-      const trimmed = element.trim();
-      if (!trimmed) continue;
-
-      // Handle heading tags
-      const headingMatch = trimmed.match(/^<(h[1-6])>(.*?)<\/h[1-6]>$/i);
-      if (headingMatch && headingMatch[1] && headingMatch[2]) {
-        const tag = headingMatch[1].toLowerCase();
-        const content = this.stripHtmlTags(headingMatch[2]);
-        if (content) {
-          nodes.push({ tag, children: [content] });
+    while ((match = blockRegex.exec(cleanHtml)) !== null) {
+      // Handle text before the current match
+      if (match.index > lastIndex) {
+        const textSegment = cleanHtml.substring(lastIndex, match.index).trim();
+        if (textSegment) {
+          nodes.push({ tag: "p", children: this.processInlineElements(textSegment) });
         }
-        continue;
       }
 
-      // Handle paragraph tags
-      const pMatch = trimmed.match(/^<p>(.*?)<\/p>$/i);
-      if (pMatch && pMatch[1]) {
-        const content = this.processInlineElements(pMatch[1]);
-        if (content.length > 0) {
-          nodes.push({ tag: "p", children: content });
-        }
-        continue;
-      }
+      const fullTagMatch = match[1]; // The entire matched HTML tag block (e.g., <p>...</p>)
+      const plainText = match[8]; // Text not inside any recognized tag
 
-      // Handle plain text or other content
-      if (!trimmed.match(/^<\/?[^>]+>$/)) {
-        const content = this.processInlineElements(trimmed);
-        if (content.length > 0) {
-          nodes.push({ tag: "p", children: content });
+      if (fullTagMatch) {
+        // Determine the tag name and content
+        const tagContentMatch = fullTagMatch.match(/^<(h[1-6]|p|ul|ol|li|blockquote|br)(?:[^>]*)?>(?:([\s\S]*?)<\/\1>)?|<(br\s*\/?)>$/i);
+
+        if (tagContentMatch) {
+          const tagName = tagContentMatch[1] ? tagContentMatch[1].toLowerCase() : '';
+          let content = tagContentMatch[2] !== undefined ? tagContentMatch[2] : '';
+          const isSelfClosingBr = !!tagContentMatch[3];
+
+          if (isSelfClosingBr) {
+            nodes.push({ tag: "br" });
+          } else if (tagName) {
+            if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'blockquote'].includes(tagName)) {
+              nodes.push({ tag: tagName, children: this.processInlineElements(content) });
+            } else if (['ul', 'ol'].includes(tagName)) {
+              const listItems = content.match(/<li>([\s\S]*?)<\/li>/gi);
+              if (listItems) {
+                const listItemNodes: (string | TelegraphNode)[] = listItems.map(item => {
+                  const liContent = item.replace(/<\/?li>/gi, '').trim();
+                  return { tag: "li", children: this.processInlineElements(liContent) };
+                });
+                nodes.push({ tag: tagName, children: listItemNodes });
+              }
+            } else if (tagName === 'li') { // Direct li tag, should ideally be inside ul/ol, but handle for robustness
+              nodes.push({ tag: "li", children: this.processInlineElements(content) });
+            }
+          }
         }
+      } else if (plainText) {
+        // Handle plain text segments not captured by any specific tag
+        if (plainText.trim()) {
+          nodes.push({ tag: "p", children: this.processInlineElements(plainText) });
+        }
+      }
+      lastIndex = blockRegex.lastIndex;
+    }
+
+    // Handle any remaining text at the end of the string
+    if (lastIndex < cleanHtml.length) {
+      const remainingText = cleanHtml.substring(lastIndex).trim();
+      if (remainingText) {
+        nodes.push({ tag: "p", children: this.processInlineElements(remainingText) });
       }
     }
 
-    // If no nodes were created, create a simple paragraph
-    if (nodes.length === 0) {
-      const content = this.stripHtmlTags(cleanHtml);
-      if (content) {
-        nodes.push({ tag: "p", children: [content] });
-      }
+    // Fallback: If no nodes were created but there was content
+    if (nodes.length === 0 && cleanHtml.trim()) {
+      nodes.push({ tag: "p", children: this.processInlineElements(cleanHtml) });
     }
 
     return nodes;
@@ -189,48 +238,68 @@ export class TelegraphPublisher {
 
   private processInlineElements(text: string): (string | TelegraphNode)[] {
     const result: (string | TelegraphNode)[] = [];
-    let currentText = text;
+    // Regex to match inline tags: strong, em, a, code, or any plain text not containing '<' or '>'
+    const inlineRegex = /(<strong>([\s\S]*?)<\/strong>|<em>([\s\S]*?)<\/em>|<a\s+href="([^"]*)">([\s\S]*?)<\/a>|<code>([\s\S]*?)<\/code>)|([^<>]+)/gi;
 
-    // Handle bold text
-    currentText = currentText.replace(/<strong>(.*?)<\/strong>/gi, (match, content) => {
-      const placeholder = `__STRONG_${result.length}__`;
-      result.push({ tag: "strong", children: [content] });
-      return placeholder;
-    });
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
 
-    // Handle links
-    currentText = currentText.replace(/<a\s+href="([^"]*)"[^>]*>(.*?)<\/a>/gi, (match, href, content) => {
-      const placeholder = `__LINK_${result.length}__`;
-      result.push({ tag: "a", attrs: { href }, children: [content] });
-      return placeholder;
-    });
-
-    // Split by placeholders and reconstruct
-    const parts = currentText.split(/(__(?:STRONG|LINK)_\d+__)/);
-    const finalResult: (string | TelegraphNode)[] = [];
-
-    for (const part of parts) {
-      const strongMatch = part.match(/^__STRONG_(\d+)__$/);
-      const linkMatch = part.match(/^__LINK_(\d+)__$/);
-
-      if (strongMatch && strongMatch[1]) {
-        const node = result[parseInt(strongMatch[1])];
-        if (node !== undefined) {
-          finalResult.push(node);
+    while ((match = inlineRegex.exec(text)) !== null) {
+      // Add any plain text before the current match
+      if (match.index > lastIndex) {
+        const plainText = text.substring(lastIndex, match.index);
+        if (plainText.trim()) {
+          result.push(this.decodeHtmlEntities(plainText));
         }
-      } else if (linkMatch && linkMatch[1]) {
-        const node = result[parseInt(linkMatch[1])];
-        if (node !== undefined) {
-          finalResult.push(node);
+      }
+
+      const fullInlineTagMatch = match[1]; // Full matched inline tag (e.g., <strong>...) or undefined
+      const plainTextContent = match[7]; // Plain text content outside of tags or undefined
+
+      if (fullInlineTagMatch) {
+        // Process matched inline tag
+        if (match[2] !== undefined) { // strong tag content
+          result.push({ tag: "strong", children: this.processInlineElements(match[2]) });
+        } else if (match[3] !== undefined) { // em tag content
+          result.push({ tag: "em", children: this.processInlineElements(match[3]) });
+        } else if (match[4] !== undefined && match[5] !== undefined) { // a tag content
+          const href = match[4];
+          const content = match[5];
+          result.push({ tag: "a", attrs: { href }, children: this.processInlineElements(content) });
+        } else if (match[6] !== undefined) { // code tag content
+          result.push({ tag: "code", children: [this.decodeHtmlEntities(match[6])] });
         }
-      } else if (part.trim()) {
-        finalResult.push(this.stripHtmlTags(part));
+      } else if (plainTextContent) {
+        // Handle plain text content
+        if (plainTextContent.trim()) {
+          result.push(this.decodeHtmlEntities(plainTextContent));
+        }
+      }
+
+      lastIndex = inlineRegex.lastIndex;
+    }
+
+    // Add any remaining plain text after the last match
+    if (lastIndex < text.length) {
+      const remainingText = text.substring(lastIndex);
+      if (remainingText.trim()) {
+        result.push(this.decodeHtmlEntities(remainingText));
       }
     }
 
-    return finalResult.filter(item =>
-      typeof item === 'string' ? item.trim() !== '' : true
-    );
+    return result.filter(item => typeof item === 'string' ? item.trim() !== '' : true);
+  }
+
+  private decodeHtmlEntities(text: string): string {
+    const entities: { [key: string]: string } = {
+      '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"'
+      // Add more as needed
+    };
+    let decodedText = text;
+    for (const entity in entities) {
+      decodedText = decodedText.replace(new RegExp(entity, 'g'), entities[entity] || '');
+    }
+    return decodedText;
   }
 
   private stripHtmlTags(text: string): string {

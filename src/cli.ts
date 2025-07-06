@@ -5,7 +5,7 @@ import { TelegraphPublisher } from "./telegraphPublisher";
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import { cleanMarkdownString, cleanMarkdownFile } from "./clean_mr";
-import { convertMarkdownToHtml, validateContentStructure } from "./markdownConverter";
+import { convertMarkdownToTelegraphNodes, validateContentStructure } from "./markdownConverter";
 
 const program = new Command();
 
@@ -53,11 +53,11 @@ program.command('publish')
 
       if (options.dryRun) {
         console.log("🚀 Dry Run Mode: Article will not be published.");
-        const htmlContent = convertMarkdownToHtml(cleanedMarkdownContent);
+        const telegraphNodes = convertMarkdownToTelegraphNodes(cleanedMarkdownContent);
         console.log("\n--- Cleaned Markdown (Dry Run) ---\n");
         console.log(cleanedMarkdownContent);
-        console.log("\n--- Converted HTML (Dry Run) ---\n");
-        console.log(htmlContent);
+        console.log("\n--- Converted Telegraph Nodes (Dry Run) ---\n");
+        console.log(JSON.stringify(telegraphNodes, null, 2));
         console.log("\n------------------------------------------\n");
         return;
       }

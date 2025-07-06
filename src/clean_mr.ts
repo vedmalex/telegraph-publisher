@@ -10,21 +10,7 @@ import { resolve } from 'path';
  * @returns The cleaned content string.
  */
 export function cleanMarkdownString(content: string): string {
-    // Remove Markdown styling (bold, italic, strikethrough, links, images, headings, lists, blockquotes, code blocks)
-    let cleanedContent = content.replace(/\*\*(.*?)\*\*/g, '$1'); // Bold
-    cleanedContent = cleanedContent.replace(/__(.*?)__/g, '$1'); // Bold
-    cleanedContent = cleanedContent.replace(/\*(.*?)\*/g, '$1');  // Italic
-    cleanedContent = cleanedContent.replace(/_(.*?)_/g, '$1');  // Italic
-    cleanedContent = cleanedContent.replace(/~~(.*?)~~/g, '$1'); // Strikethrough
-    cleanedContent = cleanedContent.replace(/\[(.*?)\]\(.*?\)/g, '$1'); // Links
-    cleanedContent = cleanedContent.replace(/!\[(.*?)\]\(.*?\)/g, '$1'); // Images
-    cleanedContent = cleanedContent.replace(/^#+\s/gm, ''); // Headings
-    cleanedContent = cleanedContent.replace(/^[*-]\s/gm, ''); // Lists
-    cleanedContent = cleanedContent.replace(/^>\s/gm, ''); // Blockquotes
-    cleanedContent = cleanedContent.replace(/```[\s\S]*?```/g, ''); // Code blocks
-    cleanedContent = cleanedContent.replace(/`/g, ''); // Inline code
-    cleanedContent = cleanedContent.replace(/^-{3,}\s*$/gm, ''); // Horizontal rules (---, ***, ___)
-    cleanedContent = cleanedContent.replace(/^\d+\.\s/gm, ''); // Ordered lists (1. Item)
+    let cleanedContent = content;
 
     // Replace multiple newlines with a single newline
     cleanedContent = cleanedContent.replace(/\n{2,}/g, '\n');
