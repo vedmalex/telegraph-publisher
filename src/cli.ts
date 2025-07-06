@@ -7,12 +7,17 @@ import { resolve } from "path";
 import { cleanMarkdownString, cleanMarkdownFile } from "./clean_mr";
 import { convertMarkdownToTelegraphNodes, validateContentStructure } from "./markdownConverter";
 
+// Read package.json to get the version
+const packageJsonPath = resolve(process.cwd(), 'package.json');
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+const appVersion = packageJson.version;
+
 const program = new Command();
 
 program
   .name('telegraph-publisher')
-  .description('CLI tool for publishing Markdown to Telegra.ph and cleaning Markdown files.')
-  .version('1.0.0');
+  .description('A CLI tool to publish Markdown content to Telegra.ph and manage related tasks.')
+  .version(appVersion);
 
 program.command('publish')
   .description('Publish a Markdown file to Telegra.ph')
@@ -20,7 +25,7 @@ program.command('publish')
   .option('-t, --title <title>', 'Title of the article (defaults to filename)')
   .option('-a, --author <name>', "Author's name")
   .option('-u, --author-url <url>', "Author's URL")
-  .option('--dry-run', 'Process the file but do not publish to Telegra.ph, showing the resulting HTML')
+  .option('--dry-run', 'Process the file but do not publish to Telegra.ph, showing the resulting Telegraph Nodes (JSON).')
   .action(async (options) => {
     if (!options.file) {
       console.error("❌ Error: File path must be specified using --file");
