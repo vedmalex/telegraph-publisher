@@ -1,27 +1,27 @@
 {
-  "name": "telegraph-publisher",
-  "module": "dist/cli.js",
-  "type": "module",
-  "private": false,
-  "bin": {
-    "telegraph-publisher": "dist/cli.js"
-  },
-  "scripts": {
-    "prepublish": "bun run build",
-    "test": "bun test",
-    "build": "bun build src/cli.ts --outdir dist --target node",
-    "dev": "bun --watch src/cli.ts"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.0.0",
-    "@types/bun": "latest",
-    "@types/node": "^20.0.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
-  },
-  "dependencies": {
-    "commander": "^14.0.0"
-  },
-  "version": "1.0.4"
+	"name": "telegraph-publisher",
+	"module": "dist/cli.js",
+	"type": "module",
+	"private": false,
+	"bin": {
+		"telegraph-publisher": "dist/cli.js"
+	},
+	"scripts": {
+		"prepublish": "bun run build",
+		"test": "bun test",
+		"build": "bun build src/cli.ts --outdir dist --target node",
+		"dev": "bun --watch src/cli.ts"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.0.0",
+		"@types/bun": "latest",
+		"@types/node": "^20.0.0"
+	},
+	"peerDependencies": {
+		"typescript": "^5.0.0"
+	},
+	"dependencies": {
+		"commander": "^14.0.0"
+	},
+	"version": "1.1.0"
 }
