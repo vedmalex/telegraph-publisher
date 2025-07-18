@@ -1,0 +1,11 @@
+feat: implement metadata management system v1.2.0
+
+- Add YAML front-matter management with MetadataManager
+- Implement bidirectional link resolution system
+- Add dependency analysis and auto-publishing
+- Create unified CLI with enhanced commands (pub, analyze, config, status)
+- Preserve legacy commands for backward compatibility
+- Achieve 85.42% test coverage with 196 comprehensive tests
+- Add configuration management with project-wide settings
+
+BREAKING CHANGE: Enhanced commands are now primary, original commands moved to *-legacy

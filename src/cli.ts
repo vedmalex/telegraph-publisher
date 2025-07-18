@@ -4,6 +4,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { Command } from "commander";
 import { cleanMarkdownFile, cleanMarkdownString } from "./clean_mr";
+import { EnhancedCommands } from "./cli/EnhancedCommands";
+import { ConfigManager } from "./config/ConfigManager";
 import {
 	convertMarkdownToTelegraphNodes,
 	extractTitleAndContent,
@@ -66,13 +68,20 @@ const program = new Command();
 program
 	.name("telegraph-publisher")
 	.description(
-		"A CLI tool to publish Markdown content to Telegra.ph and manage related tasks.",
+		"A CLI tool to publish Markdown content to Telegra.ph with metadata management and dependency resolution."
 	)
 	.version(appVersion);
 
+// Add enhanced commands first (these are the new primary commands)
+EnhancedCommands.addPublishCommand(program);
+EnhancedCommands.addAnalyzeCommand(program);
+EnhancedCommands.addConfigCommand(program);
+EnhancedCommands.addStatusCommand(program);
+
+// Keep original publish command as legacy support
 program
-	.command("publish")
-	.description("Publish a Markdown file to Telegra.ph")
+	.command("publish-legacy")
+	.description("Legacy publish command (use 'pub' for enhanced version)")
 	.option("-f, --file <path>", "Path to the Markdown file to publish")
 	.option(
 		"-t, --title <title>",
@@ -428,6 +437,57 @@ program
 		}
 	});
 
+// Add help command with examples
+program
+	.command("help-examples")
+	.description("Show usage examples")
+	.action(() => {
+		console.log(`
+📚 Telegraph Publisher - Usage Examples
+
+🚀 Enhanced Publishing (Recommended):
+   telegraph-publisher pub -f article.md -a "Author Name"
+
+🔗 Publish with Dependencies:
+   telegraph-publisher pub -f main.md -a "Author" --with-dependencies
+
+🔄 Force Republish:
+   telegraph-publisher pub -f article.md -a "Author" --force-republish
+
+👁️ Dry Run (Preview):
+   telegraph-publisher pub -f article.md -a "Author" --dry-run
+
+📊 Analyze Dependencies:
+   telegraph-publisher analyze -f article.md --show-tree
+
+⚙️ Configuration Management:
+   telegraph-publisher config --show
+   telegraph-publisher config --username "Default Author"
+   telegraph-publisher config --max-depth 10
+
+📋 Check Status:
+   telegraph-publisher status -f article.md
+
+🔧 Legacy Commands:
+   telegraph-publisher publish-legacy -f article.md -a "Author"
+   telegraph-publisher list-pages --token YOUR_TOKEN
+   telegraph-publisher edit -p Page-Path-12-31 -f new-content.md
+
+🔧 First Time Setup:
+   1. telegraph-publisher config --username "Your Name"
+   2. telegraph-publisher pub -f your-file.md --token YOUR_TOKEN
+
+💡 Tips:
+   • Access token is saved automatically after first use
+   • YAML front-matter is added to published files automatically
+   • Local links are replaced with Telegraph URLs in published content
+   • Original files remain unchanged
+   • Use 'pub' for enhanced features, 'publish-legacy' for simple publishing
+
+📖 For more information, visit: https://github.com/your-repo/telegraph-publisher
+`);
+	});
+
 // Error handling for unknown commands
 program.on("command:*", () => {
 	console.error(
@@ -436,5 +496,10 @@ program.on("command:*", () => {
 	);
 	process.exit(1);
 });
+
+// Show help if no command provided
+if (process.argv.length <= 2) {
+	program.help();
+}
 
 program.parse(process.argv);
