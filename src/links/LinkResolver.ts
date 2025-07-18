@@ -23,11 +23,10 @@ export class LinkResolver {
     const links: LocalLink[] = [];
     const baseDir = dirname(basePath);
 
-    // Reset regex state
-    LinkResolver.MARKDOWN_LINK_REGEX.lastIndex = 0;
+    // Find all matches first
+    const matches = Array.from(content.matchAll(LinkResolver.MARKDOWN_LINK_REGEX));
 
-    let match: RegExpExecArray | null;
-    while ((match = LinkResolver.MARKDOWN_LINK_REGEX.exec(content)) !== null) {
+    for (const match of matches) {
       const [fullMatch, linkText, linkPath] = match;
 
       if (!fullMatch || !linkText || !linkPath) continue;
@@ -80,7 +79,18 @@ export class LinkResolver {
    */
   static validateLinkTarget(linkPath: string): boolean {
     try {
-      return existsSync(linkPath);
+      // Try the path as-is first
+      if (existsSync(linkPath)) {
+        return true;
+      }
+
+      // Try decoding URL-encoded characters
+      const decodedPath = decodeURIComponent(linkPath);
+      if (existsSync(decodedPath)) {
+        return true;
+      }
+
+      return false;
     } catch (error) {
       console.warn(`Error validating link target ${linkPath}:`, error);
       return false;
@@ -109,8 +119,10 @@ export class LinkResolver {
       newLink: string;
     }> = [];
 
-    let match;
-    while ((match = LinkResolver.MARKDOWN_LINK_REGEX.exec(content)) !== null) {
+    // Find all matches first
+    const matches = Array.from(content.matchAll(LinkResolver.MARKDOWN_LINK_REGEX));
+
+    for (const match of matches) {
       const [fullMatch, linkText, linkPath] = match;
 
       if (!fullMatch || !linkText || !linkPath) continue;

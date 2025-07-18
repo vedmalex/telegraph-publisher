@@ -160,7 +160,14 @@ export class DependencyManager {
 
     try {
       // Read file content and find local links
-      const content = readFileSync(filePath, 'utf-8');
+      let content: string;
+      try {
+        content = readFileSync(filePath, 'utf-8');
+      } catch (error) {
+        // Try decoding URL-encoded characters
+        const decodedPath = decodeURIComponent(filePath);
+        content = readFileSync(decodedPath, 'utf-8');
+      }
       const contentWithoutMetadata = MetadataManager.removeMetadata(content);
       const localLinks = LinkResolver.findLocalLinks(contentWithoutMetadata, filePath);
       const markdownLinks = LinkResolver.filterMarkdownLinks(localLinks);

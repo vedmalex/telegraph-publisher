@@ -159,6 +159,10 @@ export class TelegraphPublisher {
 		title: string,
 		htmlContent: string,
 	): Promise<TelegraphPage> {
+		// Store parameters for potential retry
+		const originalTitle: string = title;
+		const originalHtmlContent: string = htmlContent;
+
 		if (!this.accessToken) {
 			throw new Error("No access token. Please create an account first.");
 		}
@@ -197,6 +201,14 @@ export class TelegraphPublisher {
 		const data = (await response.json()) as ApiResponse<TelegraphPage>;
 
 		if (!data.ok) {
+			// Handle FLOOD_WAIT errors
+			if (data.error && data.error.startsWith('FLOOD_WAIT_')) {
+				const waitSeconds = parseInt(data.error!.split('_')[2]) || 5;
+				console.warn(`Rate limited by Telegraph API. Waiting ${waitSeconds} seconds...`);
+				await this.sleep(waitSeconds * 1000);
+				// Retry the request
+				return this.publishHtml(title, htmlContent);
+			}
 			throw new Error(`Telegraph API error: ${data.error}`);
 		}
 
@@ -255,6 +267,13 @@ export class TelegraphPublisher {
 		authorName?: string,
 		authorUrl?: string,
 	): Promise<TelegraphPage> {
+		// Store parameters for potential retry
+		const originalPath = path;
+		const originalTitle = title;
+		const originalNodes = nodes;
+		const originalAuthorName = authorName;
+		const originalAuthorUrl = authorUrl;
+
 		if (!this.accessToken) {
 			throw new Error("Access token is not set for editPage.");
 		}
@@ -287,6 +306,14 @@ export class TelegraphPublisher {
 
 		const data = (await response.json()) as ApiResponse<TelegraphPage>;
 		if (!data.ok) {
+			// Handle FLOOD_WAIT errors
+			if (data.error && data.error.startsWith('FLOOD_WAIT_')) {
+				const waitSeconds = parseInt(data.error!.split('_')[2]) || 5;
+				console.warn(`Rate limited by Telegraph API. Waiting ${waitSeconds} seconds...`);
+				await this.sleep(waitSeconds * 1000);
+				// Retry the request with original parameters
+				return this.editPage(path, title, nodes, authorName, authorUrl);
+			}
 			throw new Error(`Telegraph API error: ${data.error}`);
 		}
 
@@ -543,5 +570,13 @@ export class TelegraphPublisher {
 				`Content size (${(byteSize / 1024).toFixed(2)} KB) exceeds the Telegra.ph limit of ${(maxBytes / 1024).toFixed(0)} KB. Please reduce the content size.`,
 			);
 		}
+	}
+
+	/**
+	 * Sleep for specified number of milliseconds
+	 * @param ms Milliseconds to sleep
+	 */
+	private async sleep(ms: number): Promise<void> {
+		return new Promise(resolve => setTimeout(resolve, ms));
 	}
 }

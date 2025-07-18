@@ -76,8 +76,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         ? await this.replaceLinksWithTelegraphUrls(processed, filePath)
         : processed;
 
-      // Validate content
-      const validation = ContentProcessor.validateContent(processedWithLinks);
+      // Validate content with relaxed rules for depth 1
+      const isDepthOne = this.config.maxDependencyDepth === 1;
+      const validation = ContentProcessor.validateContent(processedWithLinks, {
+        allowBrokenLinks: isDepthOne,
+        allowUnpublishedDependencies: isDepthOne
+      });
       if (!validation.isValid) {
         return {
           success: false,
@@ -105,13 +109,15 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Create new page
       const page = await this.publishNodes(title, telegraphNodes);
 
-      // Create metadata
+      // Create metadata - preserve original title from metadata if it exists
+      const originalTitle = processed.metadata?.title;
+      const metadataTitle = originalTitle || title;
       const metadata = MetadataManager.createMetadata(
         page.url,
         page.path,
         username,
         filePath,
-        title
+        metadataTitle
       );
 
       // Inject metadata into file
@@ -184,8 +190,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         ? await this.replaceLinksWithTelegraphUrls(processed, filePath)
         : processed;
 
-      // Validate content
-      const validation = ContentProcessor.validateContent(processedWithLinks);
+      // Validate content with relaxed rules for depth 1
+      const isDepthOne = this.config.maxDependencyDepth === 1;
+      const validation = ContentProcessor.validateContent(processedWithLinks, {
+        allowBrokenLinks: isDepthOne,
+        allowUnpublishedDependencies: isDepthOne
+      });
       if (!validation.isValid) {
         return {
           success: false,
@@ -213,11 +223,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Edit existing page
       const page = await this.editPage(existingMetadata.editPath, title, telegraphNodes, username);
 
-      // Update metadata with new timestamp
+      // Update metadata with new timestamp - preserve original title from metadata if it exists
+      const originalTitle = processed.metadata?.title;
+      const metadataTitle = originalTitle || title;
       const updatedMetadata: FileMetadata = {
         ...existingMetadata,
         publishedAt: new Date().toISOString(),
-        title
+        title: metadataTitle
       };
 
       // Update metadata in file

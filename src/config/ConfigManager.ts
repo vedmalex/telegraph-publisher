@@ -24,7 +24,7 @@ export class ConfigManager {
     defaultUsername: undefined,
     autoPublishDependencies: true,
     replaceLinksinContent: true,
-    maxDependencyDepth: 5,
+    maxDependencyDepth: 1,
     createBackups: false,
     manageBidirectionalLinks: true,
     autoSyncCache: true,

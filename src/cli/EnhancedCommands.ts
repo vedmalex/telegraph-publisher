@@ -1,11 +1,17 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Command } from "commander";
+import { PagesCacheManager } from "../cache/PagesCacheManager";
 import { ConfigManager } from "../config/ConfigManager";
+import { ContentProcessor } from "../content/ContentProcessor";
 import { DependencyManager } from "../dependencies/DependencyManager";
+import { BidirectionalLinkResolver } from "../links/BidirectionalLinkResolver";
+import { LinkResolver } from "../links/LinkResolver";
+import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
 import { MetadataManager } from "../metadata/MetadataManager";
 import { EnhancedTelegraphPublisher } from "../publisher/EnhancedTelegraphPublisher";
-import { PublicationStatus } from "../types/metadata";
+import { TelegraphPublisher } from "../telegraphPublisher";
+import { type FileMetadata, PublicationStatus, type TelegraphLink } from "../types/metadata";
 import { ProgressIndicator } from "./ProgressIndicator";
 
 /**
@@ -14,16 +20,18 @@ import { ProgressIndicator } from "./ProgressIndicator";
 export class EnhancedCommands {
 
   /**
-   * Add enhanced publish command
+   * Add unified publish command (combines pub and edit functionality)
    * @param program Commander program instance
    */
   static addPublishCommand(program: Command): void {
     program
-      .command("publish-enhanced")
+      .command("publish")
       .alias("pub")
-      .description("Publish Markdown file with metadata management and dependency resolution")
-      .option("-f, --file <path>", "Path to the Markdown file to publish")
+      .description("Unified publish/edit command: creates, publishes, or updates Markdown files (if no file specified, publishes entire directory)")
+      .option("-f, --file <path>", "Path to the Markdown file (optional - if not specified, publishes current directory)")
       .option("-a, --author <name>", "Author's name (overrides config default)")
+      .option("--title <title>", "Title of the article (optional, will be extracted from file if not provided)")
+      .option("--author-url <url>", "Author's URL (optional)")
       .option("--with-dependencies", "Automatically publish linked local files (default: true)")
       .option("--no-with-dependencies", "Skip automatic dependency publishing")
       .option("--force-republish", "Force republish even if file is already published")
@@ -32,10 +40,10 @@ export class EnhancedCommands {
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
         try {
-          await EnhancedCommands.handlePublishCommand(options);
+          await EnhancedCommands.handleUnifiedPublishCommand(options);
         } catch (error) {
           ProgressIndicator.showStatus(
-            `Publication failed: ${error instanceof Error ? error.message : String(error)}`,
+            `Operation failed: ${error instanceof Error ? error.message : String(error)}`,
             "error"
           );
           process.exit(1);
@@ -52,7 +60,7 @@ export class EnhancedCommands {
       .command("analyze")
       .description("Analyze file dependencies and publication status")
       .option("-f, --file <path>", "Path to the Markdown file to analyze")
-      .option("--depth <number>", "Maximum dependency depth to analyze", "5")
+      .option("--depth <number>", "Maximum dependency depth to analyze", "1")
       .option("--show-tree", "Show dependency tree visualization")
       .action(async (options) => {
         try {
@@ -119,19 +127,29 @@ export class EnhancedCommands {
   }
 
   /**
-   * Handle enhanced publish command
+   * Handle unified publish command (combines pub and edit functionality)
    * @param options Command options
    */
-  private static async handlePublishCommand(options: any): Promise<void> {
+  static async handleUnifiedPublishCommand(options: any): Promise<void> {
+    // If no file specified, publish current directory
     if (!options.file) {
-      throw new Error("File path must be specified using --file");
+      await EnhancedCommands.handleDirectoryPublish(options);
+      return;
     }
 
     const filePath = resolve(options.file);
     const fileDirectory = dirname(filePath);
 
+    // Check if file exists, if not create it (edit functionality)
     if (!existsSync(filePath)) {
-      throw new Error(`File not found: ${filePath}`);
+      ProgressIndicator.showStatus("File not found. Creating new file...", "info");
+
+      // Create basic file with title if provided
+      const initialContent = options.title
+        ? `# ${options.title}\n\nContent goes here...`
+        : `# New Article\n\nContent goes here...`;
+      writeFileSync(filePath, initialContent);
+      ProgressIndicator.showStatus(`Created new file: ${filePath}`, "success");
     }
 
     // Load configuration
@@ -158,18 +176,8 @@ export class EnhancedCommands {
       ProgressIndicator.showStatus(`File status: ${status}`, "info");
     }
 
-    if (status === PublicationStatus.PUBLISHED && !options.forceRepublish && !options.dryRun) {
-      ProgressIndicator.showStatus("File is already published. Use --force-republish to override", "warning");
-      const metadata = MetadataManager.getPublicationInfo(filePath);
-      if (metadata) {
-        console.log(`📄 Published URL: ${metadata.telegraphUrl}`);
-        console.log(`📅 Published at: ${metadata.publishedAt}`);
-      }
-      return;
-    }
-
-    // Publish with progress tracking
-    const spinner = ProgressIndicator.createSpinner("Publishing file with metadata management");
+    // Publish/Edit with progress tracking
+    const spinner = ProgressIndicator.createSpinner("Processing file with enhanced workflow");
     spinner.start();
 
     try {
@@ -186,15 +194,36 @@ export class EnhancedCommands {
           `${result.isNewPublication ? "Published" : "Updated"} successfully!`,
           "success"
         );
-        console.log(`📄 URL: ${result.url}`);
-        console.log(`📍 Path: ${result.path}`);
 
-        if (result.metadata) {
+        // Save access token if it was provided
+        if (options.token) {
+          ConfigManager.saveAccessToken(fileDirectory, options.token);
+        }
+
+        // Display results
+        if (result.metadata?.title) {
+          console.log(`📄 Title: ${result.metadata.title}`);
+        }
+        if (result.url) {
+          console.log(`🔗 URL: ${result.url}`);
+        }
+        if (result.path) {
+          console.log(`📍 Path: ${result.path}`);
+        }
+        if (result.metadata?.username) {
           console.log(`👤 Author: ${result.metadata.username}`);
+        }
+        if (result.metadata?.publishedAt) {
           console.log(`📅 Published: ${result.metadata.publishedAt}`);
         }
+        console.log(`📝 File: ${filePath}`);
+
+        // Handle title and authorUrl if provided in options
+        if (options.title && result.metadata && result.metadata.title !== options.title) {
+          ProgressIndicator.showStatus("Note: Title was extracted from content, not from --title parameter", "info");
+        }
       } else {
-        throw new Error(result.error || "Unknown publication error");
+        throw new Error(result.error || "Unknown operation error");
       }
     } catch (error) {
       spinner.stop("❌ Publication failed");
@@ -344,5 +373,148 @@ export class EnhancedCommands {
         EnhancedCommands.printDependencyTree(dep, newPrefix, isLastDep);
       });
     }
+  }
+
+
+
+  /**
+   * Handle directory publishing - publish all markdown files in current directory and subdirectories
+   * @param options Command line options
+   */
+  static async handleDirectoryPublish(options: any): Promise<void> {
+    const currentDir = process.cwd();
+
+    ProgressIndicator.showStatus("🔄 Publishing directory with enhanced workflow...", "info");
+    ProgressIndicator.showStatus(`📁 Processing directory: ${currentDir}`, "info");
+
+    // Load configuration
+    const config = ConfigManager.getMetadataConfig(currentDir);
+    const accessToken = options.token || ConfigManager.loadAccessToken(currentDir);
+
+    if (!accessToken) {
+      throw new Error("Access token is required. Set it using --token or configure it with 'config' command");
+    }
+
+    // Get username
+    const username = options.author || config.defaultUsername;
+    if (!username) {
+      throw new Error("Author name is required. Provide it using --author or set default in config");
+    }
+
+    // Find all markdown files recursively
+    const markdownFiles = await EnhancedCommands.findMarkdownFiles(currentDir);
+
+    if (markdownFiles.length === 0) {
+      ProgressIndicator.showStatus("📝 No markdown files found in current directory", "info");
+      return;
+    }
+
+    ProgressIndicator.showStatus(`📋 Found ${markdownFiles.length} markdown files`, "info");
+
+    // Create enhanced publisher
+    const publisher = new EnhancedTelegraphPublisher(config);
+    publisher.setAccessToken(accessToken);
+
+    const results: Array<{ file: string, success: boolean, url?: string, error?: string }> = [];
+
+    // Process each file
+    for (const filePath of markdownFiles) {
+      try {
+        ProgressIndicator.showStatus(`⚙️ Processing: ${filePath}`, "info");
+
+        const result = await publisher.publishWithMetadata(filePath, username, {
+          withDependencies: options.withDependencies !== false,
+          forceRepublish: options.forceRepublish || false,
+          dryRun: options.dryRun || false
+        });
+
+        if (result.success) {
+          results.push({
+            file: filePath,
+            success: true,
+            url: result.url
+          });
+
+          const status = result.isNewPublication ? "📄 Published" : "✏️ Updated";
+          ProgressIndicator.showStatus(`${status}: ${filePath}`, "success");
+          if (result.url) {
+            console.log(`🔗 URL: ${result.url}`);
+          }
+        } else {
+          results.push({
+            file: filePath,
+            success: false,
+            error: result.error
+          });
+          ProgressIndicator.showStatus(`❌ Failed: ${filePath} - ${result.error}`, "error");
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        results.push({
+          file: filePath,
+          success: false,
+          error: errorMessage
+        });
+        ProgressIndicator.showStatus(`❌ Error: ${filePath} - ${errorMessage}`, "error");
+      }
+    }
+
+    // Show summary
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length;
+
+    console.log("\n📊 Publication Summary:");
+    console.log("========================");
+    console.log(`✅ Successful: ${successful}`);
+    console.log(`❌ Failed: ${failed}`);
+    console.log(`📁 Total files: ${markdownFiles.length}`);
+
+    if (failed > 0) {
+      console.log("\n❌ Failed files:");
+      results.filter(r => !r.success).forEach(r => {
+        console.log(`  • ${r.file}: ${r.error}`);
+      });
+    }
+  }
+
+  /**
+   * Find all markdown files in directory and subdirectories
+   * @param dir Directory to search
+   * @returns Array of markdown file paths
+   */
+  static async findMarkdownFiles(dir: string): Promise<string[]> {
+    const { readdirSync, statSync } = await import('fs');
+    const { join } = await import('path');
+
+    const files: string[] = [];
+
+    try {
+      const entries = readdirSync(dir);
+
+      for (const entry of entries) {
+        const fullPath = join(dir, entry);
+
+        try {
+          const stat = statSync(fullPath);
+
+          if (stat.isDirectory()) {
+            // Skip node_modules, .git, and other common directories
+            if (!entry.startsWith('.') && entry !== 'node_modules' && entry !== 'dist') {
+              const subFiles = await EnhancedCommands.findMarkdownFiles(fullPath);
+              files.push(...subFiles);
+            }
+          } else if (stat.isFile() && entry.toLowerCase().endsWith('.md')) {
+            files.push(fullPath);
+          }
+        } catch (error) {
+          // Skip files/directories that can't be accessed
+          console.warn(`Warning: Could not access ${fullPath}`);
+        }
+      }
+    } catch (error) {
+      console.warn(`Warning: Could not read directory ${dir}`);
+    }
+
+    return files.sort();
   }
 }

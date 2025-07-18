@@ -92,9 +92,8 @@ export class MetadataManager {
       }
     }
 
-    // Validate required fields
-    if (metadata.telegraphUrl && metadata.editPath && metadata.username &&
-      metadata.publishedAt && metadata.originalFilename) {
+    // Return metadata if any fields were found
+    if (Object.keys(metadata).length > 0) {
       return metadata as FileMetadata;
     }
 
@@ -195,7 +194,16 @@ export class MetadataManager {
    */
   static getPublicationStatus(filePath: string): PublicationStatus {
     try {
-      const content = readFileSync(filePath, 'utf-8');
+      // Try the path as-is first
+      let content: string;
+      try {
+        content = readFileSync(filePath, 'utf-8');
+      } catch (error) {
+        // Try decoding URL-encoded characters
+        const decodedPath = decodeURIComponent(filePath);
+        content = readFileSync(decodedPath, 'utf-8');
+      }
+
       const metadata = MetadataManager.parseMetadata(content);
 
       if (!metadata) {
@@ -220,7 +228,16 @@ export class MetadataManager {
    */
   static getPublicationInfo(filePath: string): FileMetadata | null {
     try {
-      const content = readFileSync(filePath, 'utf-8');
+      // Try the path as-is first
+      let content: string;
+      try {
+        content = readFileSync(filePath, 'utf-8');
+      } catch (error) {
+        // Try decoding URL-encoded characters
+        const decodedPath = decodeURIComponent(filePath);
+        content = readFileSync(decodedPath, 'utf-8');
+      }
+
       return MetadataManager.parseMetadata(content);
     } catch (error) {
       console.error(`Error reading file ${filePath}:`, error);

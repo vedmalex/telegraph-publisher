@@ -9,13 +9,76 @@ import type { FileMetadata, LocalLink, ProcessedContent } from "../types/metadat
 export class ContentProcessor {
 
   /**
+   * Remove duplicate title from content if it matches metadata title
+   * @param content Content to process
+   * @param metadataTitle Title from metadata
+   * @returns Content with duplicate title removed if necessary
+   */
+  static removeDuplicateTitle(content: string, metadataTitle?: string): string {
+    if (!metadataTitle) {
+      return content;
+    }
+
+    // Normalize titles for comparison (remove extra spaces, convert to lowercase)
+    const normalizedMetadataTitle = metadataTitle.trim().toLowerCase();
+
+    // Split content into lines and find first non-empty line
+    const lines = content.split(/\r?\n/);
+    let headerLineIndex = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line || line.trim() === '') continue; // Skip empty lines
+
+      // Check if this line is an h1 header
+      const h1Match = line.match(/^\s*#\s+(.+?)$/);
+      if (h1Match && h1Match[1]) {
+        const contentTitle = h1Match[1].trim().toLowerCase();
+
+        // If titles match, mark for removal
+        if (normalizedMetadataTitle === contentTitle) {
+          headerLineIndex = i;
+        }
+      }
+      break; // Only check first non-empty line
+    }
+
+    // If we found a matching header, remove it
+    if (headerLineIndex >= 0) {
+      lines.splice(headerLineIndex, 1);
+
+      // Remove any empty lines that follow the removed header
+      while (headerLineIndex < lines.length) {
+        const currentLine = lines[headerLineIndex];
+        if (currentLine && currentLine.trim() === '') {
+          lines.splice(headerLineIndex, 1);
+        } else {
+          break;
+        }
+      }
+
+      return lines.join('\n');
+    }
+
+    return content;
+  }
+
+  /**
    * Process file content for publication
    * @param filePath Path to file to process
    * @returns Processed content information
    */
   static processFile(filePath: string): ProcessedContent {
     try {
-      const originalContent = readFileSync(filePath, 'utf-8');
+      // Try the path as-is first
+      let originalContent: string;
+      try {
+        originalContent = readFileSync(filePath, 'utf-8');
+      } catch (error) {
+        // Try decoding URL-encoded characters
+        const decodedPath = decodeURIComponent(filePath);
+        originalContent = readFileSync(decodedPath, 'utf-8');
+      }
       return ContentProcessor.processContent(originalContent, filePath);
     } catch (error) {
       console.error(`Error reading file ${filePath}:`, error);
@@ -34,7 +97,10 @@ export class ContentProcessor {
     const metadata = MetadataManager.parseMetadata(content);
 
     // Remove metadata from content
-    const contentWithoutMetadata = MetadataManager.removeMetadata(content);
+    let contentWithoutMetadata = MetadataManager.removeMetadata(content);
+
+    // Remove duplicate title if it matches metadata title
+    contentWithoutMetadata = ContentProcessor.removeDuplicateTitle(contentWithoutMetadata, metadata?.title);
 
     // Find local links
     const localLinks = LinkResolver.findLocalLinks(contentWithoutMetadata, basePath);
@@ -47,8 +113,10 @@ export class ContentProcessor {
       originalContent: content,
       contentWithoutMetadata,
       contentWithReplacedLinks,
+      contentWithLocalLinks: contentWithoutMetadata, // Initially same as without metadata
       metadata: metadata || undefined,
       localLinks,
+      telegraphLinks: [], // Will be populated when links are replaced
       hasChanges: localLinks.length > 0
     };
   }
@@ -117,30 +185,38 @@ export class ContentProcessor {
   /**
    * Validate processed content for publication
    * @param processedContent Content to validate
+   * @param options Validation options
    * @returns Validation result with any issues found
    */
-  static validateContent(processedContent: ProcessedContent): {
+  static validateContent(processedContent: ProcessedContent, options: {
+    allowBrokenLinks?: boolean;
+    allowUnpublishedDependencies?: boolean;
+  } = {}): {
     isValid: boolean;
     issues: string[];
   } {
     const issues: string[] = [];
 
-    // Check for broken local links
-    const brokenLinks = processedContent.localLinks.filter(link =>
-      !LinkResolver.validateLinkTarget(link.resolvedPath)
-    );
+    // Check for broken local links (only if not allowed)
+    if (!options.allowBrokenLinks) {
+      const brokenLinks = processedContent.localLinks.filter(link =>
+        !LinkResolver.validateLinkTarget(link.resolvedPath)
+      );
 
-    if (brokenLinks.length > 0) {
-      issues.push(`Broken local links found: ${brokenLinks.map(l => l.originalPath).join(', ')}`);
+      if (brokenLinks.length > 0) {
+        issues.push(`Broken local links found: ${brokenLinks.map(l => l.originalPath).join(', ')}`);
+      }
     }
 
-    // Check for unpublished dependencies if replacement is expected
-    const unpublishedLinks = processedContent.localLinks.filter(link =>
-      !link.isPublished && LinkResolver.isMarkdownFile(link.resolvedPath)
-    );
+    // Check for unpublished dependencies (only if not allowed)
+    if (!options.allowUnpublishedDependencies) {
+      const unpublishedLinks = processedContent.localLinks.filter(link =>
+        !link.isPublished && LinkResolver.isMarkdownFile(link.resolvedPath)
+      );
 
-    if (unpublishedLinks.length > 0) {
-      issues.push(`Unpublished dependencies: ${unpublishedLinks.map(l => l.originalPath).join(', ')}`);
+      if (unpublishedLinks.length > 0) {
+        issues.push(`Unpublished dependencies: ${unpublishedLinks.map(l => l.originalPath).join(', ')}`);
+      }
     }
 
     // Check content length
@@ -190,8 +266,10 @@ export class ContentProcessor {
       originalContent: processedContent.originalContent,
       contentWithoutMetadata: processedContent.contentWithoutMetadata,
       contentWithReplacedLinks: processedContent.contentWithReplacedLinks,
+      contentWithLocalLinks: processedContent.contentWithLocalLinks,
       metadata: processedContent.metadata ? { ...processedContent.metadata } : processedContent.metadata,
       localLinks: processedContent.localLinks.map(link => ({ ...link })),
+      telegraphLinks: processedContent.telegraphLinks.map(link => ({ ...link })),
       hasChanges: processedContent.hasChanges
     };
   }
