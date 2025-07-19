@@ -149,6 +149,23 @@ export class MetadataManager {
       return content;
     }
 
+    // Validate that there's actual YAML content between delimiters
+    const yamlLines = lines.slice(1, closingIndex);
+    let hasValidYaml = false;
+
+    for (const line of yamlLines) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#') && trimmed.includes(':')) {
+        hasValidYaml = true;
+        break;
+      }
+    }
+
+    // If no valid YAML found, this is probably an HR tag, not front-matter
+    if (!hasValidYaml) {
+      return content;
+    }
+
     // Return content after closing delimiter, removing empty lines at start
     const remainingLines = lines.slice(closingIndex + 1);
     while (remainingLines.length > 0 && remainingLines[0]?.trim() === '') {
