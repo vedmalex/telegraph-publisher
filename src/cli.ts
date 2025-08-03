@@ -77,6 +77,8 @@ EnhancedCommands.addPublishCommand(program);
 EnhancedCommands.addAnalyzeCommand(program);
 EnhancedCommands.addConfigCommand(program);
 EnhancedCommands.addStatusCommand(program);
+EnhancedCommands.addResetCommand(program);
+EnhancedCommands.addCheckLinksCommand(program);
 
 // Keep original publish command as legacy support with enhanced workflow
 program

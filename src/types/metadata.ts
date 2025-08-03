@@ -13,6 +13,31 @@ export enum PublicationStatus {
 }
 
 /**
+ * Rate limiting strategy options
+ */
+export type BackoffStrategy = 'linear' | 'exponential';
+
+/**
+ * Rate limiting configuration for Telegraph API calls
+ */
+export interface RateLimitConfig {
+  /** Base delay between file publications in milliseconds (default: 1500ms) */
+  baseDelayMs: number;
+  /** Multiplier applied to delay after FLOOD_WAIT errors (default: 2.0) */
+  adaptiveMultiplier: number;
+  /** Maximum delay cap in milliseconds (default: 30000ms) */
+  maxDelayMs: number;
+  /** Backoff strategy for repeated FLOOD_WAIT errors (default: 'linear') */
+  backoffStrategy: BackoffStrategy;
+  /** Maximum retry attempts for FLOOD_WAIT errors (default: 3) */
+  maxRetries: number;
+  /** Cooldown period after multiple FLOOD_WAITs in milliseconds (default: 60000ms) */
+  cooldownPeriodMs: number;
+  /** Enable adaptive throttling based on FLOOD_WAIT patterns (default: true) */
+  enableAdaptiveThrottling: boolean;
+}
+
+/**
  * File metadata stored in YAML front-matter
  */
 export interface FileMetadata {
@@ -210,6 +235,8 @@ export interface MetadataConfig {
   manageBidirectionalLinks: boolean;
   /** Whether to auto-sync published pages cache */
   autoSyncCache: boolean;
+  /** Rate limiting configuration for bulk operations */
+  rateLimiting: RateLimitConfig;
   /** Custom metadata fields */
   customFields?: Record<string, any>;
 }

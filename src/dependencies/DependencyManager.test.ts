@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import { TestHelpers } from "../test-utils/TestHelpers";
-import type { MetadataConfig } from "../types/metadata";
+import type { DependencyNode, MetadataConfig } from "../types/metadata";
 import { PublicationStatus } from "../types/metadata";
 import { DependencyManager } from "./DependencyManager";
 
@@ -466,5 +468,117 @@ originalFilename: "corrupted.md"
       expect(tree.dependencies).toHaveLength(1);
       expect(tree.dependencies[0]?.status).toBe(PublicationStatus.METADATA_CORRUPTED);
     });
+  });
+});
+
+describe('DependencyManager depth consistency fix', () => {
+  let manager: DependencyManager;
+  let tempDir: string;
+
+  beforeEach(() => {
+    const config = TestHelpers.createTestConfig();
+    manager = new DependencyManager(config);
+    tempDir = mkdtempSync(join(tmpdir(), 'dependency-depth-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('should produce identical results for different depth values when sufficient', () => {
+    // Create a shared dependency structure
+    const sharedFile = join(tempDir, 'shared.md');
+    const file1 = join(tempDir, 'file1.md');
+    const file2 = join(tempDir, 'file2.md');
+    const rootFile = join(tempDir, 'root.md');
+
+    writeFileSync(sharedFile, '# Shared content\n[link to another](other.md)');
+    writeFileSync(file1, `# File 1\n[shared dependency](${relative(dirname(file1), sharedFile)})`);
+    writeFileSync(file2, `# File 2\n[same shared dependency](${relative(dirname(file2), sharedFile)})`);
+    writeFileSync(rootFile, `# Root\n[to file1](${relative(dirname(rootFile), file1)})\n[to file2](${relative(dirname(rootFile), file2)})`);
+
+    // Build trees with different depth values
+    const tree10 = manager.buildDependencyTree(rootFile, 10);
+    const tree100 = manager.buildDependencyTree(rootFile, 100);
+    const tree5 = manager.buildDependencyTree(rootFile, 5);
+
+    // Helper function to normalize trees for comparison (remove depth info that may vary)
+    const normalizeForComparison = (node: DependencyNode): any => ({
+      filePath: node.filePath,
+      status: node.status,
+      dependencies: node.dependencies.map(normalizeForComparison).sort((a, b) => a.filePath.localeCompare(b.filePath))
+    });
+
+    const normalized10 = normalizeForComparison(tree10);
+    const normalized100 = normalizeForComparison(tree100);
+    const normalized5 = normalizeForComparison(tree5);
+
+    // Different sufficient depths should produce identical trees
+    expect(normalized10).toEqual(normalized100);
+    expect(normalized10).toEqual(normalized5);
+
+    // Verify shared dependencies maintain their structure in all instances
+    const findSharedNodeInTree = (tree: DependencyNode, targetPath: string): DependencyNode | null => {
+      if (tree.filePath === targetPath) return tree;
+      for (const dep of tree.dependencies) {
+        const found = findSharedNodeInTree(dep, targetPath);
+        if (found) return found;
+      }
+      return null;
+    };
+
+    const sharedIn10 = findSharedNodeInTree(tree10, sharedFile);
+    const sharedIn100 = findSharedNodeInTree(tree100, sharedFile);
+
+    expect(sharedIn10).toBeTruthy();
+    expect(sharedIn100).toBeTruthy();
+
+    // Shared nodes should have identical structure regardless of path taken to reach them
+    if (sharedIn10 && sharedIn100) {
+      expect(normalizeForComparison(sharedIn10)).toEqual(normalizeForComparison(sharedIn100));
+    }
+  });
+
+  it('should handle shared dependencies with multiple reference paths correctly', () => {
+    // Create a more complex shared dependency scenario
+    const shared = join(tempDir, 'shared.md');
+    const intermediate1 = join(tempDir, 'intermediate1.md');
+    const intermediate2 = join(tempDir, 'intermediate2.md');
+    const root = join(tempDir, 'root.md');
+
+    writeFileSync(shared, '# Shared\nThis is shared content');
+    writeFileSync(intermediate1, `# Int1\n[to shared](${relative(dirname(intermediate1), shared)})`);
+    writeFileSync(intermediate2, `# Int2\n[to shared](${relative(dirname(intermediate2), shared)})`);
+    writeFileSync(root, `# Root\n[to int1](${relative(dirname(root), intermediate1)})\n[to int2](${relative(dirname(root), intermediate2)})`);
+
+    const tree = manager.buildDependencyTree(root, 10);
+
+    // Count how many times shared file appears in the tree
+    const countOccurrences = (node: DependencyNode, targetPath: string): number => {
+      let count = node.filePath === targetPath ? 1 : 0;
+      for (const dep of node.dependencies) {
+        count += countOccurrences(dep, targetPath);
+      }
+      return count;
+    };
+
+    const sharedCount = countOccurrences(tree, shared);
+    expect(sharedCount).toBe(2); // Should appear twice (through both intermediate files)
+
+    // All instances should be complete nodes (not shallow)
+    const collectSharedNodes = (node: DependencyNode, targetPath: string): DependencyNode[] => {
+      const nodes: DependencyNode[] = [];
+      if (node.filePath === targetPath) nodes.push(node);
+      for (const dep of node.dependencies) {
+        nodes.push(...collectSharedNodes(dep, targetPath));
+      }
+      return nodes;
+    };
+
+    const allSharedNodes = collectSharedNodes(tree, shared);
+    expect(allSharedNodes).toHaveLength(2);
+
+    // Both instances should be identical complete nodes
+    expect(allSharedNodes[0]).toEqual(allSharedNodes[1]);
   });
 });

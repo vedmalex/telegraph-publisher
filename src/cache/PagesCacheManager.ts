@@ -137,6 +137,9 @@ export class PagesCacheManager {
       this.cache.localToTelegraph[pageInfo.localFilePath] = pageInfo.telegraphUrl;
       this.cache.telegraphToLocal[pageInfo.telegraphUrl] = pageInfo.localFilePath;
     }
+
+    // Save cache after adding page
+    this.saveCache();
   }
 
   /**

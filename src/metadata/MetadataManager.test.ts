@@ -343,3 +343,260 @@ More content`;
     });
   });
 });
+
+describe("resetMetadata", () => {
+  it("should preserve only title from existing front-matter", () => {
+    const content = `---
+title: "Test Article"
+telegraphUrl: "https://telegra.ph/test-123"
+editPath: "/edit/test-123"
+username: "testuser"
+publishedAt: "2023-01-01T00:00:00.000Z"
+originalFilename: "test.md"
+description: "Test description"
+---
+
+# Test Content
+
+This is test content.`;
+
+    const result = MetadataManager.resetMetadata(content);
+    const expectedResult = `---
+title: "Test Article"
+---
+
+# Test Content
+
+This is test content.`;
+
+    expect(result).toBe(expectedResult);
+  });
+
+  it("should extract title from markdown heading when no front-matter title", () => {
+    const content = `---
+telegraphUrl: "https://telegra.ph/test-123"
+editPath: "/edit/test-123"
+username: "testuser"
+---
+
+# Extracted Title
+
+This is test content.`;
+
+    const result = MetadataManager.resetMetadata(content);
+    const expectedResult = `---
+title: "Extracted Title"
+---
+
+# Extracted Title
+
+This is test content.`;
+
+    expect(result).toBe(expectedResult);
+  });
+
+  it("should extract title from filename when no other title sources", () => {
+    const content = `---
+telegraphUrl: "https://telegra.ph/test-123"
+editPath: "/edit/test-123"
+username: "testuser"
+---
+
+This is test content without heading.`;
+
+    const result = MetadataManager.resetMetadata(content, "/path/to/my-test-article.md");
+    const expectedResult = `---
+title: "My Test Article"
+---
+
+This is test content without heading.`;
+
+    expect(result).toBe(expectedResult);
+  });
+
+  it("should remove all front-matter when no title sources available", () => {
+    const content = `---
+telegraphUrl: "https://telegra.ph/test-123"
+editPath: "/edit/test-123"
+username: "testuser"
+---
+
+This is test content without heading.`;
+
+    const result = MetadataManager.resetMetadata(content, "/path/to/123.md");
+    const expectedResult = `This is test content without heading.`;
+
+    expect(result).toBe(expectedResult);
+  });
+
+  it("should handle content without front-matter", () => {
+    const content = `# Test Title
+
+This is content without front-matter.`;
+
+    const result = MetadataManager.resetMetadata(content);
+    const expectedResult = `---
+title: "Test Title"
+---
+
+# Test Title
+
+This is content without front-matter.`;
+
+    expect(result).toBe(expectedResult);
+  });
+
+  it("should handle empty or minimal content", () => {
+    const content = "";
+    const result = MetadataManager.resetMetadata(content);
+    expect(result).toBe("");
+  });
+
+  it("should handle content with only front-matter", () => {
+    const content = `---
+title: "Only Title"
+telegraphUrl: "https://telegra.ph/test-123"
+---`;
+
+    const result = MetadataManager.resetMetadata(content);
+    const expectedResult = `---
+title: "Only Title"
+---`;
+
+    expect(result).toBe(expectedResult);
+  });
+
+  it("should handle malformed front-matter gracefully", () => {
+    const content = `---
+title: "Valid Title"
+broken: [unclosed array
+telegraphUrl: "https://telegra.ph/test-123"
+---
+
+# Content Title
+
+Test content.`;
+
+    const result = MetadataManager.resetMetadata(content);
+
+    // Should preserve front-matter title even if other fields are malformed
+    const expectedResult = `---
+title: "Valid Title"
+---
+
+# Content Title
+
+Test content.`;
+
+    expect(result).toBe(expectedResult);
+  });
+
+  it("should handle Unicode titles correctly", () => {
+    const content = `---
+title: "Тест с русскими символами"
+telegraphUrl: "https://telegra.ph/test-123"
+editPath: "/edit/test-123"
+username: "testuser"
+---
+
+# Заголовок
+
+Содержание на русском языке.`;
+
+    const result = MetadataManager.resetMetadata(content);
+    const expectedResult = `---
+title: "Тест с русскими символами"
+---
+
+# Заголовок
+
+Содержание на русском языке.`;
+
+    expect(result).toBe(expectedResult);
+  });
+
+  it("should handle complex nested metadata", () => {
+    const content = `---
+title: "Test Article"
+metadata:
+  complex: true
+  nested:
+    deep: value
+    array: [1, 2, 3]
+telegraphUrl: "https://telegra.ph/test-123"
+editPath: "/edit/test-123"
+custom:
+  field: value
+---
+
+# Content
+
+Test content.`;
+
+    const result = MetadataManager.resetMetadata(content);
+    const expectedResult = `---
+title: "Test Article"
+---
+
+# Content
+
+Test content.`;
+
+    expect(result).toBe(expectedResult);
+  });
+});
+
+describe("extractFilenameTitle", () => {
+  it("should convert filename to readable title", () => {
+    // Access private method through any cast for testing
+    const extractFilenameTitle = (MetadataManager as any).extractFilenameTitle;
+
+    expect(extractFilenameTitle("/path/to/my-test-article.md")).toBe("My Test Article");
+    expect(extractFilenameTitle("hello-world.md")).toBe("Hello World");
+    expect(extractFilenameTitle("simple_file_name.md")).toBe("Simple File Name");
+    expect(extractFilenameTitle("mixed-format_test.md")).toBe("Mixed Format Test");
+  });
+
+  it("should reject numeric or short filenames", () => {
+    const extractFilenameTitle = (MetadataManager as any).extractFilenameTitle;
+
+    expect(extractFilenameTitle("123.md")).toBeNull();
+    expect(extractFilenameTitle("a.md")).toBeNull();
+    expect(extractFilenameTitle("12.md")).toBeNull();
+  });
+});
+
+describe("extractMarkdownTitle", () => {
+  it("should extract first H1 heading", () => {
+    const extractMarkdownTitle = (MetadataManager as any).extractMarkdownTitle;
+
+    const content1 = "# First Heading\n\n## Second Heading\n\nContent";
+    expect(extractMarkdownTitle(content1)).toBe("First Heading");
+
+    const content2 = "Some text\n\n# Main Title\n\nMore content";
+    expect(extractMarkdownTitle(content2)).toBe("Main Title");
+  });
+
+  it("should return null when no H1 heading found", () => {
+    const extractMarkdownTitle = (MetadataManager as any).extractMarkdownTitle;
+
+    const content1 = "## Only H2\n\nContent";
+    expect(extractMarkdownTitle(content1)).toBeNull();
+
+    const content2 = "No headings here\nJust content";
+    expect(extractMarkdownTitle(content2)).toBeNull();
+  });
+
+  it("should ignore front-matter when extracting title", () => {
+    const extractMarkdownTitle = (MetadataManager as any).extractMarkdownTitle;
+
+    const content = `---
+title: "Front-matter title"
+---
+
+# Markdown Title
+
+Content`;
+    expect(extractMarkdownTitle(content)).toBe("Markdown Title");
+  });
+});

@@ -1,0 +1,19 @@
+{
+  "autoPublishDependencies": true,
+  "replaceLinksinContent": true,
+  "maxDependencyDepth": 1,
+  "createBackups": false,
+  "manageBidirectionalLinks": true,
+  "autoSyncCache": true,
+  "rateLimiting": {
+    "baseDelayMs": 1500,
+    "adaptiveMultiplier": 2,
+    "maxDelayMs": 30000,
+    "backoffStrategy": "linear",
+    "maxRetries": 3,
+    "cooldownPeriodMs": 60000,
+    "enableAdaptiveThrottling": true
+  },
+  "customFields": {},
+  "accessToken": "fake-token"
+}

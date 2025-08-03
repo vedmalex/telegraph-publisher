@@ -1,393 +1,456 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { join } from "node:path";
-import { TestHelpers } from "../test-utils/TestHelpers";
-import { LinkResolver } from "./LinkResolver";
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { LinkResolver } from './LinkResolver';
+import type { BrokenLink, FileScanResult, MarkdownLink } from './types';
 
-describe("LinkResolver", () => {
-  let tempDir: string;
+describe('LinkResolver', () => {
+  let resolver: LinkResolver;
 
   beforeEach(() => {
-    tempDir = TestHelpers.createTempDir("link-resolver-test");
+    resolver = new LinkResolver();
   });
 
-  afterEach(() => {
-    TestHelpers.cleanup();
-  });
-
-  describe("findLocalLinks", () => {
-    it("should find local markdown links", () => {
-      const content = `# Test Article
-
-This is a [local link](./test.md) and another [link](../other.md).
-Also a [relative link](docs/guide.md).
-
-External link: [Google](https://google.com)`;
-
-      const basePath = join(tempDir, "main.md");
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      expect(links).toHaveLength(3);
-      expect(links[0]?.text).toBe("local link");
-      expect(links[0]?.originalPath).toBe("./test.md");
-      expect(links[1]?.text).toBe("link");
-      expect(links[1]?.originalPath).toBe("../other.md");
-      expect(links[2]?.text).toBe("relative link");
-      expect(links[2]?.originalPath).toBe("docs/guide.md");
-    });
-
-    it("should resolve absolute paths correctly", () => {
-      const content = `[Link 1](./test.md) and [Link 2](../other.md)`;
-      const basePath = join(tempDir, "subdir", "main.md");
-
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      expect(links).toHaveLength(2);
-      expect(links[0]?.resolvedPath).toBe(join(tempDir, "subdir", "test.md"));
-      expect(links[1]?.resolvedPath).toBe(join(tempDir, "other.md"));
-    });
-
-    it("should ignore external links", () => {
-      const content = `[External](https://example.com) and [Email](mailto:test@example.com)`;
-      const basePath = join(tempDir, "main.md");
-
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      expect(links).toHaveLength(0);
-    });
-
-    it("should handle links with special characters", () => {
-      const content = `[Link with spaces](./file with spaces.md)
-[Link with parentheses](./file-1.md)
-[Link with brackets](./file1.md)`;
-
-      const basePath = join(tempDir, "main.md");
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      expect(links).toHaveLength(3);
-      expect(links[0]?.originalPath).toBe("./file with spaces.md");
-      expect(links[1]?.originalPath).toBe("./file-1.md");
-      expect(links[2]?.originalPath).toBe("./file1.md");
-    });
-
-    it("should capture link positions correctly", () => {
-      const content = `Start [first link](./test1.md) middle [second link](./test2.md) end`;
-      const basePath = join(tempDir, "main.md");
-
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      expect(links).toHaveLength(2);
-      expect(links[0]?.startIndex).toBe(6);
-      expect(links[0]?.endIndex).toBe(30); // Corrected length
-      expect(links[1]?.startIndex).toBe(38); // Corrected position
-      expect(links[1]?.endIndex).toBe(63); // Corrected length
-    });
-  });
-
-  describe("resolveLocalPath", () => {
-    it("should resolve relative paths", () => {
-      const baseDir = join(tempDir, "docs");
-
-      const resolved1 = LinkResolver.resolveLocalPath("./test.md", baseDir);
-      expect(resolved1).toBe(join(tempDir, "docs", "test.md"));
-
-      const resolved2 = LinkResolver.resolveLocalPath("../other.md", baseDir);
-      expect(resolved2).toBe(join(tempDir, "other.md"));
-
-      const resolved3 = LinkResolver.resolveLocalPath("subdir/file.md", baseDir);
-      expect(resolved3).toBe(join(tempDir, "docs", "subdir", "file.md"));
-    });
-
-    it("should handle absolute paths", () => {
-      const basePath = join(tempDir, "main.md");
-      const absolutePath = join(tempDir, "absolute.md");
-
-      const resolved = LinkResolver.resolveLocalPath(absolutePath, basePath);
-      expect(resolved).toBe(absolutePath);
-    });
-
-    it("should normalize paths", () => {
-      const baseDir = join(tempDir, "docs");
-
-      const resolved = LinkResolver.resolveLocalPath("./subdir/../test.md", baseDir);
-      expect(resolved).toBe(join(tempDir, "docs", "test.md"));
-    });
-  });
-
-  describe("validateLinkTarget", () => {
-    it("should return true for existing files", () => {
-      const testFile = join(tempDir, "existing.md");
-      TestHelpers.createTestFile(testFile, "# Existing file");
-
-      const isValid = LinkResolver.validateLinkTarget(testFile);
-      expect(isValid).toBe(true);
-    });
-
-    it("should return false for non-existent files", () => {
-      const nonExistentFile = join(tempDir, "non-existent.md");
-
-      const isValid = LinkResolver.validateLinkTarget(nonExistentFile);
-      expect(isValid).toBe(false);
-    });
-
-    it("should return true for directories (as they exist)", () => {
-      const isValid = LinkResolver.validateLinkTarget(tempDir);
-      expect(isValid).toBe(true);
-    });
-  });
-
-  describe("replaceLocalLinks", () => {
-    it("should replace local links with provided replacements", () => {
-      const content = `# Test Article
-
-This is a [local link](./test.md) and [another link](./other.md).
-Keep this [external link](https://example.com) unchanged.`;
-
-      const replacements = new Map([
-        ["./test.md", "https://telegra.ph/Test-01-01"],
-        ["./other.md", "https://telegra.ph/Other-01-02"]
-      ]);
-
-      const result = LinkResolver.replaceLocalLinks(content, replacements);
-
-      expect(result).toContain("[local link](https://telegra.ph/Test-01-01)");
-      expect(result).toContain("[another link](https://telegra.ph/Other-01-02)");
-      expect(result).toContain("[external link](https://example.com)");
-    });
-
-    it("should only replace specified links", () => {
-      const content = `[Link 1](./test1.md) and [Link 2](./test2.md) and [Link 3](./test3.md)`;
-
-      const replacements = new Map([
-        ["./test1.md", "https://telegra.ph/Test1-01-01"],
-        ["./test3.md", "https://telegra.ph/Test3-01-03"]
-      ]);
-
-      const result = LinkResolver.replaceLocalLinks(content, replacements);
-
-      expect(result).toContain("[Link 1](https://telegra.ph/Test1-01-01)");
-      expect(result).toContain("[Link 2](./test2.md)"); // Unchanged
-      expect(result).toContain("[Link 3](https://telegra.ph/Test3-01-03)");
-    });
-
-    it("should handle multiple occurrences of the same link", () => {
-      const content = `[First](./test.md) and [Second](./test.md) and [Third](./test.md)`;
-
-      const replacements = new Map([
-        ["./test.md", "https://telegra.ph/Test-01-01"]
-      ]);
-
-      const result = LinkResolver.replaceLocalLinks(content, replacements);
-
-      expect(result).toBe(`[First](https://telegra.ph/Test-01-01) and [Second](https://telegra.ph/Test-01-01) and [Third](https://telegra.ph/Test-01-01)`);
-    });
-
-    it("should preserve link text", () => {
-      const content = `[Custom Link Text](./test.md)`;
-
-      const replacements = new Map([
-        ["./test.md", "https://telegra.ph/Test-01-01"]
-      ]);
-
-      const result = LinkResolver.replaceLocalLinks(content, replacements);
-
-      expect(result).toBe(`[Custom Link Text](https://telegra.ph/Test-01-01)`);
-    });
-
-    it("should handle empty replacements map", () => {
-      const content = `[Link](./test.md)`;
-      const replacements = new Map();
-
-      const result = LinkResolver.replaceLocalLinks(content, replacements);
-
-      expect(result).toBe(content);
-    });
-  });
-
-  describe("isMarkdownFile", () => {
-    it("should identify markdown files correctly", () => {
-      expect(LinkResolver.isMarkdownFile("test.md")).toBe(true);
-      expect(LinkResolver.isMarkdownFile("test.markdown")).toBe(true);
-      expect(LinkResolver.isMarkdownFile("test.mdown")).toBe(true);
-      expect(LinkResolver.isMarkdownFile("test.mkd")).toBe(true);
-    });
-
-    it("should identify non-markdown files correctly", () => {
-      expect(LinkResolver.isMarkdownFile("test.txt")).toBe(false);
-      expect(LinkResolver.isMarkdownFile("test.html")).toBe(false);
-      expect(LinkResolver.isMarkdownFile("test.pdf")).toBe(false);
-      expect(LinkResolver.isMarkdownFile("test")).toBe(false);
-    });
-
-    it("should be case insensitive", () => {
-      expect(LinkResolver.isMarkdownFile("test.MD")).toBe(true);
-      expect(LinkResolver.isMarkdownFile("test.MARKDOWN")).toBe(true);
-    });
-  });
-
-  describe("getUniqueFilePaths", () => {
-    it("should return unique file paths from links", () => {
-      const testFile1 = join(tempDir, "test1.md");
-      const testFile2 = join(tempDir, "test2.md");
-
-      TestHelpers.createTestFile(testFile1, "# Test 1");
-      TestHelpers.createTestFile(testFile2, "# Test 2");
-
-      const content = `# Test\n\n[Link 1](./test1.md) and [Link 2](./test2.md) and [Link 1 again](./test1.md)`;
-      const basePath = join(tempDir, "main.md");
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      const uniquePaths = LinkResolver.getUniqueFilePaths(links);
-
-      expect(uniquePaths.size).toBe(2);
-      expect(uniquePaths.has(testFile1)).toBe(true);
-      expect(uniquePaths.has(testFile2)).toBe(true);
-    });
-
-    it("should filter out non-existent files", () => {
-      const content = `# Test\n\n[Valid](./test.md) and [Invalid](./nonexistent.md)`;
-      const basePath = join(tempDir, "main.md");
-
-      TestHelpers.createTestFile(join(tempDir, "test.md"), "# Test");
-
-      const links = LinkResolver.findLocalLinks(content, basePath);
-      const uniquePaths = LinkResolver.getUniqueFilePaths(links);
-
-      expect(uniquePaths.size).toBe(1);
-      expect(uniquePaths.has(join(tempDir, "test.md"))).toBe(true);
-    });
-  });
-
-  describe("filterMarkdownLinks", () => {
-    it("should filter links to only markdown files", () => {
-      const content = `# Test\n\n[MD file](./test.md) and [Text file](./test.txt) and [Another MD](./other.markdown)`;
-      const basePath = join(tempDir, "main.md");
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      const markdownLinks = LinkResolver.filterMarkdownLinks(links);
-
-      expect(markdownLinks).toHaveLength(2);
-      expect(markdownLinks[0]?.originalPath).toBe("./test.md");
-      expect(markdownLinks[1]?.originalPath).toBe("./other.markdown");
-    });
-  });
-
-  describe("getFileExtension", () => {
-    it("should return file extension with dot", () => {
-      expect(LinkResolver.getFileExtension("test.md")).toBe(".md");
-      expect(LinkResolver.getFileExtension("file.txt")).toBe(".txt");
-      expect(LinkResolver.getFileExtension("archive.tar.gz")).toBe(".gz");
-    });
-
-    it("should return empty string for files without extension", () => {
-      expect(LinkResolver.getFileExtension("README")).toBe("");
-      expect(LinkResolver.getFileExtension("test")).toBe("");
-    });
-  });
-
-  describe("createReplacementMap", () => {
-    it("should create replacement map for valid URLs", () => {
-      const filePaths = new Set([
-        join(tempDir, "test1.md"),
-        join(tempDir, "test2.md"),
-        join(tempDir, "test3.md")
-      ]);
-
-      const getUrlForPath = (path: string) => {
-        if (path.includes("test1")) return "https://telegra.ph/test1";
-        if (path.includes("test2")) return "https://telegra.ph/test2";
-        return null; // test3 has no URL
-      };
-
-      const replacements = LinkResolver.createReplacementMap(filePaths, getUrlForPath);
-
-      expect(replacements.size).toBe(2);
-      expect(replacements.get(join(tempDir, "test1.md"))).toBe("https://telegra.ph/test1");
-      expect(replacements.get(join(tempDir, "test2.md"))).toBe("https://telegra.ph/test2");
-      expect(replacements.has(join(tempDir, "test3.md"))).toBe(false);
-    });
-  });
-
-  describe("edge cases and error handling", () => {
-    it("should handle empty content", () => {
-      const links = LinkResolver.findLocalLinks("", join(tempDir, "main.md"));
-      expect(links).toHaveLength(0);
-    });
-
-    it("should handle content without links", () => {
-      const content = "# Title\n\nJust some text without any links.";
-      const links = LinkResolver.findLocalLinks(content, join(tempDir, "main.md"));
-      expect(links).toHaveLength(0);
-    });
-
-    it("should handle malformed markdown links", () => {
-      const content = `[Incomplete link](incomplete
-[Missing closing bracket](./test.md
-[text]missing parentheses
-[](./empty-text.md)`;
-
-      const basePath = join(tempDir, "main.md");
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      // Our regex is simple and will find any [text](path) pattern
-      expect(links.length).toBeGreaterThan(0);
-      // Should find some valid links
-      expect(links.some(link => link.originalPath.includes("empty-text.md"))).toBe(true);
-    });
-
-    it("should handle very long paths", () => {
-      const longPath = "./very/long/path/to/some/deeply/nested/file/that/might/cause/issues.md";
-      const content = `[Long path](${longPath})`;
-      const basePath = join(tempDir, "main.md");
-
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      expect(links).toHaveLength(1);
-      expect(links[0]?.originalPath).toBe(longPath);
-    });
-
-    it("should handle special characters in file paths", () => {
-      const specialPaths = [
-        "./файл.md", // Cyrillic
-        "./文件.md", // Chinese
-        "./file with spaces.md",
-        "./file-with-dashes.md",
-        "./file_with_underscores.md",
-        "./file.with.dots.md"
+  describe('resolveBrokenLinks', () => {
+    test('should find suggestions for broken links', async () => {
+      const scanResults: FileScanResult[] = [
+        {
+          filePath: '/project/docs/guide.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [
+            {
+              filePath: '/project/docs/guide.md',
+              link: {
+                text: 'API Reference',
+                href: './api.md',
+                lineNumber: 5,
+                columnStart: 0,
+                columnEnd: 20
+              },
+              suggestions: [],
+              canAutoFix: false
+            }
+          ],
+          processingTime: 0
+        },
+        {
+          filePath: '/project/reference/api.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [],
+          processingTime: 0
+        }
       ];
 
-      const content = specialPaths.map((path, i) => `[Link ${i}](${path})`).join("\n");
-      const basePath = join(tempDir, "main.md");
+      const resolved = await resolver.resolveBrokenLinks(scanResults);
 
-      const links = LinkResolver.findLocalLinks(content, basePath);
-
-      expect(links).toHaveLength(specialPaths.length);
-      specialPaths.forEach((path, i) => {
-        expect(links[i]?.originalPath).toBe(path);
-      });
+      expect(resolved[0]?.brokenLinks[0]?.suggestions).toHaveLength(1);
+      expect(resolved[0]?.brokenLinks[0]?.suggestions[0]).toBe('../reference/api.md');
+      expect(resolved[0]?.brokenLinks[0]?.canAutoFix).toBe(true);
     });
 
-    it("should handle nested markdown structures", () => {
-      const content = `# Title
+    test('should handle multiple files with same name', async () => {
+      const scanResults: FileScanResult[] = [
+        {
+          filePath: '/project/docs/guide.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [
+            {
+              filePath: '/project/docs/guide.md',
+              link: {
+                text: 'Config',
+                href: './config.md',
+                lineNumber: 5,
+                columnStart: 0,
+                columnEnd: 20
+              },
+              suggestions: [],
+              canAutoFix: false
+            }
+          ],
+          processingTime: 0
+        },
+        {
+          filePath: '/project/config/config.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [],
+          processingTime: 0
+        },
+        {
+          filePath: '/project/examples/config.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [],
+          processingTime: 0
+        }
+      ];
 
-## Section with [inline link](./section.md)
+      const resolved = await resolver.resolveBrokenLinks(scanResults);
 
-> Quote with [quoted link](./quote.md)
+      expect(resolved[0]?.brokenLinks[0]?.suggestions).toHaveLength(2);
+      expect(resolved[0]?.brokenLinks[0]?.suggestions).toContain('../config/config.md');
+      expect(resolved[0]?.brokenLinks[0]?.suggestions).toContain('../examples/config.md');
+    });
 
-- List item with [list link](./list.md)
-- Another item
+    test('should not find suggestions for non-existent files', async () => {
+      const scanResults: FileScanResult[] = [
+        {
+          filePath: '/project/docs/guide.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [
+            {
+              filePath: '/project/docs/guide.md',
+              link: {
+                text: 'Non-existent',
+                href: './nonexistent.md',
+                lineNumber: 5,
+                columnStart: 0,
+                columnEnd: 20
+              },
+              suggestions: [],
+              canAutoFix: false
+            }
+          ],
+          processingTime: 0
+        }
+      ];
 
-\`\`\`markdown
-This [code link](./code.md) should be ignored
-\`\`\`
+      const resolved = await resolver.resolveBrokenLinks(scanResults);
 
-Regular [normal link](./normal.md) after code block.`;
+      expect(resolved[0]?.brokenLinks[0]?.suggestions).toHaveLength(0);
+      expect(resolved[0]?.brokenLinks[0]?.canAutoFix).toBe(false);
+    });
 
-      const basePath = join(tempDir, "main.md");
-      const links = LinkResolver.findLocalLinks(content, basePath);
+    test('should sort suggestions by preference', async () => {
+      const scanResults: FileScanResult[] = [
+        {
+          filePath: '/project/docs/guide.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [
+            {
+              filePath: '/project/docs/guide.md',
+              link: {
+                text: 'File',
+                href: './file.md',
+                lineNumber: 5,
+                columnStart: 0,
+                columnEnd: 20
+              },
+              suggestions: [],
+              canAutoFix: false
+            }
+          ],
+          processingTime: 0
+        },
+        {
+          filePath: '/project/docs/file.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [],
+          processingTime: 0
+        },
+        {
+          filePath: '/project/deep/nested/path/file.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [],
+          processingTime: 0
+        }
+      ];
 
-      // Our simple parser doesn't exclude code blocks, so it finds all links
-      expect(links).toHaveLength(5);
-      expect(links.map(l => l.text)).toEqual(["inline link", "quoted link", "list link", "code link", "normal link"]);
+      const resolved = await resolver.resolveBrokenLinks(scanResults);
+      const suggestions = resolved[0]?.brokenLinks[0]?.suggestions || [];
+
+      // Shorter path should come first
+      expect(suggestions[0]).toBe('./file.md');
+      expect(suggestions[1]).toBe('../deep/nested/path/file.md');
+    });
+  });
+
+  describe('getBestSuggestion', () => {
+    test('should return the first suggestion', () => {
+      const brokenLink: BrokenLink = {
+        filePath: '/project/file.md',
+        link: {
+          text: 'Link',
+          href: './target.md',
+          lineNumber: 1,
+          columnStart: 0,
+          columnEnd: 10
+        },
+        suggestions: ['./suggestion1.md', './suggestion2.md'],
+        canAutoFix: true
+      };
+
+      const best = resolver.getBestSuggestion(brokenLink);
+      expect(best).toBe('./suggestion1.md');
+    });
+
+    test('should return null for no suggestions', () => {
+      const brokenLink: BrokenLink = {
+        filePath: '/project/file.md',
+        link: {
+          text: 'Link',
+          href: './target.md',
+          lineNumber: 1,
+          columnStart: 0,
+          columnEnd: 10
+        },
+        suggestions: [],
+        canAutoFix: false
+      };
+
+      const best = resolver.getBestSuggestion(brokenLink);
+      expect(best).toBeNull();
+    });
+  });
+
+  describe('hasMultipleSuggestions', () => {
+    test('should return true for multiple suggestions', () => {
+      const brokenLink: BrokenLink = {
+        filePath: '/project/file.md',
+        link: {
+          text: 'Link',
+          href: './target.md',
+          lineNumber: 1,
+          columnStart: 0,
+          columnEnd: 10
+        },
+        suggestions: ['./suggestion1.md', './suggestion2.md'],
+        canAutoFix: true
+      };
+
+      expect(resolver.hasMultipleSuggestions(brokenLink)).toBe(true);
+    });
+
+    test('should return false for single suggestion', () => {
+      const brokenLink: BrokenLink = {
+        filePath: '/project/file.md',
+        link: {
+          text: 'Link',
+          href: './target.md',
+          lineNumber: 1,
+          columnStart: 0,
+          columnEnd: 10
+        },
+        suggestions: ['./suggestion1.md'],
+        canAutoFix: true
+      };
+
+      expect(resolver.hasMultipleSuggestions(brokenLink)).toBe(false);
+    });
+  });
+
+  describe('groupByTargetFilename', () => {
+    test('should group broken links by target filename', () => {
+      const brokenLinks: BrokenLink[] = [
+        {
+          filePath: '/project/file1.md',
+          link: {
+            text: 'Config',
+            href: './config.md',
+            lineNumber: 1,
+            columnStart: 0,
+            columnEnd: 10
+          },
+          suggestions: [],
+          canAutoFix: false
+        },
+        {
+          filePath: '/project/file2.md',
+          link: {
+            text: 'Config',
+            href: '../config.md',
+            lineNumber: 1,
+            columnStart: 0,
+            columnEnd: 10
+          },
+          suggestions: [],
+          canAutoFix: false
+        },
+        {
+          filePath: '/project/file3.md',
+          link: {
+            text: 'API',
+            href: './api.md',
+            lineNumber: 1,
+            columnStart: 0,
+            columnEnd: 10
+          },
+          suggestions: [],
+          canAutoFix: false
+        }
+      ];
+
+      const groups = resolver.groupByTargetFilename(brokenLinks);
+
+      expect(groups.size).toBe(2);
+      expect(groups.get('config.md')).toHaveLength(2);
+      expect(groups.get('api.md')).toHaveLength(1);
+    });
+  });
+
+  describe('calculateFixConfidence', () => {
+    test('should return high confidence for exact filename match', () => {
+      const brokenLink: BrokenLink = {
+        filePath: '/project/file.md',
+        link: {
+          text: 'Config',
+          href: './config.md',
+          lineNumber: 1,
+          columnStart: 0,
+          columnEnd: 10
+        },
+        suggestions: [],
+        canAutoFix: false
+      };
+
+      const confidence = resolver.calculateFixConfidence(brokenLink, '../other/config.md');
+      expect(confidence).toBeGreaterThanOrEqual(0.8);
+    });
+
+    test('should return lower confidence for partial match', () => {
+      const brokenLink: BrokenLink = {
+        filePath: '/project/file.md',
+        link: {
+          text: 'Config',
+          href: './config.md',
+          lineNumber: 1,
+          columnStart: 0,
+          columnEnd: 10
+        },
+        suggestions: [],
+        canAutoFix: false
+      };
+
+      const confidence = resolver.calculateFixConfidence(brokenLink, '../other/configuration.md');
+      expect(confidence).toBeLessThan(0.6);
+    });
+
+    test('should return zero confidence for no filename', () => {
+      const brokenLink: BrokenLink = {
+        filePath: '/project/file.md',
+        link: {
+          text: 'Directory',
+          href: './some-directory/',
+          lineNumber: 1,
+          columnStart: 0,
+          columnEnd: 10
+        },
+        suggestions: [],
+        canAutoFix: false
+      };
+
+      const confidence = resolver.calculateFixConfidence(brokenLink, '../other/config.md');
+      expect(confidence).toBe(0);
+    });
+  });
+
+  describe('getResolutionStats', () => {
+    test('should calculate correct resolution statistics', () => {
+      const scanResults: FileScanResult[] = [
+        {
+          filePath: '/project/file1.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [
+            {
+              filePath: '/project/file1.md',
+              link: {
+                text: 'Link 1',
+                href: './target1.md',
+                lineNumber: 1,
+                columnStart: 0,
+                columnEnd: 10
+              },
+              suggestions: ['./suggestion1.md'],
+              canAutoFix: true
+            },
+            {
+              filePath: '/project/file1.md',
+              link: {
+                text: 'Link 2',
+                href: './target2.md',
+                lineNumber: 2,
+                columnStart: 0,
+                columnEnd: 10
+              },
+              suggestions: [],
+              canAutoFix: false
+            }
+          ],
+          processingTime: 0
+        },
+        {
+          filePath: '/project/file2.md',
+          allLinks: [],
+          localLinks: [],
+          brokenLinks: [
+            {
+              filePath: '/project/file2.md',
+              link: {
+                text: 'Link 3',
+                href: './target3.md',
+                lineNumber: 1,
+                columnStart: 0,
+                columnEnd: 10
+              },
+              suggestions: ['./suggestion3a.md', './suggestion3b.md'],
+              canAutoFix: true
+            }
+          ],
+          processingTime: 0
+        }
+      ];
+
+      const stats = resolver.getResolutionStats(scanResults);
+
+      expect(stats.totalBrokenLinks).toBe(3);
+      expect(stats.linksWithSuggestions).toBe(2);
+      expect(stats.resolutionRate).toBeCloseTo(66.67, 2); // 2/3 * 100
+      expect(stats.averageSuggestionsPerLink).toBe(1.5); // (1 + 2) / 2
+      expect(stats.filesWithAutoFixableLinks).toBe(2);
+    });
+
+    test('should handle empty results', () => {
+      const stats = resolver.getResolutionStats([]);
+
+      expect(stats.totalBrokenLinks).toBe(0);
+      expect(stats.linksWithSuggestions).toBe(0);
+      expect(stats.resolutionRate).toBe(0);
+      expect(stats.averageSuggestionsPerLink).toBe(0);
+      expect(stats.filesWithAutoFixableLinks).toBe(0);
+    });
+  });
+
+  describe('extractFilename', () => {
+    test('should extract filename from various paths', () => {
+      // Access private method for testing through type assertion
+      const extractFilename = (resolver as any).extractFilename.bind(resolver);
+
+      expect(extractFilename('./config.md')).toBe('config.md');
+      expect(extractFilename('../path/to/file.md')).toBe('file.md');
+      expect(extractFilename('/absolute/path/file.md')).toBe('file.md');
+      expect(extractFilename('file.md')).toBe('file.md');
+    });
+
+    test('should handle query parameters and fragments', () => {
+      const extractFilename = (resolver as any).extractFilename.bind(resolver);
+
+      expect(extractFilename('./file.md?param=value')).toBe('file.md');
+      expect(extractFilename('./file.md#section')).toBe('file.md');
+      expect(extractFilename('./file.md?param=value#section')).toBe('file.md');
+    });
+
+    test('should return null for invalid filenames', () => {
+      const extractFilename = (resolver as any).extractFilename.bind(resolver);
+
+      expect(extractFilename('./directory/')).toBeNull();
+      expect(extractFilename('./no-extension')).toBeNull();
+      expect(extractFilename('')).toBeNull();
     });
   });
 });

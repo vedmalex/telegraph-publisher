@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { MetadataConfig } from "../types/metadata";
+import type { MetadataConfig, RateLimitConfig } from "../types/metadata";
 
 /**
  * Extended configuration interface including legacy fields
@@ -18,6 +18,19 @@ export class ConfigManager {
   private static readonly LEGACY_CONFIG_FILE_NAME = ".telegraph-publisher-config.json";
 
   /**
+   * Default rate limiting configuration
+   */
+  private static readonly DEFAULT_RATE_LIMIT_CONFIG: RateLimitConfig = {
+    baseDelayMs: 1500,
+    adaptiveMultiplier: 2.0,
+    maxDelayMs: 30000,
+    backoffStrategy: 'linear',
+    maxRetries: 3,
+    cooldownPeriodMs: 60000,
+    enableAdaptiveThrottling: true
+  };
+
+  /**
    * Default configuration values
    */
   private static readonly DEFAULT_CONFIG: MetadataConfig = {
@@ -28,6 +41,7 @@ export class ConfigManager {
     createBackups: false,
     manageBidirectionalLinks: true,
     autoSyncCache: true,
+    rateLimiting: ConfigManager.DEFAULT_RATE_LIMIT_CONFIG,
     customFields: {}
   };
 
@@ -109,6 +123,7 @@ export class ConfigManager {
       createBackups: config.createBackups ?? ConfigManager.DEFAULT_CONFIG.createBackups,
       manageBidirectionalLinks: config.manageBidirectionalLinks ?? ConfigManager.DEFAULT_CONFIG.manageBidirectionalLinks,
       autoSyncCache: config.autoSyncCache ?? ConfigManager.DEFAULT_CONFIG.autoSyncCache,
+      rateLimiting: config.rateLimiting ?? ConfigManager.DEFAULT_CONFIG.rateLimiting,
       customFields: config.customFields ?? ConfigManager.DEFAULT_CONFIG.customFields
     };
   }

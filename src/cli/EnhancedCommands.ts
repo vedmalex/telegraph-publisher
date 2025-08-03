@@ -7,11 +7,14 @@ import { ContentProcessor } from "../content/ContentProcessor";
 import { DependencyManager } from "../dependencies/DependencyManager";
 import { BidirectionalLinkResolver } from "../links/BidirectionalLinkResolver";
 import { LinkResolver } from "../links/LinkResolver";
+import type { BrokenLink, FileScanResult } from "../links/types";
 import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
 import { MetadataManager } from "../metadata/MetadataManager";
 import { EnhancedTelegraphPublisher } from "../publisher/EnhancedTelegraphPublisher";
 import { TelegraphPublisher } from "../telegraphPublisher";
 import { type FileMetadata, PublicationStatus, type TelegraphLink } from "../types/metadata";
+import { PathResolver } from "../utils/PathResolver";
+import { PublicationWorkflowManager } from "../workflow";
 import { ProgressIndicator } from "./ProgressIndicator";
 
 /**
@@ -36,6 +39,8 @@ export class EnhancedCommands {
       .option("--no-with-dependencies", "Skip automatic dependency publishing")
       .option("--force-republish", "Force republish even if file is already published")
       .option("--dry-run", "Preview operations without making changes")
+      .option("--no-verify", "Skip mandatory local link verification before publishing")
+      .option("--no-auto-repair", "Disable automatic link repair (publication will fail if broken links are found)")
       .option("--token <token>", "Access token (optional, will try to load from config)")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
@@ -127,32 +132,76 @@ export class EnhancedCommands {
   }
 
   /**
+   * Add reset command
+   * @param program Commander program instance
+   */
+  static addResetCommand(program: Command): void {
+    program
+      .command("reset")
+      .alias("r")
+      .description("Reset publication metadata, preserving only title")
+      .option("-f, --file <path>", "Path to specific file (optional - processes directory if not specified)")
+      .option("--dry-run", "Preview changes without modification")
+      .option("-v, --verbose", "Detailed progress information")
+      .option("--force", "Reset files even without publication metadata")
+      .action(async (options) => {
+        try {
+          await EnhancedCommands.handleResetCommand(options);
+        } catch (error) {
+          ProgressIndicator.showStatus(
+            `Reset failed: ${error instanceof Error ? error.message : String(error)}`,
+            "error"
+          );
+          process.exit(1);
+        }
+      });
+  }
+
+  /**
+   * Add check-links command
+   * @param program Commander program instance
+   */
+  static addCheckLinksCommand(program: Command): void {
+    program
+      .command("check-links")
+      .alias("cl")
+      .description("Verify and repair local Markdown links")
+      .argument("[path]", "Path to file or directory (default: current directory)")
+      .option("--apply-fixes", "Enable interactive repair mode")
+      .option("--dry-run", "Report only, no changes (default)")
+      .option("-v, --verbose", "Show detailed progress information")
+      .option("-o, --output <file>", "Save report to file")
+      .action(async (path, options) => {
+        try {
+          await EnhancedCommands.handleCheckLinksCommand(path, options);
+        } catch (error) {
+          ProgressIndicator.showStatus(
+            `Link check failed: ${error instanceof Error ? error.message : String(error)}`,
+            "error"
+          );
+          process.exit(1);
+        }
+      });
+  }
+
+  /**
    * Handle unified publish command (combines pub and edit functionality)
    * @param options Command options
    */
   static async handleUnifiedPublishCommand(options: any): Promise<void> {
-    // If no file specified, publish current directory
-    if (!options.file) {
-      await EnhancedCommands.handleDirectoryPublish(options);
-      return;
-    }
+    const targetPath = options.file || process.cwd();
+    const fileDirectory = options.file ? dirname(resolve(options.file)) : process.cwd();
 
-    const filePath = resolve(options.file);
-    const fileDirectory = dirname(filePath);
-
-    // Check if file exists, if not create it (edit functionality)
-    if (!existsSync(filePath)) {
+    // If a specific file is targeted and it doesn't exist, create it (edit functionality)
+    if (options.file && !existsSync(resolve(options.file))) {
       ProgressIndicator.showStatus("File not found. Creating new file...", "info");
-
-      // Create basic file with title if provided
       const initialContent = options.title
         ? `# ${options.title}\n\nContent goes here...`
         : `# New Article\n\nContent goes here...`;
-      writeFileSync(filePath, initialContent);
-      ProgressIndicator.showStatus(`Created new file: ${filePath}`, "success");
+      writeFileSync(resolve(options.file), initialContent);
+      ProgressIndicator.showStatus(`Created new file: ${resolve(options.file)}`, "success");
     }
 
-    // Load configuration
     const config = ConfigManager.getMetadataConfig(fileDirectory);
     const accessToken = options.token || ConfigManager.loadAccessToken(fileDirectory);
 
@@ -160,74 +209,16 @@ export class EnhancedCommands {
       throw new Error("Access token is required. Set it using --token or configure it with 'config' command");
     }
 
-    // Get username
-    const username = options.author || config.defaultUsername;
-    if (!username) {
-      throw new Error("Author name is required. Provide it using --author or set default in config");
-    }
-
-    // Create enhanced publisher
-    const publisher = new EnhancedTelegraphPublisher(config);
-    publisher.setAccessToken(accessToken);
-
-    // Show initial status
-    const status = MetadataManager.getPublicationStatus(filePath);
-    if (options.verbose) {
-      ProgressIndicator.showStatus(`File status: ${status}`, "info");
-    }
-
-    // Publish/Edit with progress tracking
-    const spinner = ProgressIndicator.createSpinner("Processing file with enhanced workflow");
-    spinner.start();
+    const workflowManager = new PublicationWorkflowManager(config, accessToken);
 
     try {
-      const result = await publisher.publishWithMetadata(filePath, username, {
-        withDependencies: options.withDependencies !== false,
-        forceRepublish: options.forceRepublish,
-        dryRun: options.dryRun
-      });
-
-      spinner.stop();
-
-      if (result.success) {
-        ProgressIndicator.showStatus(
-          `${result.isNewPublication ? "Published" : "Updated"} successfully!`,
-          "success"
-        );
-
-        // Save access token if it was provided
-        if (options.token) {
-          ConfigManager.saveAccessToken(fileDirectory, options.token);
-        }
-
-        // Display results
-        if (result.metadata?.title) {
-          console.log(`📄 Title: ${result.metadata.title}`);
-        }
-        if (result.url) {
-          console.log(`🔗 URL: ${result.url}`);
-        }
-        if (result.path) {
-          console.log(`📍 Path: ${result.path}`);
-        }
-        if (result.metadata?.username) {
-          console.log(`👤 Author: ${result.metadata.username}`);
-        }
-        if (result.metadata?.publishedAt) {
-          console.log(`📅 Published: ${result.metadata.publishedAt}`);
-        }
-        console.log(`📝 File: ${filePath}`);
-
-        // Handle title and authorUrl if provided in options
-        if (options.title && result.metadata && result.metadata.title !== options.title) {
-          ProgressIndicator.showStatus("Note: Title was extracted from content, not from --title parameter", "info");
-        }
-      } else {
-        throw new Error(result.error || "Unknown operation error");
-      }
+      await workflowManager.publish(targetPath, options);
     } catch (error) {
-      spinner.stop("❌ Publication failed");
-      throw error;
+      ProgressIndicator.showStatus(
+        `Publication workflow failed: ${error instanceof Error ? error.message : String(error)}`,
+        "error"
+      );
+      process.exit(1);
     }
   }
 
@@ -248,7 +239,8 @@ export class EnhancedCommands {
     const config = ConfigManager.getMetadataConfig(dirname(filePath));
     config.maxDependencyDepth = parseInt(options.depth) || config.maxDependencyDepth;
 
-    const dependencyManager = new DependencyManager(config);
+    const pathResolver = PathResolver.getInstance();
+    const dependencyManager = new DependencyManager(config, pathResolver);
 
     ProgressIndicator.showStatus("Analyzing dependencies...", "info");
 
@@ -382,99 +374,9 @@ export class EnhancedCommands {
    * @param options Command line options
    */
   static async handleDirectoryPublish(options: any): Promise<void> {
-    const currentDir = process.cwd();
-
-    ProgressIndicator.showStatus("🔄 Publishing directory with enhanced workflow...", "info");
-    ProgressIndicator.showStatus(`📁 Processing directory: ${currentDir}`, "info");
-
-    // Load configuration
-    const config = ConfigManager.getMetadataConfig(currentDir);
-    const accessToken = options.token || ConfigManager.loadAccessToken(currentDir);
-
-    if (!accessToken) {
-      throw new Error("Access token is required. Set it using --token or configure it with 'config' command");
-    }
-
-    // Get username
-    const username = options.author || config.defaultUsername;
-    if (!username) {
-      throw new Error("Author name is required. Provide it using --author or set default in config");
-    }
-
-    // Find all markdown files recursively
-    const markdownFiles = await EnhancedCommands.findMarkdownFiles(currentDir);
-
-    if (markdownFiles.length === 0) {
-      ProgressIndicator.showStatus("📝 No markdown files found in current directory", "info");
-      return;
-    }
-
-    ProgressIndicator.showStatus(`📋 Found ${markdownFiles.length} markdown files`, "info");
-
-    // Create enhanced publisher
-    const publisher = new EnhancedTelegraphPublisher(config);
-    publisher.setAccessToken(accessToken);
-
-    const results: Array<{ file: string, success: boolean, url?: string, error?: string }> = [];
-
-    // Process each file
-    for (const filePath of markdownFiles) {
-      try {
-        ProgressIndicator.showStatus(`⚙️ Processing: ${filePath}`, "info");
-
-        const result = await publisher.publishWithMetadata(filePath, username, {
-          withDependencies: options.withDependencies !== false,
-          forceRepublish: options.forceRepublish || false,
-          dryRun: options.dryRun || false
-        });
-
-        if (result.success) {
-          results.push({
-            file: filePath,
-            success: true,
-            url: result.url
-          });
-
-          const status = result.isNewPublication ? "📄 Published" : "✏️ Updated";
-          ProgressIndicator.showStatus(`${status}: ${filePath}`, "success");
-          if (result.url) {
-            console.log(`🔗 URL: ${result.url}`);
-          }
-        } else {
-          results.push({
-            file: filePath,
-            success: false,
-            error: result.error
-          });
-          ProgressIndicator.showStatus(`❌ Failed: ${filePath} - ${result.error}`, "error");
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        results.push({
-          file: filePath,
-          success: false,
-          error: errorMessage
-        });
-        ProgressIndicator.showStatus(`❌ Error: ${filePath} - ${errorMessage}`, "error");
-      }
-    }
-
-    // Show summary
-    const successful = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success).length;
-
-    console.log("\n📊 Publication Summary:");
-    console.log("========================");
-    console.log(`✅ Successful: ${successful}`);
-    console.log(`❌ Failed: ${failed}`);
-    console.log(`📁 Total files: ${markdownFiles.length}`);
-
-    if (failed > 0) {
-      console.log("\n❌ Failed files:");
-      results.filter(r => !r.success).forEach(r => {
-        console.log(`  • ${r.file}: ${r.error}`);
-      });
-    }
+    // This method is now largely replaced by PublicationWorkflowManager.publish
+    // It will simply call the unified publish method with the current directory as target
+    await EnhancedCommands.handleUnifiedPublishCommand(options);
   }
 
   /**
@@ -516,5 +418,258 @@ export class EnhancedCommands {
     }
 
     return files.sort();
+  }
+
+  /**
+   * Handle reset command
+   * @param options Command options
+   */
+  static async handleResetCommand(options: any): Promise<void> {
+    const { readFileSync, writeFileSync } = await import('fs');
+    const { resolve } = await import('path');
+
+    // If no file specified, process current directory
+    if (!options.file) {
+      await EnhancedCommands.handleDirectoryReset(options);
+      return;
+    }
+
+    const filePath = resolve(options.file as string);
+
+    if (options.verbose) {
+      ProgressIndicator.showStatus(`Processing file: ${filePath}`, "info");
+    }
+
+    try {
+      // Read file content
+      const content = readFileSync(filePath, 'utf-8');
+
+      // Check if file has metadata to reset
+      const hasMetadata = content.trim().startsWith('---');
+      if (!hasMetadata && !options.force) {
+        ProgressIndicator.showStatus(`Skipped ${filePath}: No front-matter found`, "info");
+        return;
+      }
+
+      // Perform reset
+      const resetContent = MetadataManager.resetMetadata(content, filePath);
+
+      if (options.dryRun) {
+        ProgressIndicator.showStatus("🔍 Dry-run mode: Preview of changes", "info");
+        console.log(`\n📄 File: ${filePath}`);
+        console.log("📝 Before:");
+        console.log(content.split('\n').slice(0, 10).join('\n') + (content.split('\n').length > 10 ? '\n...' : ''));
+        console.log("\n✨ After:");
+        console.log(resetContent.split('\n').slice(0, 10).join('\n') + (resetContent.split('\n').length > 10 ? '\n...' : ''));
+        console.log("");
+        return;
+      }
+
+      // Write the reset content back to file
+      writeFileSync(filePath, resetContent, 'utf-8');
+
+      ProgressIndicator.showStatus(`✅ Reset completed: ${filePath}`, "success");
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      ProgressIndicator.showStatus(`❌ Error processing ${filePath}: ${errorMessage}`, "error");
+      throw error;
+    }
+  }
+
+  /**
+   * Handle directory reset
+   * @param options Command options
+   */
+  static async handleDirectoryReset(options: any): Promise<void> {
+    const currentDir = process.cwd();
+
+    if (options.verbose) {
+      ProgressIndicator.showStatus(`Scanning directory: ${currentDir}`, "info");
+    }
+
+    // Find all markdown files
+    const markdownFiles = await EnhancedCommands.findMarkdownFiles(currentDir);
+
+    if (markdownFiles.length === 0) {
+      ProgressIndicator.showStatus("No markdown files found in current directory", "info");
+      return;
+    }
+
+    if (options.dryRun) {
+      ProgressIndicator.showStatus("🔍 Dry-run mode: Found files that would be processed:", "info");
+      markdownFiles.forEach(file => console.log(`  📄 ${file}`));
+      console.log(`\nTotal files: ${markdownFiles.length}`);
+      return;
+    }
+
+    ProgressIndicator.showStatus(`Found ${markdownFiles.length} markdown files. Processing...`, "info");
+
+    const spinner = ProgressIndicator.createSpinner("Resetting metadata");
+    spinner.start();
+
+    let successCount = 0;
+    let skipCount = 0;
+    let errorCount = 0;
+    const errors: Array<{ file: string, error: string }> = [];
+
+    try {
+      for (let i = 0; i < markdownFiles.length; i++) {
+        const file = markdownFiles[i];
+        if (!file) continue;
+
+        try {
+          const { readFileSync, writeFileSync } = await import('fs');
+          const content = readFileSync(file, 'utf-8');
+
+          // Check if file has metadata to reset
+          const hasMetadata = content.trim().startsWith('---');
+          if (!hasMetadata && !options.force) {
+            skipCount++;
+            if (options.verbose) {
+              spinner.stop();
+              ProgressIndicator.showStatus(`Skipped ${file}: No front-matter`, "info");
+              spinner.start();
+            }
+            continue;
+          }
+
+          // Perform reset
+          const resetContent = MetadataManager.resetMetadata(content, file);
+          writeFileSync(file, resetContent, 'utf-8');
+
+          successCount++;
+
+          if (options.verbose) {
+            spinner.stop();
+            ProgressIndicator.showStatus(`✅ Reset: ${file}`, "success");
+            spinner.start();
+          }
+
+        } catch (error) {
+          errorCount++;
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          errors.push({ file, error: errorMessage });
+
+          if (options.verbose) {
+            spinner.stop();
+            ProgressIndicator.showStatus(`❌ Error: ${file} - ${errorMessage}`, "error");
+            spinner.start();
+          }
+        }
+      }
+    } finally {
+      spinner.stop();
+    }
+
+    // Display summary
+    ProgressIndicator.showStatus(
+      `\n✅ Reset Operation Complete\n` +
+      `═══════════════════════════\n` +
+      `📊 Files processed: ${markdownFiles.length}\n` +
+      `✅ Successfully reset: ${successCount}\n` +
+      `⚠️  Skipped: ${skipCount}\n` +
+      `❌ Errors: ${errorCount}`,
+      "success"
+    );
+
+    if (errors.length > 0) {
+      console.log("\n❌ Failed files:");
+      errors.forEach(({ file, error }) => {
+        console.log(`  • ${file}: ${error}`);
+      });
+    }
+  }
+
+  /**
+   * Handle check-links command
+   * @param path Path to scan (optional)
+   * @param options Command options
+   */
+  static async handleCheckLinksCommand(path: string | undefined, options: any): Promise<void> {
+    const { LinkScanner, LinkVerifier, LinkResolver, ReportGenerator, InteractiveRepairer } = await import('../links');
+
+    const targetPath = path || process.cwd();
+    const verbose = options.verbose || false;
+    const applyFixes = options.applyFixes || false;
+    const outputFile = options.output;
+
+    const reportGenerator = new ReportGenerator(verbose);
+    const scanner = new LinkScanner();
+    const verifier = new LinkVerifier(PathResolver.getInstance());
+    const resolver = new LinkResolver();
+
+    const startTime = Date.now();
+
+    try {
+      // Show initial progress
+      if (verbose) {
+        reportGenerator.showInfo(`🔎 Starting scan: ${targetPath}`);
+      }
+
+      // Find all markdown files
+      const markdownFiles = await scanner.findMarkdownFiles(targetPath);
+
+      if (markdownFiles.length === 0) {
+        reportGenerator.showInfo('No markdown files found to scan.');
+        return;
+      }
+
+      // Scan all files for links
+      const fileResults: any[] = [];
+      let totalLinks = 0;
+      let totalLocalLinks = 0;
+
+      for (let i = 0; i < markdownFiles.length; i++) {
+        const filePath = markdownFiles[i];
+        if (!filePath) continue;
+
+        if (verbose) {
+          reportGenerator.showVerboseProgress(filePath, i + 1, markdownFiles.length);
+        }
+
+        const scanResult = await scanner.scanFile(filePath);
+        const verifiedResult = await verifier.verifyLinks(scanResult);
+
+        fileResults.push(verifiedResult);
+        totalLinks += verifiedResult.allLinks.length;
+        totalLocalLinks += verifiedResult.localLinks.length;
+
+        if (verbose) {
+          reportGenerator.showVerboseFileDetails(verifiedResult);
+        }
+      }
+
+      // Resolve suggestions for broken links
+      const resolvedResults = await resolver.resolveBrokenLinks(fileResults);
+
+      // Create complete scan result
+      const allBrokenLinks: any[] = [];
+      for (const result of resolvedResults) {
+        allBrokenLinks.push(...result.brokenLinks);
+      }
+
+      const scanResult = {
+        totalFiles: markdownFiles.length,
+        totalLinks,
+        totalLocalLinks,
+        brokenLinks: allBrokenLinks,
+        fileResults: resolvedResults,
+        processingTime: Date.now() - startTime
+      };
+
+      // Generate report
+      reportGenerator.generateReport(scanResult, outputFile);
+
+      // Interactive repair mode
+      if (applyFixes && allBrokenLinks.length > 0) {
+        const repairer = new InteractiveRepairer(reportGenerator);
+        await repairer.performInteractiveRepair(allBrokenLinks);
+      }
+
+    } catch (error) {
+      reportGenerator.showError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   }
 }

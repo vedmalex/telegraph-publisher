@@ -324,4 +324,125 @@ export class MetadataManager {
 
     return lines.join('\n');
   }
+
+  /**
+ * Reset metadata preserving only title
+ * @param content File content with potential metadata
+ * @param filePath Optional file path for title extraction fallback
+ * @returns Content with only title metadata preserved
+ */
+  static resetMetadata(content: string, filePath?: string): string {
+    // Parse existing metadata
+    const existingMetadata = MetadataManager.parseMetadata(content);
+
+    // Remove all existing metadata
+    const contentWithoutMetadata = MetadataManager.removeMetadata(content);
+
+    // Extract title from multiple sources
+    const title = MetadataManager.extractBestTitle(content, existingMetadata, filePath);
+
+    // If title exists, create minimal front-matter with only title
+    if (title) {
+      return MetadataManager.injectTitleOnlyMetadata(contentWithoutMetadata, title);
+    }
+
+    // Return clean content without any front-matter
+    return contentWithoutMetadata;
+  }
+
+  /**
+   * Inject only title metadata into content
+   * @param content Content without metadata
+   * @param title Title to inject
+   * @returns Content with title-only front-matter
+   */
+  private static injectTitleOnlyMetadata(content: string, title: string): string {
+    const titleYaml = `title: "${title}"`;
+
+    // If content is empty or only whitespace, don't add extra newlines
+    if (!content.trim()) {
+      return `${MetadataManager.FRONTMATTER_DELIMITER}\n${titleYaml}\n${MetadataManager.FRONTMATTER_DELIMITER}`;
+    }
+
+    return `${MetadataManager.FRONTMATTER_DELIMITER}\n${titleYaml}\n${MetadataManager.FRONTMATTER_DELIMITER}\n\n${content}`;
+  }
+
+  /**
+ * Extract the best available title from multiple sources
+ * @param content File content
+ * @param existingMetadata Parsed metadata from front-matter
+ * @param filePath Optional file path for filename-based title
+ * @returns Best available title or null
+ */
+  private static extractBestTitle(
+    content: string,
+    existingMetadata: FileMetadata | null,
+    filePath?: string
+  ): string | null {
+    // 1. Try existing front-matter title first (always prefer if exists)
+    if (existingMetadata?.title) {
+      return existingMetadata.title;
+    }
+
+    // 2. Try extracting from first markdown heading
+    const markdownTitle = MetadataManager.extractMarkdownTitle(content);
+    if (markdownTitle) {
+      return markdownTitle;
+    }
+
+    // 3. Try extracting from filename
+    if (filePath) {
+      const filenameTitle = MetadataManager.extractFilenameTitle(filePath);
+      if (filenameTitle) {
+        return filenameTitle;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract title from first markdown heading
+   * @param content File content
+   * @returns Title from first H1 heading or null
+   */
+  private static extractMarkdownTitle(content: string): string | null {
+    // Remove front-matter first
+    const contentWithoutMetadata = MetadataManager.removeMetadata(content);
+    const lines = contentWithoutMetadata.split(/\r?\n/);
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('# ')) {
+        const title = trimmed.substring(2).trim();
+        if (title) {
+          return title;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract title from filename
+   * @param filePath File path
+   * @returns Title derived from filename or null
+   */
+  private static extractFilenameTitle(filePath: string): string | null {
+    const filename = basename(filePath, '.md');
+
+    // Convert filename to readable title
+    const title = filename
+      .replace(/[-_]/g, ' ') // Replace dashes and underscores with spaces
+      .replace(/\b\w/g, l => l.toUpperCase()) // Capitalize first letter of each word
+      .trim();
+
+    // Return title if it's meaningful (more than just numbers or single characters)
+    if (title.length > 2 && !/^\d+$/.test(title)) {
+      return title;
+    }
+
+    return null;
+  }
 }

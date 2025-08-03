@@ -1,21 +1,26 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { LinkResolver } from "../links/LinkResolver";
+import { LinkScanner } from "../links/LinkScanner";
 import { MetadataManager } from "../metadata/MetadataManager";
 import type { DependencyNode, LocalLink, MetadataConfig } from "../types/metadata";
 import { PublicationStatus } from "../types/metadata";
+import type { PathResolver } from "../utils/PathResolver";
 
 /**
  * Manages dependency trees and recursive publishing
  */
 export class DependencyManager {
   private config: MetadataConfig;
-  private visitedFiles: Set<string>;
+  private memoCache: Map<string, DependencyNode>;
   private processingStack: Set<string>;
+  private pathResolver: PathResolver;
 
-  constructor(config: MetadataConfig) {
+  constructor(config: MetadataConfig, pathResolver: PathResolver) {
     this.config = config;
-    this.visitedFiles = new Set();
+    this.memoCache = new Map();
     this.processingStack = new Set();
+    this.pathResolver = pathResolver;
   }
 
   /**
@@ -26,7 +31,7 @@ export class DependencyManager {
    */
   buildDependencyTree(filePath: string, maxDepth?: number): DependencyNode {
     const depth = maxDepth ?? this.config.maxDependencyDepth;
-    this.visitedFiles.clear();
+    this.memoCache.clear();
     this.processingStack.clear();
 
     return this.buildNodeRecursive(filePath, 0, depth);
@@ -106,7 +111,8 @@ export class DependencyManager {
    * @param filePath File path to mark as processed
    */
   markAsProcessed(filePath: string): void {
-    this.visitedFiles.add(filePath);
+    // Deprecated: Use memoization cache instead
+    console.warn('markAsProcessed is deprecated with memoization approach');
   }
 
   /**
@@ -115,14 +121,14 @@ export class DependencyManager {
    * @returns True if file has been processed
    */
   isProcessed(filePath: string): boolean {
-    return this.visitedFiles.has(filePath);
+    return this.memoCache.has(filePath);
   }
 
   /**
    * Reset processing state
    */
   reset(): void {
-    this.visitedFiles.clear();
+    this.memoCache.clear();
     this.processingStack.clear();
   }
 
@@ -138,25 +144,26 @@ export class DependencyManager {
     currentDepth: number,
     maxDepth: number
   ): DependencyNode {
+    // Check memoization cache first - return complete cached node if available
+    if (this.memoCache.has(filePath)) {
+      return this.memoCache.get(filePath)!;
+    }
+
     // Check for circular dependency
     if (this.processingStack.has(filePath)) {
       console.warn(`Circular dependency detected: ${filePath}`);
+      // Create shallow node but don't cache it to break the cycle
       return this.createNode(filePath, currentDepth, []);
     }
 
     // Check depth limit
     if (currentDepth >= maxDepth) {
       console.warn(`Maximum dependency depth reached at ${filePath}`);
-      return this.createNode(filePath, currentDepth, []);
-    }
-
-    // Check if already visited
-    if (this.visitedFiles.has(filePath)) {
+      // Don't cache nodes truncated by depth limit
       return this.createNode(filePath, currentDepth, []);
     }
 
     this.processingStack.add(filePath);
-    this.visitedFiles.add(filePath);
 
     try {
       // Read file content and find local links
@@ -169,29 +176,57 @@ export class DependencyManager {
         content = readFileSync(decodedPath, 'utf-8');
       }
       const contentWithoutMetadata = MetadataManager.removeMetadata(content);
-      const localLinks = LinkResolver.findLocalLinks(contentWithoutMetadata, filePath);
-      const markdownLinks = LinkResolver.filterMarkdownLinks(localLinks);
+
+      // Extract all links using the new LinkScanner
+      const allLinks = LinkScanner.extractLinks(contentWithoutMetadata);
+
+      // Filter for local markdown links and create LocalLink objects
+      const localLinks: LocalLink[] = allLinks
+        .filter(link => !link.href.startsWith('http') && !link.href.startsWith('https') && !link.href.startsWith('mailto:') && !link.href.startsWith('#'))
+        .filter(link => link.href.toLowerCase().endsWith('.md') || link.href.toLowerCase().endsWith('.markdown'))
+        .map(link => ({
+          text: link.text,
+          href: link.href,
+          lineNumber: link.lineNumber,
+          columnStart: link.columnStart,
+          columnEnd: link.columnEnd,
+          originalPath: link.href,
+          resolvedPath: this.pathResolver.resolve(filePath, link.href),
+          isPublished: false,
+          fullMatch: `[${link.text}](${link.href})`,
+          startIndex: link.columnStart,
+          endIndex: link.columnEnd,
+        }));
 
       // Build dependency nodes for linked files
       const dependencies: DependencyNode[] = [];
-      for (const link of markdownLinks) {
-        if (LinkResolver.validateLinkTarget(link.resolvedPath)) {
-          const depNode = this.buildNodeRecursive(
-            link.resolvedPath,
-            currentDepth + 1,
-            maxDepth
-          );
-          dependencies.push(depNode);
+      for (const link of localLinks) {
+        try {
+          // Check if the target file exists
+          if (existsSync(link.resolvedPath)) {
+            const depNode = this.buildNodeRecursive(
+              link.resolvedPath,
+              currentDepth + 1,
+              maxDepth
+            );
+            dependencies.push(depNode);
+          }
+        } catch (error) {
         }
       }
 
       const node = this.createNode(filePath, currentDepth, dependencies);
+
+      // Cache the fully constructed node before returning
+      this.memoCache.set(filePath, node);
+
       this.processingStack.delete(filePath);
       return node;
 
     } catch (error) {
       console.error(`Error processing file ${filePath}:`, error);
       this.processingStack.delete(filePath);
+      // Don't cache nodes created due to errors
       return this.createNode(filePath, currentDepth, []);
     }
   }

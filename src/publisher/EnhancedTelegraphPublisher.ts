@@ -1,19 +1,24 @@
 import { writeFileSync } from "node:fs";
+import { basename, dirname } from "node:path";
+import type { PagesCacheManager } from "../cache/PagesCacheManager";
 import { ContentProcessor } from "../content/ContentProcessor";
 import { DependencyManager } from "../dependencies/DependencyManager";
 import { LinkResolver } from "../links/LinkResolver";
+
 import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
 import { MetadataManager } from "../metadata/MetadataManager";
-import { TelegraphPublisher } from "../telegraphPublisher";
+import { RateLimiter } from "../ratelimiter/RateLimiter";
+import { type TelegraphNode, type TelegraphPage, TelegraphPublisher } from "../telegraphPublisher";
 import type {
-  DependencyNode,
   FileMetadata,
   MetadataConfig,
   ProcessedContent,
   PublicationProgress,
-  PublicationResult
+  PublicationResult,
+  PublishedPageInfo
 } from "../types/metadata";
 import { PublicationStatus } from "../types/metadata";
+import { PathResolver } from '../utils/PathResolver';
 
 /**
  * Enhanced Telegraph publisher with metadata management and dependency resolution
@@ -21,11 +26,73 @@ import { PublicationStatus } from "../types/metadata";
 export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   private config: MetadataConfig;
   private dependencyManager: DependencyManager;
+  private cacheManager?: PagesCacheManager;
+  private currentAccessToken?: string;
+  private rateLimiter: RateLimiter;
+  private baseCacheDirectory?: string;
 
   constructor(config: MetadataConfig) {
     super();
     this.config = config;
-    this.dependencyManager = new DependencyManager(config);
+    this.dependencyManager = new DependencyManager(config, PathResolver.getInstance());
+    this.rateLimiter = new RateLimiter(config.rateLimiting);
+  }
+
+  /**
+   * Set base directory for cache files (for bulk operations)
+   * @param directory Base directory where cache should be created
+   */
+  setBaseCacheDirectory(directory: string): void {
+    this.baseCacheDirectory = directory;
+  }
+
+  /**
+   * Set access token and initialize cache manager
+   * @param token Access token
+   */
+  override setAccessToken(token: string): void {
+    super.setAccessToken(token);
+    this.currentAccessToken = token;
+    // Initialize cache manager when access token is set
+    // We'll set it up when we know the directory from the first file being processed
+  }
+
+  /**
+   * Initialize cache manager for the given directory
+   * @param filePath Path to file being processed
+   */
+  private initializeCacheManager(filePath: string): void {
+    if (!this.cacheManager && this.currentAccessToken) {
+      // Use base cache directory if set (for bulk operations),
+      // otherwise use file's directory (for single file operations)
+      const directory = this.baseCacheDirectory || dirname(filePath);
+      const { PagesCacheManager } = require("../cache/PagesCacheManager");
+      this.cacheManager = new PagesCacheManager(directory, this.currentAccessToken);
+    }
+  }
+
+  /**
+   * Add page to cache after successful publication
+   * @param filePath Local file path
+   * @param url Telegraph URL
+   * @param path Telegraph path
+   * @param title Page title
+   * @param username Author username
+   */
+  private addToCache(filePath: string, url: string, path: string, title: string, username: string): void {
+    if (this.cacheManager) {
+      const pageInfo: PublishedPageInfo = {
+        telegraphUrl: url,
+        editPath: path,
+        localFilePath: filePath,
+        title: title,
+        authorName: username,
+        publishedAt: new Date().toISOString(),
+        lastUpdated: new Date().toISOString()
+      };
+
+      this.cacheManager.addPage(pageInfo);
+    }
   }
 
   /**
@@ -47,12 +114,44 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     try {
       const { withDependencies = true, forceRepublish = false, dryRun = false } = options;
 
+      // Initialize cache manager for this directory
+      this.initializeCacheManager(filePath);
+
       // Check if file is already published and handle accordingly
       const publicationStatus = MetadataManager.getPublicationStatus(filePath);
       const existingMetadata = MetadataManager.getPublicationInfo(filePath);
 
-      if (publicationStatus === PublicationStatus.PUBLISHED && !forceRepublish) {
+      // Also check cache for existing publication info
+      let cacheInfo: PublishedPageInfo | null = null;
+      if (this.cacheManager) {
+        cacheInfo = this.cacheManager.getPageByLocalPath(filePath);
+      }
+
+      // If file has metadata or exists in cache, treat as published (unless forced)
+      const isPublished = publicationStatus === PublicationStatus.PUBLISHED || cacheInfo !== null;
+
+      if (isPublished && !forceRepublish) {
         // File is already published, use edit instead
+        // If we have cache info but no file metadata, we need to restore metadata to file
+        if (cacheInfo && !existingMetadata) {
+          console.log(`📋 Found ${filePath} in cache but missing metadata in file, restoring...`);
+          const restoredMetadata: FileMetadata = {
+            telegraphUrl: cacheInfo.telegraphUrl,
+            editPath: cacheInfo.editPath,
+            username: cacheInfo.authorName,
+            publishedAt: cacheInfo.publishedAt,
+            originalFilename: cacheInfo.localFilePath ? basename(cacheInfo.localFilePath) : basename(filePath),
+            title: cacheInfo.title
+          };
+
+          // Restore metadata to file
+          const processed = ContentProcessor.processFile(filePath);
+          const contentWithMetadata = ContentProcessor.injectMetadataIntoContent(processed, restoredMetadata);
+          writeFileSync(filePath, contentWithMetadata, 'utf-8');
+
+          console.log(`✅ Metadata restored to ${filePath} from cache`);
+        }
+
         return await this.editWithMetadata(filePath, username, { withDependencies, dryRun });
       }
 
@@ -73,7 +172,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       // Replace local links with Telegraph URLs if dependencies were published
       const processedWithLinks = withDependencies
-        ? await this.replaceLinksWithTelegraphUrls(processed, filePath)
+        ? await this.replaceLinksWithTelegraphUrls(processed)
         : processed;
 
       // Validate content with relaxed rules for depth 1
@@ -124,6 +223,9 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const contentWithMetadata = ContentProcessor.injectMetadataIntoContent(processed, metadata);
       writeFileSync(filePath, contentWithMetadata, 'utf-8');
 
+      // Add to cache after successful publication
+      this.addToCache(filePath, page.url, page.path, metadataTitle, username);
+
       return {
         success: true,
         url: page.url,
@@ -160,6 +262,9 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     try {
       const { withDependencies = true, dryRun = false } = options;
 
+      // Initialize cache manager for this directory
+      this.initializeCacheManager(filePath);
+
       // Get existing metadata
       const existingMetadata = MetadataManager.getPublicationInfo(filePath);
       if (!existingMetadata) {
@@ -182,12 +287,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         }
       }
 
-      // Process the file
+      // Process the main file
       const processed = ContentProcessor.processFile(filePath);
 
       // Replace local links with Telegraph URLs if dependencies were published
       const processedWithLinks = withDependencies
-        ? await this.replaceLinksWithTelegraphUrls(processed, filePath)
+        ? await this.replaceLinksWithTelegraphUrls(processed)
         : processed;
 
       // Validate content with relaxed rules for depth 1
@@ -209,7 +314,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           success: true,
           url: existingMetadata.telegraphUrl,
           path: existingMetadata.editPath,
-          isNewPublication: false
+          isNewPublication: false,
+          metadata: existingMetadata
         };
       }
 
@@ -235,6 +341,15 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Update metadata in file
       const contentWithMetadata = ContentProcessor.injectMetadataIntoContent(processed, updatedMetadata);
       writeFileSync(filePath, contentWithMetadata, 'utf-8');
+
+      // Update cache after successful edit
+      if (this.cacheManager) {
+        this.cacheManager.updatePage(page.url, {
+          title: metadataTitle,
+          authorName: username,
+          lastUpdated: new Date().toISOString()
+        });
+      }
 
       return {
         success: true,
@@ -328,7 +443,6 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
    */
   private async replaceLinksWithTelegraphUrls(
     processed: ProcessedContent,
-    basePath: string
   ): Promise<ProcessedContent> {
     const linkMappings = new Map<string, string>();
 
@@ -346,6 +460,104 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
     // Replace links in content
     return ContentProcessor.replaceLinksInContent(processed, linkMappings);
+  }
+
+  /**
+   * Override publishNodes with rate limiting
+   * @param title Page title
+   * @param nodes Telegraph nodes
+   * @returns Published page
+   */
+  override async publishNodes(
+    title: string,
+    nodes: TelegraphNode[],
+  ): Promise<TelegraphPage> {
+    // Apply rate limiting before API call
+    await this.rateLimiter.beforeCall();
+
+    try {
+      // Call parent implementation
+      const result = await super.publishNodes(title, nodes);
+
+      // Mark successful call
+      this.rateLimiter.markSuccessfulCall();
+
+      return result;
+    } catch (error) {
+      // Check if this is a FLOOD_WAIT error
+      if (error instanceof Error && error.message.includes('FLOOD_WAIT_')) {
+        const waitMatch = error.message.match(/FLOOD_WAIT_(\d+)/);
+        if (waitMatch?.[1]) {
+          const waitSeconds = parseInt(waitMatch[1], 10);
+          console.warn(`🚦 Rate limited: waiting ${waitSeconds}s before retry...`);
+
+          // Handle FLOOD_WAIT with our rate limiter
+          await this.rateLimiter.handleFloodWait(waitSeconds);
+
+          // Retry the call
+          return await super.publishNodes(title, nodes);
+        }
+      }
+
+      // Re-throw non-FLOOD_WAIT errors
+      throw error;
+    }
+  }
+
+  /**
+   * Override editPage with rate limiting
+   * @param path Page path
+   * @param title Page title
+   * @param nodes Telegraph nodes
+   * @param authorName Author name
+   * @param authorUrl Author URL
+   * @returns Updated page
+   */
+  override async editPage(
+    path: string,
+    title: string,
+    nodes: TelegraphNode[],
+    authorName?: string,
+    authorUrl?: string,
+  ): Promise<TelegraphPage> {
+    // Apply rate limiting before API call
+    await this.rateLimiter.beforeCall();
+
+    try {
+      // Call parent implementation
+      const result = await super.editPage(path, title, nodes, authorName, authorUrl);
+
+      // Mark successful call
+      this.rateLimiter.markSuccessfulCall();
+
+      return result;
+    } catch (error) {
+      // Check if this is a FLOOD_WAIT error
+      if (error instanceof Error && error.message.includes('FLOOD_WAIT_')) {
+        const waitMatch = error.message.match(/FLOOD_WAIT_(\d+)/);
+        if (waitMatch?.[1]) {
+          const waitSeconds = parseInt(waitMatch[1], 10);
+          console.warn(`🚦 Rate limited: waiting ${waitSeconds}s before retry...`);
+
+          // Handle FLOOD_WAIT with our rate limiter
+          await this.rateLimiter.handleFloodWait(waitSeconds);
+
+          // Retry the call
+          return await super.editPage(path, title, nodes, authorName, authorUrl);
+        }
+      }
+
+      // Re-throw non-FLOOD_WAIT errors
+      throw error;
+    }
+  }
+
+  /**
+   * Get rate limiting metrics
+   * @returns Current rate limiting metrics
+   */
+  getRateLimitingMetrics(): string {
+    return this.rateLimiter.formatMetrics();
   }
 
   /**
@@ -392,6 +604,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
    */
   updateConfig(config: Partial<MetadataConfig>): void {
     this.config = { ...this.config, ...config };
-    this.dependencyManager = new DependencyManager(this.config);
+    this.dependencyManager = new DependencyManager(this.config, PathResolver.getInstance());
+
+    // Update rate limiter configuration if provided
+    if (config.rateLimiting) {
+      this.rateLimiter.updateConfig(config.rateLimiting);
+    }
   }
 }
