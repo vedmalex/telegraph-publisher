@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { PathResolver } from '../utils/PathResolver';
 import {
@@ -14,6 +14,8 @@ import {
  */
 export class LinkVerifier {
   private pathResolver: PathResolver;
+  // Cache for file anchors to avoid re-reading and re-parsing files
+  private anchorCache: Map<string, Set<string>> = new Map();
 
   constructor(pathResolver: PathResolver) {
     this.pathResolver = pathResolver;
@@ -29,16 +31,47 @@ export class LinkVerifier {
 
     for (const link of scanResult.localLinks) {
       try {
-        const resolvedPath = this.resolveLinkPath(link.href, scanResult.filePath);
+        // Extract path and fragment parts from href
+        const [pathPart, ...fragmentParts] = link.href.split('#');
+        const fragment = fragmentParts.join('#');
 
-        if (!existsSync(resolvedPath)) {
-          brokenLinks.push({
-            filePath: scanResult.filePath,
-            link,
-            suggestions: [], // Will be populated by LinkResolver
-            canAutoFix: false // Will be determined after suggestions are generated
-          });
+        // Only process if there's a file path to check
+        if (pathPart) {
+          const resolvedPath = this.resolveLinkPath(pathPart, scanResult.filePath);
+
+          // 1. Verify file existence (existing logic)
+          if (!existsSync(resolvedPath)) {
+            brokenLinks.push({
+              filePath: scanResult.filePath,
+              link,
+              suggestions: [], // Will be populated by LinkResolver
+              canAutoFix: false // Will be determined after suggestions are generated
+            });
+            continue; // Don't check anchor if file is missing
+          }
+
+          // 2. NEW: Verify anchor existence if a fragment is present
+          if (fragment) {
+            const targetAnchors = this.getAnchorsForFile(resolvedPath);
+            // Decode URI component for non-latin characters and slugify it for comparison
+            const requestedAnchor = this.generateSlug(decodeURIComponent(fragment));
+
+            if (!targetAnchors.has(requestedAnchor)) {
+              // NEW: Find closest match for intelligent suggestions
+              const suggestion = this.findClosestAnchor(requestedAnchor, targetAnchors);
+              const suggestions = suggestion ? [`${pathPart}#${suggestion}`] : [];
+
+              brokenLinks.push({
+                filePath: scanResult.filePath,
+                link,
+                suggestions, // Now populated with intelligent suggestions
+                canAutoFix: false // Keep false for anchor fixes (safety)
+              });
+            }
+          }
         }
+        // NOTE: If pathPart is empty (pure fragment link),
+        // we skip processing, maintaining existing behavior
       } catch (error) {
         // If we can't resolve the path, consider it broken
         brokenLinks.push({
@@ -209,5 +242,94 @@ export class LinkVerifier {
       brokenLinkPercentage: totalLocalLinks > 0 ? (totalBrokenLinks / totalLocalLinks) * 100 : 0,
       filesByBrokenLinks
     };
+  }
+
+  /**
+   * Generates a URL-friendly slug from a heading text.
+   * This mimics the behavior of most Markdown parsers.
+   * @param text The heading text.
+   * @returns A lower-case, hyphenated slug.
+   */
+  private generateSlug(text: string): string {
+    return text
+      .toLowerCase()                           // 1. Normalize case
+      .trim()                                  // 2. Remove leading/trailing whitespace
+      .replace(/<[^>]+>/g, '')                 // 3. Remove HTML tags
+      .replace(/[^\w\u00C0-\u024F\u1E00-\u1EFF\u0400-\u04FF\s-]/g, '') // 4. Keep letters, numbers, spaces, hyphens (including Unicode)
+      .replace(/\s+/g, '-');                   // 5. Replace spaces with hyphens
+  }
+
+  /**
+   * Extracts all valid anchors (from headings) from a Markdown file.
+   * Results are cached to improve performance.
+   * @param filePath The absolute path to the Markdown file.
+   * @returns A Set containing all valid anchor slugs for the file.
+   */
+  private getAnchorsForFile(filePath: string): Set<string> {
+    if (this.anchorCache.has(filePath)) {
+      return this.anchorCache.get(filePath)!;
+    }
+
+    try {
+      const content = readFileSync(filePath, 'utf-8');
+      const headingRegex = /^(#{1,6})\s+(.*)/gm;
+      const anchors = new Set<string>();
+
+      let match;
+      while ((match = headingRegex.exec(content)) !== null) {
+        const headingText = match[2]?.trim();
+        if (headingText) {
+          anchors.add(this.generateSlug(headingText));
+        }
+      }
+
+      this.anchorCache.set(filePath, anchors);
+      return anchors;
+    } catch (error) {
+      // If the file can't be read, return an empty set.
+      // The file existence check will handle the "broken link" error.
+      return new Set<string>();
+    }
+  }
+
+  /**
+   * Calculates a simple string similarity score optimized for anchor text.
+   * Uses character intersection approach for performance and simplicity.
+   * @param s1 First string (typically the requested anchor)
+   * @param s2 Second string (typically an available anchor)
+   * @returns Similarity score between 0.0 and 1.0
+   */
+  private calculateSimilarity(s1: string, s2: string): number {
+    // Handle edge cases first
+    if (s1 === s2) return 1.0;
+    if (s1.length === 0 && s2.length === 0) return 1.0;
+    if (s1.length === 0 || s2.length === 0) return 0.0;
+
+    const longer = s1.length > s2.length ? s1 : s2;
+    const shorter = s1.length > s2.length ? s2 : s1;
+
+    // Count matching characters (order independent for typo tolerance)
+    const matchingChars = [...shorter].filter(char => longer.includes(char)).length;
+    return matchingChars / longer.length;
+  }
+
+  /**
+   * Finds the closest matching anchor from a set of available anchors.
+   * @param requestedAnchor The anchor that was not found
+   * @param availableAnchors A Set of valid anchors in the target file
+   * @returns The best suggestion, or null if no suitable match is found
+   */
+  private findClosestAnchor(requestedAnchor: string, availableAnchors: Set<string>): string | null {
+    let bestMatch: string | null = null;
+    let highestScore = 0.7; // Minimum similarity threshold
+
+    for (const available of availableAnchors) {
+      const score = this.calculateSimilarity(requestedAnchor, available);
+      if (score > highestScore) {
+        highestScore = score;
+        bestMatch = available;
+      }
+    }
+    return bestMatch;
   }
 }

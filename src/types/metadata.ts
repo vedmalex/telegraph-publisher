@@ -55,6 +55,8 @@ export interface FileMetadata {
   title?: string;
   /** Optional description */
   description?: string;
+  /** Optional content hash for change detection */
+  contentHash?: string;
 }
 
 /**

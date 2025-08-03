@@ -154,11 +154,25 @@ export class ContentProcessor {
     const replacementMap = new Map<string, string>();
 
     for (const link of processedContent.localLinks) {
-      const telegraphUrl = linkMappings.get(link.resolvedPath);
+      // Extract file path without anchor from resolvedPath for lookup in linkMappings
+      const anchorIndex = link.resolvedPath.indexOf('#');
+      const filePathOnly = anchorIndex !== -1 ? link.resolvedPath.substring(0, anchorIndex) : link.resolvedPath;
+
+      const telegraphUrl = linkMappings.get(filePathOnly);
       if (telegraphUrl) {
-        replacementMap.set(link.originalPath, telegraphUrl);
+        // Check for and preserve the URL fragment (anchor) from original path
+        const originalAnchorIndex = link.originalPath.indexOf('#');
+        let finalUrl = telegraphUrl;
+
+        if (originalAnchorIndex !== -1) {
+          const anchor = link.originalPath.substring(originalAnchorIndex);
+          finalUrl += anchor;
+        }
+
+        // Use the final URL (with anchor) for replacement
+        replacementMap.set(link.originalPath, finalUrl);
         // Update link object
-        link.telegraphUrl = telegraphUrl;
+        link.telegraphUrl = finalUrl;
         link.isPublished = true;
       }
     }

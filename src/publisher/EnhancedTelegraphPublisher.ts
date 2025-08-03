@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, dirname, resolve } from "node:path";
 import type { PagesCacheManager } from "../cache/PagesCacheManager";
 import { ProgressIndicator } from "../cli/ProgressIndicator";
@@ -136,17 +137,22 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         // If we have cache info but no file metadata, we need to restore metadata to file
         if (cacheInfo && !existingMetadata) {
           console.log(`📋 Found ${filePath} in cache but missing metadata in file, restoring...`);
+          
+          // Calculate content hash for restored metadata
+          const processed = ContentProcessor.processFile(filePath);
+          const contentHash = this.calculateContentHash(processed.contentWithoutMetadata);
+          
           const restoredMetadata: FileMetadata = {
             telegraphUrl: cacheInfo.telegraphUrl,
             editPath: cacheInfo.editPath,
             username: cacheInfo.authorName,
             publishedAt: cacheInfo.publishedAt,
             originalFilename: cacheInfo.localFilePath ? basename(cacheInfo.localFilePath) : basename(filePath),
-            title: cacheInfo.title
+            title: cacheInfo.title,
+            contentHash
           };
 
           // Restore metadata to file
-          const processed = ContentProcessor.processFile(filePath);
           const contentWithMetadata = ContentProcessor.injectMetadataIntoContent(processed, restoredMetadata);
           writeFileSync(filePath, contentWithMetadata, 'utf-8');
 
@@ -223,11 +229,16 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Create metadata - preserve original title from metadata if it exists
       const originalTitle = processed.metadata?.title;
       const metadataTitle = originalTitle || title;
+      
+      // Calculate content hash for new publication
+      const contentHash = this.calculateContentHash(processedWithLinks.contentWithoutMetadata);
+      
       const metadata = MetadataManager.createMetadata(
         page.url,
         page.path,
         username,
         filePath,
+        contentHash,
         metadataTitle
       );
 
@@ -270,6 +281,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       withDependencies?: boolean;
       dryRun?: boolean;
       debug?: boolean;
+      forceRepublish?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
@@ -302,6 +314,26 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       // Process the main file
       const processed = ContentProcessor.processFile(filePath);
+
+      // NEW: Content change detection
+      if (!options.forceRepublish) {
+        const currentHash = this.calculateContentHash(processed.contentWithoutMetadata);
+        
+        if (existingMetadata.contentHash && existingMetadata.contentHash === currentHash) {
+          ProgressIndicator.showStatus(
+            `📄 Content unchanged. Skipping publication of ${basename(filePath)}.`, 
+            "info"
+          );
+          
+          return {
+            success: true,
+            url: existingMetadata.telegraphUrl,
+            path: existingMetadata.editPath,
+            isNewPublication: false,
+            metadata: existingMetadata
+          };
+        }
+      }
 
       // Replace local links with Telegraph URLs if dependencies were published
       const processedWithLinks = withDependencies
@@ -353,13 +385,18 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Edit existing page
       const page = await this.editPage(existingMetadata.editPath, title, telegraphNodes, username);
 
-      // Update metadata with new timestamp - preserve original title from metadata if it exists
+      // Update metadata with new timestamp and content hash - preserve original title from metadata if it exists
       const originalTitle = processed.metadata?.title;
       const metadataTitle = originalTitle || title;
+      
+      // Calculate updated content hash after successful publication
+      const updatedContentHash = this.calculateContentHash(processed.contentWithoutMetadata);
+      
       const updatedMetadata: FileMetadata = {
         ...existingMetadata,
         publishedAt: new Date().toISOString(),
-        title: metadataTitle
+        title: metadataTitle,
+        contentHash: updatedContentHash
       };
 
       // Update metadata in file
@@ -633,6 +670,26 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     // Update rate limiter configuration if provided
     if (config.rateLimiting) {
       this.rateLimiter.updateConfig(config.rateLimiting);
+    }
+  }
+
+  /**
+   * Calculates SHA-256 hash of content for change detection.
+   * Uses content excluding YAML front-matter for precise change detection.
+   * @param content The processed content without metadata
+   * @returns Hex-encoded SHA-256 hash
+   */
+  private calculateContentHash(content: string): string {
+    try {
+      return createHash('sha256').update(content, 'utf8').digest('hex');
+    } catch (error) {
+      console.warn('Content hash calculation failed:', error);
+      ProgressIndicator.showStatus(
+        `⚠️ Content hash calculation failed. Proceeding with publication.`, 
+        "warn"
+      );
+      // Return empty string to trigger publication (fail-safe behavior)
+      return '';
     }
   }
 }

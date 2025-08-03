@@ -1,0 +1,51 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2025-08-03T19:19:42.687Z",
+  "accessTokenHash": "0d0eb59407768e88",
+  "pages": {
+    "https://telegra.ph/Prakticheskoe-domashnee-zadanie-Iskusstvo-zadavat-voprosy-08-02": {
+      "telegraphUrl": "https://telegra.ph/Prakticheskoe-domashnee-zadanie-Iskusstvo-zadavat-voprosy-08-02",
+      "editPath": "Prakticheskoe-domashnee-zadanie-Iskusstvo-zadavat-voprosy-08-02",
+      "localFilePath": "/Users/vedmalex/work/BhaktiVaibhava/занятия/004/задание.md",
+      "title": "Практическое домашнее задание: Искусство задавать вопросы",
+      "publishedAt": "2025-08-02T12:14:20.154Z",
+      "lastUpdated": "2025-08-02T12:14:20.154Z"
+    },
+    "https://telegra.ph/Analiz-analogij-iz-SHrimad-Bhagavatam-11-08-02": {
+      "telegraphUrl": "https://telegra.ph/Analiz-analogij-iz-SHrimad-Bhagavatam-11-08-02",
+      "editPath": "Analiz-analogij-iz-SHrimad-Bhagavatam-11-08-02",
+      "localFilePath": "/Users/vedmalex/work/BhaktiVaibhava/занятия/004/аналогии.md",
+      "title": "Анализ аналогий из Шримад-Бхагаватам 1.1",
+      "publishedAt": "2025-08-02T12:14:21.317Z",
+      "lastUpdated": "2025-08-02T12:14:21.317Z"
+    },
+    "https://telegra.ph/Zanyatie-4-Glava-1-Voprosy-mudrecov-08-02": {
+      "telegraphUrl": "https://telegra.ph/Zanyatie-4-Glava-1-Voprosy-mudrecov-08-02",
+      "editPath": "Zanyatie-4-Glava-1-Voprosy-mudrecov-08-02",
+      "localFilePath": "/Users/vedmalex/work/BhaktiVaibhava/занятия/004/class004.structured.md",
+      "title": "Занятие 4: Глава 1. Вопросы мудрецов",
+      "publishedAt": "2025-08-02T12:14:22.813Z",
+      "lastUpdated": "2025-08-02T12:14:22.813Z"
+    },
+    "https://telegra.ph/Zanyatie-4---SHrimad-Bhagavatam-Pesn-Pervaya-Glava-Pervaya-08-02": {
+      "telegraphUrl": "https://telegra.ph/Zanyatie-4---SHrimad-Bhagavatam-Pesn-Pervaya-Glava-Pervaya-08-02",
+      "editPath": "Zanyatie-4---SHrimad-Bhagavatam-Pesn-Pervaya-Glava-Pervaya-08-02",
+      "localFilePath": "004/index.md",
+      "title": "Занятие №4 - Шримад Бхагаватам Песнь Первая Глава Первая",
+      "publishedAt": "2025-08-02T12:14:24.299Z",
+      "lastUpdated": "2025-08-03T19:19:42.687Z"
+    }
+  },
+  "localToTelegraph": {
+    "/Users/vedmalex/work/BhaktiVaibhava/занятия/004/задание.md": "https://telegra.ph/Prakticheskoe-domashnee-zadanie-Iskusstvo-zadavat-voprosy-08-02",
+    "/Users/vedmalex/work/BhaktiVaibhava/занятия/004/аналогии.md": "https://telegra.ph/Analiz-analogij-iz-SHrimad-Bhagavatam-11-08-02",
+    "/Users/vedmalex/work/BhaktiVaibhava/занятия/004/class004.structured.md": "https://telegra.ph/Zanyatie-4-Glava-1-Voprosy-mudrecov-08-02",
+    "004/index.md": "https://telegra.ph/Zanyatie-4---SHrimad-Bhagavatam-Pesn-Pervaya-Glava-Pervaya-08-02"
+  },
+  "telegraphToLocal": {
+    "https://telegra.ph/Prakticheskoe-domashnee-zadanie-Iskusstvo-zadavat-voprosy-08-02": "/Users/vedmalex/work/BhaktiVaibhava/занятия/004/задание.md",
+    "https://telegra.ph/Analiz-analogij-iz-SHrimad-Bhagavatam-11-08-02": "/Users/vedmalex/work/BhaktiVaibhava/занятия/004/аналогии.md",
+    "https://telegra.ph/Zanyatie-4-Glava-1-Voprosy-mudrecov-08-02": "/Users/vedmalex/work/BhaktiVaibhava/занятия/004/class004.structured.md",
+    "https://telegra.ph/Zanyatie-4---SHrimad-Bhagavatam-Pesn-Pervaya-Glava-Pervaya-08-02": "004/index.md"
+  }
+}

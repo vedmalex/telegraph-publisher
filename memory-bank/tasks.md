@@ -1,9 +1,55 @@
 # Memory Bank Tasks Overview
 
 ## Active Tasks
-> No active tasks currently
+
+### 🎯 **TASK-019** (2025-08-03) - Enhanced Anchor Validation and Reporting
+- **Status**: ✅ READY FOR ARCHIVE (QA Complete)
+- **Type**: Feature Enhancement
+- **Priority**: 🔴 High
+- **Summary**: Enhance LinkVerifier to provide intelligent suggestions for broken anchor links by analyzing available anchors in target files and offering closest matches
+- **Key Features**:
+  - Anchor extraction and slug generation from Markdown headings
+  - String similarity algorithm for closest match suggestions
+  - Efficient caching mechanism for performance optimization
+  - Enhanced error reporting with actionable suggestions
+- **Files to Modify**: `src/links/LinkVerifier.ts`
+- **Complexity**: Medium - New algorithms building on existing verification infrastructure
+
+### 🎯 **TASK-020** (2025-08-03) - Content Hashing for Change Detection
+- **Status**: 🟡 ACTIVE (IMPLEMENT Phase)
+- **Type**: Performance Enhancement
+- **Priority**: 🔴 High
+- **Summary**: Implement content hashing mechanism to prevent re-publication of unchanged files, optimizing API usage and improving publication efficiency
+- **Key Features**:
+  - SHA-256 content hashing excluding YAML front-matter
+  - Hash comparison to skip unchanged file publication
+  - Force republish flag to bypass hash check when needed
+  - Hash update after successful publication operations
+- **Files to Modify**:
+  - `src/types/metadata.ts` (FileMetadata interface)
+  - `src/metadata/MetadataManager.ts` (serialization/parsing)
+  - `src/publisher/EnhancedTelegraphPublisher.ts` (hash logic)
+- **Complexity**: Medium - Interface changes and integration across multiple components
 
 ## Completed Tasks ✅
+
+### 🔗 **TASK-018** (2025-08-03) - Fix Link Anchor Replacement
+- **Status**: ✅ COMPLETED
+- **Type**: Bug Fix
+- **Priority**: 🔴 High
+- **Summary**: Fixed link replacement mechanism to preserve URL fragments (anchors) when converting local Markdown links to Telegraph URLs
+- **Process**: Complete VAN → PLAN → IMPLEMENT → QA → REFLECT workflow
+- **Key Achievements**:
+  - Core implementation in ContentProcessor.ts (15 lines, anchor preservation logic)
+  - 5 comprehensive test cases covering all scenarios (anchors, Unicode, edge cases)
+  - 92.63% test coverage achieved (exceeds 85% requirement)
+  - 100% test success rate (35/35 ContentProcessor tests, 334/334 project tests)
+  - Zero regressions, full backward compatibility maintained
+  - Real-world validation against user evidence files
+  - In-page navigation functionality restored for Telegraph articles
+- **User Value**: Links like `[text](./page.md#section)` now correctly become `[text](https://telegra.ph/page#section)`
+- **Duration**: ~1 hour
+- **Quality**: ⭐⭐⭐⭐⭐ Exceptional Success
 
 ### 🐛 **TASK-014** (2025-08-03) - Debug Option Implementation
 - **Status**: ✅ COMPLETED

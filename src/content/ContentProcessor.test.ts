@@ -196,6 +196,135 @@ describe("ContentProcessor", () => {
       expect(result.hasChanges).toBe(false);
       expect(result.localLinks[0]?.isPublished).toBe(false);
     });
+
+    it("should preserve anchors when replacing local links", () => {
+      const content = `# Test Article
+
+Here is a [link with anchor](./page.md#section-one) and another [link](./page.md#section-two).`;
+
+      const basePath = join(tempDir, "test.md");
+      const linkedFile = join(tempDir, "page.md");
+
+      TestHelpers.createTestFile(linkedFile, "# Page Content\n\n## Section One\n\n## Section Two");
+
+      const processedContent = ContentProcessor.processContent(content, basePath);
+
+      const linkMappings = new Map([
+        [linkedFile, "https://telegra.ph/page-one"]
+      ]);
+
+      const result = ContentProcessor.replaceLinksInContent(processedContent, linkMappings);
+
+      expect(result.contentWithReplacedLinks).toContain("https://telegra.ph/page-one#section-one");
+      expect(result.contentWithReplacedLinks).toContain("https://telegra.ph/page-one#section-two");
+      expect(result.hasChanges).toBe(true);
+      expect(result.localLinks[0]?.isPublished).toBe(true);
+      expect(result.localLinks[0]?.telegraphUrl).toBe("https://telegra.ph/page-one#section-one");
+      expect(result.localLinks[1]?.telegraphUrl).toBe("https://telegra.ph/page-one#section-two");
+    });
+
+    it("should handle mixed links with and without anchors", () => {
+      const content = `# Test Article
+
+Here is a [link with anchor](./page.md#section) and a [link without anchor](./page.md).`;
+
+      const basePath = join(tempDir, "test.md");
+      const linkedFile = join(tempDir, "page.md");
+
+      TestHelpers.createTestFile(linkedFile, "# Page Content\n\n## Section");
+
+      const processedContent = ContentProcessor.processContent(content, basePath);
+
+      const linkMappings = new Map([
+        [linkedFile, "https://telegra.ph/page-one"]
+      ]);
+
+      const result = ContentProcessor.replaceLinksInContent(processedContent, linkMappings);
+
+      expect(result.contentWithReplacedLinks).toContain("https://telegra.ph/page-one#section");
+      expect(result.contentWithReplacedLinks).toContain("https://telegra.ph/page-one)");
+      expect(result.contentWithReplacedLinks).not.toContain("https://telegra.ph/page-one#)");
+      expect(result.hasChanges).toBe(true);
+      expect(result.localLinks[0]?.telegraphUrl).toBe("https://telegra.ph/page-one#section");
+      expect(result.localLinks[1]?.telegraphUrl).toBe("https://telegra.ph/page-one");
+    });
+
+    it("should handle Cyrillic characters in anchors", () => {
+      const content = `# Тест
+
+Вот [ссылка на раздел](./страница.md#раздел-один) с кириллицей.`;
+
+      const basePath = join(tempDir, "test.md");
+      const linkedFile = join(tempDir, "страница.md");
+
+      TestHelpers.createTestFile(linkedFile, "# Страница\n\n## Раздел Один");
+
+      const processedContent = ContentProcessor.processContent(content, basePath);
+
+      const linkMappings = new Map([
+        [linkedFile, "https://telegra.ph/stranitsa"]
+      ]);
+
+      const result = ContentProcessor.replaceLinksInContent(processedContent, linkMappings);
+
+      expect(result.contentWithReplacedLinks).toContain("https://telegra.ph/stranitsa#раздел-один");
+      expect(result.hasChanges).toBe(true);
+      expect(result.localLinks[0]?.telegraphUrl).toBe("https://telegra.ph/stranitsa#раздел-один");
+    });
+
+    it("should handle edge cases with anchors", () => {
+      const content = `# Test Article
+
+[Empty anchor](./page.md#) and [Multiple hashes](./page.md#section#subsection).`;
+
+      const basePath = join(tempDir, "test.md");
+      const linkedFile = join(tempDir, "page.md");
+
+      TestHelpers.createTestFile(linkedFile, "# Page Content");
+
+      const processedContent = ContentProcessor.processContent(content, basePath);
+
+      const linkMappings = new Map([
+        [linkedFile, "https://telegra.ph/page-one"]
+      ]);
+
+      const result = ContentProcessor.replaceLinksInContent(processedContent, linkMappings);
+
+      expect(result.contentWithReplacedLinks).toContain("https://telegra.ph/page-one#");
+      expect(result.contentWithReplacedLinks).toContain("https://telegra.ph/page-one#section#subsection");
+      expect(result.hasChanges).toBe(true);
+      expect(result.localLinks[0]?.telegraphUrl).toBe("https://telegra.ph/page-one#");
+      expect(result.localLinks[1]?.telegraphUrl).toBe("https://telegra.ph/page-one#section#subsection");
+    });
+
+    it("should preserve anchors for unpublished files", () => {
+      const content = `# Test Article
+
+[Published link](./published.md#section) and [Unpublished link](./unpublished.md#section).`;
+
+      const basePath = join(tempDir, "test.md");
+      const publishedFile = join(tempDir, "published.md");
+      const unpublishedFile = join(tempDir, "unpublished.md");
+
+      TestHelpers.createTestFile(publishedFile, "# Published");
+      TestHelpers.createTestFile(unpublishedFile, "# Unpublished");
+
+      const processedContent = ContentProcessor.processContent(content, basePath);
+
+      const linkMappings = new Map([
+        [publishedFile, "https://telegra.ph/published"]
+        // unpublishedFile is not in mappings
+      ]);
+
+      const result = ContentProcessor.replaceLinksInContent(processedContent, linkMappings);
+
+      expect(result.contentWithReplacedLinks).toContain("https://telegra.ph/published#section");
+      expect(result.contentWithReplacedLinks).toContain("./unpublished.md#section");
+      expect(result.localLinks[0]?.isPublished).toBe(true);
+      expect(result.localLinks[0]?.telegraphUrl).toBe("https://telegra.ph/published#section");
+      expect(result.localLinks[1]?.isPublished).toBe(false);
+      expect(result.localLinks[1]?.telegraphUrl).toBeUndefined();
+    });
   });
 
   describe("prepareForPublication", () => {

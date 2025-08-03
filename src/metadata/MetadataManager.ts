@@ -89,6 +89,9 @@ export class MetadataManager {
         case 'description':
           metadata.description = value;
           break;
+        case 'contentHash':
+          metadata.contentHash = value;
+          break;
       }
     }
 
@@ -317,6 +320,7 @@ export class MetadataManager {
    * @param path Telegraph path
    * @param username Author username
    * @param filePath Original file path
+   * @param contentHash Content hash for change detection
    * @param title Optional title
    * @param description Optional description
    * @returns Complete metadata object
@@ -326,6 +330,7 @@ export class MetadataManager {
     path: string,
     username: string,
     filePath: string,
+    contentHash: string,
     title?: string,
     description?: string
   ): FileMetadata {
@@ -336,7 +341,8 @@ export class MetadataManager {
       publishedAt: new Date().toISOString(),
       originalFilename: basename(filePath),
       title,
-      description
+      description,
+      contentHash
     };
   }
 
@@ -360,6 +366,10 @@ export class MetadataManager {
 
     if (metadata.description) {
       lines.push(`description: "${metadata.description}"`);
+    }
+
+    if (metadata.contentHash) {
+      lines.push(`contentHash: "${metadata.contentHash}"`);
     }
 
     return lines.join('\n');

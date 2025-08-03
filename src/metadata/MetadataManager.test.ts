@@ -262,7 +262,7 @@ invalidField: some invalid syntax ][
       const title = "Test Article";
       const description = "Test description";
 
-      const metadata = MetadataManager.createMetadata(url, path, username, filePath, title, description);
+      const metadata = MetadataManager.createMetadata(url, path, username, filePath, "abc123hash", title, description);
 
       expect(metadata.telegraphUrl).toBe(url);
       expect(metadata.editPath).toBe(path);
@@ -270,6 +270,7 @@ invalidField: some invalid syntax ][
       expect(metadata.originalFilename).toBe("test.md");
       expect(metadata.title).toBe(title);
       expect(metadata.description).toBe(description);
+      expect(metadata.contentHash).toBe("abc123hash");
       expect(metadata.publishedAt).toBeDefined();
       expect(new Date(metadata.publishedAt)).toBeInstanceOf(Date);
     });
@@ -280,7 +281,7 @@ invalidField: some invalid syntax ][
       const username = "Test Author";
       const filePath = "/path/to/test.md";
 
-      const metadata = MetadataManager.createMetadata(url, path, username, filePath);
+      const metadata = MetadataManager.createMetadata(url, path, username, filePath, "def456hash");
 
       expect(metadata.telegraphUrl).toBe(url);
       expect(metadata.editPath).toBe(path);
@@ -288,6 +289,7 @@ invalidField: some invalid syntax ][
       expect(metadata.originalFilename).toBe("test.md");
       expect(metadata.title).toBeUndefined();
       expect(metadata.description).toBeUndefined();
+      expect(metadata.contentHash).toBe("def456hash");
     });
   });
 

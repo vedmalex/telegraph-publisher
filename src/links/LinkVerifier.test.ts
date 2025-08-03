@@ -437,4 +437,619 @@ describe('LinkVerifier', () => {
       expect(stats.filesByBrokenLinks).toBe(0);
     });
   });
+
+  describe('Fragment Link Handling', () => {
+    test('should handle valid file with fragment as valid link', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Section One'); // Create target with matching heading
+
+      const link: MarkdownLink = {
+        text: 'Target Section',
+        href: './target.md#section-one',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should handle invalid file with fragment as broken link', async () => {
+      const sourceFile = join(testDir, 'source.md');
+
+      writeFileSync(sourceFile, '# Source');
+      // Don't create target.md - should be broken
+
+      const link: MarkdownLink = {
+        text: 'Broken Target',
+        href: './non-existent.md#section',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 35
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      expect(result.brokenLinks).toHaveLength(1);
+      expect(result.brokenLinks[0]?.link.href).toBe('./non-existent.md#section');
+    });
+
+    test('should maintain existing behavior for fragment-only links', async () => {
+      const sourceFile = join(testDir, 'source.md');
+
+      writeFileSync(sourceFile, '# Source');
+
+      const link: MarkdownLink = {
+        text: 'Fragment Only',
+        href: '#section',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 20
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      // Fragment-only links should be skipped (pathWithoutFragment is empty)
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should handle multiple fragments correctly', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Section1#Section2'); // Create matching heading with fragments
+
+      const link: MarkdownLink = {
+        text: 'Multiple Fragments',
+        href: './target.md#section1#section2',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 40
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      // Should work - fragment rejoined correctly
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should handle empty fragment correctly', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Target');
+
+      const link: MarkdownLink = {
+        text: 'Empty Fragment',
+        href: './target.md#',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 25
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      // Should work - treated as normal file link after fragment removal
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should handle Cyrillic fragment links correctly', async () => {
+      const sourceFile = join(testDir, 'index.md');
+      const targetFile = join(testDir, 'class004.structured.md');
+
+      writeFileSync(sourceFile, '# Index');
+      writeFileSync(targetFile, '# Занятие 4 Глава 1 Вопросы мудрецов'); // Create matching Cyrillic heading
+
+      const link: MarkdownLink = {
+        text: 'Занятие 4',
+        href: './class004.structured.md#занятие-4-глава-1-вопросы-мудрецов',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 80
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      // Should work - this is the exact user's use case
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+  });
+
+  describe('Anchor Validation', () => {
+    test('should validate links with existing anchors as VALID', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target-with-anchors.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, `# Simple Heading
+## Heading With Spaces
+### Заголовок на кириллице
+#### HTML <em>Tags</em> Heading
+##### Special @#$% Characters!`);
+
+      const testCases = [
+        {
+          href: './target-with-anchors.md#simple-heading',
+          description: 'simple heading'
+        },
+        {
+          href: './target-with-anchors.md#heading-with-spaces',
+          description: 'heading with spaces'
+        },
+        {
+          href: './target-with-anchors.md#заголовок-на-кириллице',
+          description: 'Cyrillic heading'
+        },
+        {
+          href: './target-with-anchors.md#html-tags-heading',
+          description: 'heading with HTML tags'
+        },
+        {
+          href: './target-with-anchors.md#special-characters',
+          description: 'heading with special characters'
+        }
+      ];
+
+      for (const testCase of testCases) {
+        const link: MarkdownLink = {
+          text: testCase.description,
+          href: testCase.href,
+          lineNumber: 1,
+          columnStart: 0,
+          columnEnd: 30
+        };
+
+        const scanResult: FileScanResult = {
+          filePath: sourceFile,
+          allLinks: [link],
+          localLinks: [link],
+          brokenLinks: [],
+          processingTime: 0
+        };
+
+        const result = await verifier.verifyLinks(scanResult);
+        expect(result.brokenLinks).toHaveLength(0);
+      }
+    });
+
+    test('should mark links with invalid anchors as BROKEN', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target-with-anchors.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, `# Existing Heading`);
+
+      const link: MarkdownLink = {
+        text: 'Non-existent anchor',
+        href: './target-with-anchors.md#this-does-not-exist',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 50
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(1);
+      expect(result.brokenLinks[0]?.link.href).toBe('./target-with-anchors.md#this-does-not-exist');
+    });
+
+    test('should handle URI-encoded anchors correctly', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target-with-anchors.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, `# Занятие 4 Глава 1 Вопросы мудрецов`);
+
+      const link: MarkdownLink = {
+        text: 'Encoded Cyrillic',
+        href: './target-with-anchors.md#%D0%B7%D0%B0%D0%BD%D1%8F%D1%82%D0%B8%D0%B5-4-%D0%B3%D0%BB%D0%B0%D0%B2%D0%B0-1-%D0%B2%D0%BE%D0%BF%D1%80%D0%BE%D1%81%D1%8B-%D0%BC%D1%83%D0%B4%D1%80%D0%B5%D1%86%D0%BE%D0%B2',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 80
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should handle files that cannot be read gracefully', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'unreadable.md');
+
+      writeFileSync(sourceFile, '# Source');
+      // Don't create the target file to simulate read error
+
+      const link: MarkdownLink = {
+        text: 'Unreadable file',
+        href: './unreadable.md#some-anchor',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      // Should be marked as broken because file doesn't exist
+      expect(result.brokenLinks).toHaveLength(1);
+    });
+
+    test('should maintain existing behavior for links without anchors', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Target');
+
+      const link: MarkdownLink = {
+        text: 'No anchor',
+        href: './target.md',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 20
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should handle empty anchors correctly', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Target');
+
+      const link: MarkdownLink = {
+        text: 'Empty anchor',
+        href: './target.md#',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 25
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      // Empty fragment should be treated as no anchor
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should handle multiple fragments in URL correctly', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Section1#Section2');
+
+      const link: MarkdownLink = {
+        text: 'Multiple fragments',
+        href: './target.md#section1#section2',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 40
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+  });
+
+  describe('Enhanced Anchor Suggestions', () => {
+    test('should provide suggestion for broken anchor with close match', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Valid Section\n## Introduction\n### Conclusion');
+
+      const link: MarkdownLink = {
+        text: 'Invalid Section',
+        href: './target.md#invalid-sektion',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 35
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      expect(result.brokenLinks).toHaveLength(1);
+      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#valid-section');
+    });
+
+    test('should not provide suggestions when no close match exists', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Completely Different\n## Unrelated Content');
+
+      const link: MarkdownLink = {
+        text: 'Invalid Section',
+        href: './target.md#xyz-abc-nothing',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 35
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      expect(result.brokenLinks).toHaveLength(1);
+      expect(result.brokenLinks[0]?.suggestions).toHaveLength(0);
+    });
+
+    test('should handle Cyrillic anchors in suggestions', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Занятие 4 Глава 1 Вопросы мудрецов');
+
+      const link: MarkdownLink = {
+        text: 'Misspelled Cyrillic',
+        href: './target.md#занятие-4-глава-1-вопросы-мудрeцов', // note the 'e' instead of 'е'
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 50
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      expect(result.brokenLinks).toHaveLength(1);
+      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#занятие-4-глава-1-вопросы-мудрецов');
+    });
+
+    test('should handle multiple potential matches and return best one', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '# Section One\n## Section Two\n### Section Three');
+
+      const link: MarkdownLink = {
+        text: 'Typo Section',
+        href: './target.md#sektion-one', // closest to "section-one"
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        brokenLinks: [],
+        localLinks: [link],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      expect(result.brokenLinks).toHaveLength(1);
+      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#section-one');
+    });
+
+    test('should handle empty target file gracefully', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, 'No headings in this file');
+
+      const link: MarkdownLink = {
+        text: 'Any Section',
+        href: './target.md#any-section',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+
+      expect(result.brokenLinks).toHaveLength(1);
+      expect(result.brokenLinks[0]?.suggestions).toHaveLength(0);
+    });
+  });
+
+  describe('String Similarity Algorithm', () => {
+    test('should return 1.0 for identical strings', () => {
+      // Access private method via type assertion for testing
+      const similarity = (verifier as any).calculateSimilarity('test', 'test');
+      expect(similarity).toBe(1.0);
+    });
+
+    test('should return 0.0 for completely different strings', () => {
+      const similarity = (verifier as any).calculateSimilarity('abc', 'xyz');
+      expect(similarity).toBe(0.0);
+    });
+
+    test('should return 1.0 for empty strings', () => {
+      const similarity = (verifier as any).calculateSimilarity('', '');
+      expect(similarity).toBe(1.0);
+    });
+
+    test('should return 0.0 when one string is empty', () => {
+      const similarity1 = (verifier as any).calculateSimilarity('test', '');
+      const similarity2 = (verifier as any).calculateSimilarity('', 'test');
+      expect(similarity1).toBe(0.0);
+      expect(similarity2).toBe(0.0);
+    });
+
+    test('should handle typos correctly', () => {
+      const similarity = (verifier as any).calculateSimilarity('sektion', 'section');
+      expect(similarity).toBeGreaterThan(0.7);
+    });
+
+    test('should handle Cyrillic text', () => {
+      const similarity = (verifier as any).calculateSimilarity('заголовок', 'заголовки');
+      expect(similarity).toBeGreaterThan(0.7);
+    });
+
+    test('should handle partial matches', () => {
+      const similarity = (verifier as any).calculateSimilarity('intro', 'introduction');
+      expect(similarity).toBeGreaterThan(0.0);
+      expect(similarity).toBeLessThan(0.7); // Should not exceed threshold
+    });
+  });
+
+  describe('Closest Anchor Finding', () => {
+    test('should return best match above threshold', () => {
+      const anchors = new Set(['section-one', 'section-two', 'introduction']);
+      const closest = (verifier as any).findClosestAnchor('sektion-one', anchors);
+      expect(closest).toBe('section-one');
+    });
+
+    test('should return null when no match above threshold', () => {
+      const anchors = new Set(['completely-different', 'unrelated-content']);
+      const closest = (verifier as any).findClosestAnchor('my-section', anchors);
+      expect(closest).toBeNull();
+    });
+
+    test('should return null for empty anchor set', () => {
+      const anchors = new Set<string>();
+      const closest = (verifier as any).findClosestAnchor('any-section', anchors);
+      expect(closest).toBeNull();
+    });
+
+    test('should handle ties by returning first match', () => {
+      const anchors = new Set(['section-a', 'section-b']); // Equal similarity to 'section-x'
+      const closest = (verifier as any).findClosestAnchor('section-x', anchors);
+      expect(closest).toBe('section-a'); // First in iteration order
+    });
+
+    test('should handle Unicode anchors correctly', () => {
+      const anchors = new Set(['занятие-1', 'занятие-2', 'заключение']);
+      const closest = (verifier as any).findClosestAnchor('занятиe-1', anchors); // Latin 'e' instead of Cyrillic 'е'
+      expect(closest).toBe('занятие-1');
+    });
+  });
 });
