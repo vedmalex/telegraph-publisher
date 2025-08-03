@@ -5,12 +5,14 @@ import { dirname, join, relative } from "node:path";
 import { TestHelpers } from "../test-utils/TestHelpers";
 import type { DependencyNode, MetadataConfig } from "../types/metadata";
 import { PublicationStatus } from "../types/metadata";
+import { PathResolver } from "../utils/PathResolver";
 import { DependencyManager } from "./DependencyManager";
 
 describe("DependencyManager", () => {
   let tempDir: string;
   let dependencyManager: DependencyManager;
   let config: MetadataConfig;
+  let pathResolver: PathResolver;
 
   beforeEach(() => {
     tempDir = TestHelpers.createTempDir("dependency-test");
@@ -18,7 +20,8 @@ describe("DependencyManager", () => {
       maxDependencyDepth: 5,
       autoPublishDependencies: true
     });
-    dependencyManager = new DependencyManager(config);
+    pathResolver = PathResolver.getInstance();
+    dependencyManager = new DependencyManager(config, pathResolver);
   });
 
   afterEach(() => {
@@ -477,7 +480,8 @@ describe('DependencyManager depth consistency fix', () => {
 
   beforeEach(() => {
     const config = TestHelpers.createTestConfig();
-    manager = new DependencyManager(config);
+    const pathResolver = PathResolver.getInstance();
+    manager = new DependencyManager(config, pathResolver);
     tempDir = mkdtempSync(join(tmpdir(), 'dependency-depth-test-'));
   });
 

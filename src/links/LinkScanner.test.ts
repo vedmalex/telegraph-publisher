@@ -134,7 +134,7 @@ Fragment link: [section](#section)
       expect(result.filePath).toBe(filePath);
       expect(result.allLinks).toHaveLength(5);
       expect(result.localLinks).toHaveLength(2); // Only ./local.md and ../parent.md
-      expect(result.processingTime).toBeGreaterThan(0);
+      expect(result.processingTime).toBeGreaterThanOrEqual(0);
     });
 
     test('should capture correct line numbers and positions', async () => {

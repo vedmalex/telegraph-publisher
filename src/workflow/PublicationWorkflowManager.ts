@@ -1,3 +1,4 @@
+import { lstatSync } from 'node:fs';
 import { ProgressIndicator } from '../cli/ProgressIndicator';
 import { ConfigManager } from '../config/ConfigManager';
 import { AutoRepairer } from '../links/AutoRepairer';
@@ -39,10 +40,33 @@ export class PublicationWorkflowManager {
    * @param options Command options.
    */
   public async publish(targetPath: string, options: any): Promise<void> {
+    // Auto-enable dry-run if debug is specified
+    if (options.debug) {
+      options.dryRun = true;
+    }
+
     // Шаг 1: Сбор файлов.
-    const filesToProcess = targetPath === process.cwd() ?
-      await this.linkScanner.findMarkdownFiles(targetPath) :
-      [targetPath];
+    let filesToProcess: string[];
+
+    try {
+      const stats = lstatSync(targetPath);
+      if (stats.isDirectory()) {
+        // If it's a directory, scan for markdown files
+        filesToProcess = await this.linkScanner.findMarkdownFiles(targetPath);
+      } else {
+        // If it's a file, process it directly
+        filesToProcess = [targetPath];
+      }
+    } catch (error) {
+      // Check if it's a file system error (can't stat) vs scanner error
+      if (error && typeof error === 'object' && 'code' in error) {
+        // File system error - assume it's a file
+        filesToProcess = [targetPath];
+      } else {
+        // Scanner error or other error - propagate it
+        throw error;
+      }
+    }
 
     if (filesToProcess.length === 0) {
       ProgressIndicator.showStatus("No markdown files found to publish.", "info");
@@ -106,7 +130,8 @@ export class PublicationWorkflowManager {
       const result = await this.publisher.publishWithMetadata(file, this.config.defaultUsername, {
         withDependencies: options.withDependencies !== false,
         forceRepublish: options.forceRepublish || false,
-        dryRun: options.dryRun || false
+        dryRun: options.dryRun || false,
+        debug: options.debug || false
       });
 
       if (result.success) {

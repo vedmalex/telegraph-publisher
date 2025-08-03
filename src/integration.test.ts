@@ -69,10 +69,10 @@ describe("Integration Tests", () => {
 			children: ["This is a blockquote."],
 		});
 
-		// Subheading (H2) converted to h2 by correct mapping
+		// Subheading (H2) converted to h3 for Telegraph API compatibility
 		const subheading = telegraphNodes[2];
 		expect(subheading).toEqual({
-			tag: "h2",
+			tag: "h3",
 			children: ["Subheading"],
 		});
 

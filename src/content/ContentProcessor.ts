@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { LinkResolver } from "../links/LinkResolver";
 import { MetadataManager } from "../metadata/MetadataManager";
 import type { FileMetadata, LocalLink, ProcessedContent } from "../types/metadata";
@@ -70,6 +70,25 @@ export class ContentProcessor {
    */
   static processFile(filePath: string): ProcessedContent {
     try {
+      // Check if path is a directory
+      try {
+        const stats = lstatSync(filePath);
+        if (stats.isDirectory()) {
+          throw new Error(`Cannot process directory as file: ${filePath}`);
+        }
+      } catch (error) {
+        // If we can't stat the path, try decoding and check again
+        try {
+          const decodedPath = decodeURIComponent(filePath);
+          const stats = lstatSync(decodedPath);
+          if (stats.isDirectory()) {
+            throw new Error(`Cannot process directory as file: ${decodedPath}`);
+          }
+        } catch {
+          // Path doesn't exist, will be handled by readFileSync below
+        }
+      }
+
       // Try the path as-is first
       let originalContent: string;
       try {

@@ -91,7 +91,8 @@ describe('PublicationWorkflowManager', () => {
       expect(mockPublisher).toHaveBeenCalledWith(testFile, 'test-user', {
         withDependencies: true,
         forceRepublish: false,
-        dryRun: false
+        dryRun: false,
+        debug: false
       });
 
       // Verify success message was logged
@@ -231,8 +232,8 @@ describe('PublicationWorkflowManager', () => {
         path: 'Test-Article-01-01'
       });
 
-      // Mock console.log
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      // Mock ProgressIndicator.showStatus
+      const progressSpy = jest.spyOn(ProgressIndicator, 'showStatus').mockImplementation();
 
       // Test options without noVerify and noAutoRepair
       const options = { noVerify: false, noAutoRepair: false, withDependencies: true };
@@ -241,11 +242,11 @@ describe('PublicationWorkflowManager', () => {
       await workflowManager.publish(testFile, options);
 
       // Verify auto-repair was called
-      expect(mockAutoRepairer).toHaveBeenCalledWith(testDir);
+      expect(mockAutoRepairer).toHaveBeenCalledWith(testFile);
 
       // Verify success messages were logged
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('🔧 Automatically repaired 1 link(s)'));
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✅ Link verification passed.'));
+      expect(progressSpy).toHaveBeenCalledWith(expect.stringContaining('🔧 Automatically repaired 1 link(s)'), 'success');
+      expect(progressSpy).toHaveBeenCalledWith(expect.stringContaining('✅ Link verification passed.'), 'success');
 
       // Verify publisher was called
       expect(mockPublisher).toHaveBeenCalled();
@@ -255,7 +256,7 @@ describe('PublicationWorkflowManager', () => {
       mockVerifier.mockRestore();
       mockResolver.mockRestore();
       mockPublisher.mockRestore();
-      consoleSpy.mockRestore();
+      progressSpy.mockRestore();
     });
 
     test('should handle publication failure gracefully', async () => {
@@ -271,8 +272,8 @@ describe('PublicationWorkflowManager', () => {
         error: 'Publication failed due to network error'
       });
 
-      // Mock console.log
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      // Mock ProgressIndicator.showStatus
+      const progressSpy = jest.spyOn(ProgressIndicator, 'showStatus').mockImplementation();
 
       // Test options with noVerify
       const options = { noVerify: true, withDependencies: true };
@@ -281,11 +282,11 @@ describe('PublicationWorkflowManager', () => {
       await workflowManager.publish(testFile, options);
 
       // Verify error message was logged
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('❌ Failed: ' + testFile));
+      expect(progressSpy).toHaveBeenCalledWith(expect.stringContaining('❌ Failed: ' + testFile), 'error');
 
       // Clean up mocks
       mockPublisher.mockRestore();
-      consoleSpy.mockRestore();
+      progressSpy.mockRestore();
     });
 
     test('should handle directory publication with multiple files', async () => {
@@ -340,8 +341,8 @@ describe('PublicationWorkflowManager', () => {
       const mockScanner = jest.spyOn(workflowManager['linkScanner'], 'findMarkdownFiles');
       mockScanner.mockResolvedValue([]);
 
-      // Mock console.log
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      // Mock ProgressIndicator.showStatus
+      const progressSpy = jest.spyOn(ProgressIndicator, 'showStatus').mockImplementation();
 
       // Test empty directory
       const options = { noVerify: true };
@@ -350,11 +351,11 @@ describe('PublicationWorkflowManager', () => {
       await workflowManager.publish(testDir, options);
 
       // Verify appropriate message was logged
-      expect(consoleSpy).toHaveBeenCalledWith('No markdown files found to publish.');
+      expect(progressSpy).toHaveBeenCalledWith('No markdown files found to publish.', 'info');
 
       // Clean up mocks
       mockScanner.mockRestore();
-      consoleSpy.mockRestore();
+      progressSpy.mockRestore();
     });
 
     test('should handle dry run mode correctly', async () => {
@@ -387,20 +388,119 @@ describe('PublicationWorkflowManager', () => {
     });
   });
 
+  describe('debug option functionality', () => {
+    test('should auto-enable dry-run when debug is specified', async () => {
+      // Setup test file
+      const testFile = join(testDir, 'test-debug.md');
+      writeFileSync(testFile, '# Test Article\n\nThis is test content for debug option.');
+
+      // Mock publisher to track calls
+      const mockPublisher = jest.spyOn(workflowManager['publisher'], 'publishWithMetadata');
+      mockPublisher.mockResolvedValue({
+        success: true,
+        isNewPublication: true,
+        url: 'https://telegra.ph/test',
+        path: '/test'
+      });
+
+      // Test with debug option (should auto-enable dryRun)
+      const options = { debug: true, noVerify: true };
+
+      await workflowManager.publish(testFile, options);
+
+      // Verify publisher was called with both debug: true and dryRun: true
+      expect(mockPublisher).toHaveBeenCalledWith(testFile, 'test-user', expect.objectContaining({
+        debug: true,
+        dryRun: true
+      }));
+
+      // Clean up mocks
+      mockPublisher.mockRestore();
+    });
+
+    test('should create JSON file when debug option is used', async () => {
+      // Setup test file
+      const testFile = join(testDir, 'test-json-creation.md');
+      const expectedJsonFile = join(testDir, 'test-json-creation.json');
+      writeFileSync(testFile, '# Test Article\n\nThis is test content that should generate JSON.');
+
+      // Mock the telegraph API calls to avoid actual network requests
+      const mockPublishNodes = jest.spyOn(workflowManager['publisher'], 'publishNodes');
+      mockPublishNodes.mockResolvedValue({
+        url: 'https://telegra.ph/test',
+        path: '/test'
+      });
+
+      // Test with debug option
+      const options = { debug: true, noVerify: true };
+
+      await workflowManager.publish(testFile, options);
+
+      // Verify JSON file was created
+      expect(existsSync(expectedJsonFile)).toBe(true);
+
+      // Verify JSON content is valid and properly formatted
+      const jsonContent = readFileSync(expectedJsonFile, 'utf-8');
+      const telegraphNodes = JSON.parse(jsonContent);
+
+      // Should be an array of Telegraph nodes
+      expect(Array.isArray(telegraphNodes)).toBe(true);
+      expect(telegraphNodes.length).toBeGreaterThan(0);
+
+      // Should be properly formatted with 2-space indentation
+      expect(jsonContent).toContain('  ');
+
+      // Clean up created JSON file
+      if (existsSync(expectedJsonFile)) {
+        rmSync(expectedJsonFile);
+      }
+
+      // Clean up mocks
+      mockPublishNodes.mockRestore();
+    });
+
+    test('should not create JSON file when debug is false', async () => {
+      // Setup test file
+      const testFile = join(testDir, 'test-no-json.md');
+      const expectedJsonFile = join(testDir, 'test-no-json.json');
+      writeFileSync(testFile, '# Test Article\n\nThis should not generate JSON.');
+
+      // Mock publisher to avoid actual publication
+      const mockPublisher = jest.spyOn(workflowManager['publisher'], 'publishWithMetadata');
+      mockPublisher.mockResolvedValue({
+        success: true,
+        isNewPublication: true,
+        url: 'https://telegra.ph/test',
+        path: '/test'
+      });
+
+      // Test with dryRun but without debug
+      const options = { dryRun: true, debug: false, noVerify: true };
+
+      await workflowManager.publish(testFile, options);
+
+      // Verify JSON file was NOT created
+      expect(existsSync(expectedJsonFile)).toBe(false);
+
+      // Clean up mocks
+      mockPublisher.mockRestore();
+    });
+  });
+
   describe('error handling', () => {
     test('should handle workflow exceptions gracefully', async () => {
-      // Setup test file
+      // Setup test file in directory
       const testFile = join(testDir, 'test.md');
       writeFileSync(testFile, '# Test Article\n\nContent');
 
-      // Mock LinkScanner to throw an error
+      // Mock LinkScanner to throw an error when scanning directory
       const mockScanner = jest.spyOn(workflowManager['linkScanner'], 'findMarkdownFiles');
       mockScanner.mockRejectedValue(new Error('Scanner error'));
 
-      // Test that the error is propagated
+      // Test that the error is propagated when publishing directory
       const options = { noVerify: true };
 
-      await expect(workflowManager.publish(testFile, options)).rejects.toThrow('Scanner error');
+      await expect(workflowManager.publish(testDir, options)).rejects.toThrow('Scanner error');
 
       // Clean up mocks
       mockScanner.mockRestore();

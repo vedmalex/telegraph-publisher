@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { basename, dirname, extname, relative } from 'node:path';
 import type { LocalLink } from '../types/metadata';
 import { PathResolver } from '../utils/PathResolver';
@@ -486,5 +487,28 @@ export class LinkResolver {
       // No mapping found, return original link unchanged
       return fullMatch;
     });
+  }
+
+  /**
+   * Validate if a link target exists
+   * @param filePath Path to the link target
+   * @returns True if link target exists
+   */
+  static validateLinkTarget(filePath: string): boolean {
+    try {
+      return existsSync(filePath);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check if a file is a markdown file
+   * @param filePath Path to check
+   * @returns True if file is markdown
+   */
+  static isMarkdownFile(filePath: string): boolean {
+    const ext = filePath.toLowerCase();
+    return ext.endsWith('.md') || ext.endsWith('.markdown');
   }
 }

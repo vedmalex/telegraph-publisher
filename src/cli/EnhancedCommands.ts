@@ -39,6 +39,7 @@ export class EnhancedCommands {
       .option("--no-with-dependencies", "Skip automatic dependency publishing")
       .option("--force-republish", "Force republish even if file is already published")
       .option("--dry-run", "Preview operations without making changes")
+      .option("--debug", "Save the generated Telegraph JSON to a file (implies --dry-run)")
       .option("--no-verify", "Skip mandatory local link verification before publishing")
       .option("--no-auto-repair", "Disable automatic link repair (publication will fail if broken links are found)")
       .option("--token <token>", "Access token (optional, will try to load from config)")

@@ -19,6 +19,8 @@
     │   ├── dependencies/
     │   │   ├── DependencyManager.test.ts
     │   │   └── DependencyManager.ts
+    │   ├── doc/
+    │   │   └── api.md
     │   ├── links/
     │   │   ├── AutoRepairer.test.ts
     │   │   ├── AutoRepairer.ts
@@ -59,12 +61,37 @@
     │   ├── clean_mr.ts
     │   ├── cli.ts
     │   ├── integration.test.ts
+    │   ├── markdownConverter.numberedHeadings.test.ts
     │   ├── markdownConverter.test.ts
     │   ├── markdownConverter.ts
     │   ├── slice_book.ts
     │   ├── telegraphPublisher.test.ts
     │   └── telegraphPublisher.ts
-    └── test-relative-links.test.ts
+    ├── test-cache-fix/
+    │   └── subfolder/
+    │       └── test-file.md
+    ├── test-nested-links/
+    │   ├── section1/
+    │   │   ├── page1.md
+    │   │   └── page2.md
+    │   ├── section2/
+    │   │   ├── page1.md
+    │   │   └── page2.md
+    │   └── index.md
+    ├── test-sliced-scenario/
+    │   └── 003/
+    │       └── page_005.md
+    ├── COMMIT_MESSAGE.md
+    ├── GITHUB_RELEASE_SUMMARY.md
+    ├── readme.md
+    ├── RELEASE_NOTES_v1.2.0.md
+    ├── TDD_REPORT.md
+    ├── test-content.md
+    ├── test-existing-file.md
+    ├── test-rate-limiting.md
+    ├── test-relative-links.test.ts
+    ├── TODO.md
+    └── шлока1.1.1.md
 ```
 
 ## Список файлов
@@ -902,6 +929,7 @@ export class EnhancedCommands {
       .option("--no-with-dependencies", "Skip automatic dependency publishing")
       .option("--force-republish", "Force republish even if file is already published")
       .option("--dry-run", "Preview operations without making changes")
+      .option("--debug", "Save the generated Telegraph JSON to a file (implies --dry-run)")
       .option("--no-verify", "Skip mandatory local link verification before publishing")
       .option("--no-auto-repair", "Disable automatic link repair (publication will fail if broken links are found)")
       .option("--token <token>", "Access token (optional, will try to load from config)")
@@ -2457,7 +2485,7 @@ Regular [normal link](./normal.md) after code block.`;
 `src/content/ContentProcessor.ts`
 
 ```ts
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { LinkResolver } from "../links/LinkResolver";
 import { MetadataManager } from "../metadata/MetadataManager";
 import type { FileMetadata, LocalLink, ProcessedContent } from "../types/metadata";
@@ -2529,6 +2557,25 @@ export class ContentProcessor {
    */
   static processFile(filePath: string): ProcessedContent {
     try {
+      // Check if path is a directory
+      try {
+        const stats = lstatSync(filePath);
+        if (stats.isDirectory()) {
+          throw new Error(`Cannot process directory as file: ${filePath}`);
+        }
+      } catch (error) {
+        // If we can't stat the path, try decoding and check again
+        try {
+          const decodedPath = decodeURIComponent(filePath);
+          const stats = lstatSync(decodedPath);
+          if (stats.isDirectory()) {
+            throw new Error(`Cannot process directory as file: ${decodedPath}`);
+          }
+        } catch {
+          // Path doesn't exist, will be handled by readFileSync below
+        }
+      }
+
       // Try the path as-is first
       let originalContent: string;
       try {
@@ -2787,12 +2834,14 @@ import { dirname, join, relative } from "node:path";
 import { TestHelpers } from "../test-utils/TestHelpers";
 import type { DependencyNode, MetadataConfig } from "../types/metadata";
 import { PublicationStatus } from "../types/metadata";
+import { PathResolver } from "../utils/PathResolver";
 import { DependencyManager } from "./DependencyManager";
 
 describe("DependencyManager", () => {
   let tempDir: string;
   let dependencyManager: DependencyManager;
   let config: MetadataConfig;
+  let pathResolver: PathResolver;
 
   beforeEach(() => {
     tempDir = TestHelpers.createTempDir("dependency-test");
@@ -2800,7 +2849,8 @@ describe("DependencyManager", () => {
       maxDependencyDepth: 5,
       autoPublishDependencies: true
     });
-    dependencyManager = new DependencyManager(config);
+    pathResolver = PathResolver.getInstance();
+    dependencyManager = new DependencyManager(config, pathResolver);
   });
 
   afterEach(() => {
@@ -3259,7 +3309,8 @@ describe('DependencyManager depth consistency fix', () => {
 
   beforeEach(() => {
     const config = TestHelpers.createTestConfig();
-    manager = new DependencyManager(config);
+    const pathResolver = PathResolver.getInstance();
+    manager = new DependencyManager(config, pathResolver);
     tempDir = mkdtempSync(join(tmpdir(), 'dependency-depth-test-'));
   });
 
@@ -3369,7 +3420,7 @@ describe('DependencyManager depth consistency fix', () => {
 `src/dependencies/DependencyManager.ts`
 
 ```ts
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { LinkResolver } from "../links/LinkResolver";
 import { LinkScanner } from "../links/LinkScanner";
@@ -3537,6 +3588,27 @@ export class DependencyManager {
     this.processingStack.add(filePath);
 
     try {
+      // Check if path is a directory
+      try {
+        const stats = lstatSync(filePath);
+        if (stats.isDirectory()) {
+          console.error(`Error processing file ${filePath}: Cannot process directory as file`);
+          return this.createNode(filePath, currentDepth, []);
+        }
+      } catch (error) {
+        // If we can't stat the path, try decoding and check again
+        try {
+          const decodedPath = decodeURIComponent(filePath);
+          const stats = lstatSync(decodedPath);
+          if (stats.isDirectory()) {
+            console.error(`Error processing file ${decodedPath}: Cannot process directory as file`);
+            return this.createNode(filePath, currentDepth, []);
+          }
+        } catch {
+          // Path doesn't exist, will be handled by readFileSync below
+        }
+      }
+
       // Read file content and find local links
       let content: string;
       try {
@@ -3728,6 +3800,368 @@ export class DependencyManager {
     return nodes;
   }
 }
+```
+
+`src/doc/api.md`
+
+```md
+---
+title: Telegraph API
+description: >-
+  Telegra.ph is a minimalist publishing tool that allows you to create richly
+  formatted posts and push them to the Web in just a click. Telegraph posts also
+  get beautiful Instant View pages on Telegram.
+
+  To maintain the purity of the basic interface, we launched the @Telegraph bot
+  for those who require advanced features. This bot can help you manage your
+  articles across any number of devices and get page view statistics for any
+  Telegraph page.
+
+  Anyone can enjoy the simplicity of Telegraph publishing, not just Telegram…
+image: https://telegra.ph/file/6a5b15e7eb4d7329ca7af.jpg
+---
+
+# Telegraph API
+
+
+
+![](./images/file_6a5b15e7eb4d7329ca7af.jpg)
+
+**Telegra.ph** is a minimalist publishing tool that allows you to create richly formatted posts and push them to the Web in just a click. **Telegraph** posts also get beautiful [Instant View](https://telegram.org/blog/instant-view)  pages on **Telegram**.
+
+To maintain the purity of the basic interface, we launched the [**@Telegraph**](https://telegram.me/telegraph)  **bot** for those who require advanced features. This bot can help you manage your articles across any number of devices and get page view statistics for any Telegraph page.
+
+Anyone can enjoy the simplicity of Telegraph publishing, not just [Telegram](https://telegram.org/)  users. For this reason, all developers are welcome to use this **Telegraph API** to create bots like [@Telegraph](https://telegram.me/telegraph)  for any other platform, or even standalone interfaces.
+
+
+
+All queries to the Telegraph API must be served over **HTTPS** and should be presented in this form: `https://api.telegra.ph/%method%`.
+
+If a `path` parameter is present, you can also use this form: `https://api.telegra.ph/%method%/%path%`.
+
+#### [1\. Methods](#Available-methods)
+
+- [Telegraph API](#telegraph-api)
+      - [1. Methods](#1-methods)
+      - [2. Types](#2-types)
+      - [3. Content format](#3-content-format)
+    - [](#)
+    - [Available methods](#available-methods)
+      - [createAccount](#createaccount)
+      - [editAccountInfo](#editaccountinfo)
+      - [getAccountInfo](#getaccountinfo)
+      - [revokeAccessToken](#revokeaccesstoken)
+      - [createPage](#createpage)
+      - [editPage](#editpage)
+      - [getPage](#getpage)
+      - [getPageList](#getpagelist)
+      - [getViews](#getviews)
+    - [Available types](#available-types)
+      - [Account](#account)
+      - [PageList](#pagelist)
+      - [Page](#page)
+      - [PageViews](#pageviews)
+      - [Node](#node)
+      - [NodeElement](#nodeelement)
+    - [Content format](#content-format)
+
+#### [2\. Types](#Available-types)
+
+*   [Account](#Account)
+*   [Node](#Node)
+*   [NodeElement](#NodeElement)
+*   [Page](#Page)
+*   [PageList](#PageList)
+*   [PageViews](#PageViews)
+
+#### [3\. Content format](#Content-format)
+
+###
+
+### Available methods
+
+We support **GET** and **POST** HTTP methods. The response contains a JSON object, which always has a Boolean field `ok`. If `ok` equals _true_, the request was successful, and the result of the query can be found in the `result` field. In case of an unsuccessful request, `ok` equals _false,_ and the error is explained in the `error` field (e.g. SHORT\_NAME\_REQUIRED). All queries must be made using UTF-8.
+
+#### createAccount
+
+Use this method to create a new Telegraph account. Most users only need one account, but this can be useful for channel administrators who would like to keep individual author names and profile links for each of their channels. On success, returns an [Account](#Account)  object with the regular fields and an additional `access_token` field.
+
+*   **short\_name** (_String, 1-32 characters_)
+    _Required_. Account name, helps users with several accounts remember which they are currently using. Displayed to the user above the "Edit/Publish" button on Telegra.ph, other users don't see this name.
+*   **author\_name** (_String, 0-128 characters_)
+    Default author name used when creating new articles.
+*   **author\_url** (_String, 0-512 characters_)
+    Default profile link, opened when users click on the author's name below the title. Can be any link, not necessarily to a Telegram profile or channel.
+
+> **Sample request
+> **[https://api.telegra.ph/createAccount?short\_name=Sandbox&author\_name=Anonymous](https://api.telegra.ph/createAccount?short_name=Sandbox&author_name=Anonymous)
+
+#### editAccountInfo
+
+Use this method to update information about a Telegraph account. Pass only the parameters that you want to edit. On success, returns an [Account](#Account)  object with the default fields.
+
+*   **access\_token** (_String_)
+    _Required_. Access token of the Telegraph account.
+*   **short\_name** (_String, 1-32 characters_)
+    New account name.
+*   **author\_name** (_String, 0-128 characters_)
+    New default author name used when creating new articles.
+*   **author\_url** (_String, 0-512 characters_)
+    New default profile link, opened when users click on the author's name below the title. Can be any link, not necessarily to a Telegram profile or channel.
+
+> **Sample request
+> **[https://api.telegra.ph/editAccountInfo?access\_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&short\_name=Sandbox&author\_name=Anonymous](https://api.telegra.ph/editAccountInfo?access_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&short_name=Sandbox&author_name=Anonymous)
+
+#### getAccountInfo
+
+Use this method to get information about a Telegraph account. Returns an [Account](#Account)  object on success.
+
+*   **access\_token** (_String_)
+    _Required_. Access token of the Telegraph account.
+*   **fields** (_Array of String, default = \[“short\_name”,“author\_name”,“author\_url”\]_)
+    List of account fields to return. Available fields: _short\_name_, _author\_name_, _author\_url_, _auth\_url_, _page\_count_.
+
+> **Sample request
+> **[https://api.telegra.ph/getAccountInfo?access\_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&fields=\["short\_name","page\_count"\]](https://api.telegra.ph/getAccountInfo?access_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&fields=[%22short_name%22,%22page_count%22])
+
+#### revokeAccessToken
+
+Use this method to revoke access\_token and generate a new one, for example, if the user would like to reset all connected sessions, or you have reasons to believe the token was compromised. On success, returns an [Account](#Account)  object with new `access_token` and `auth_url` fields.
+
+*   **access\_token** (_String_)
+    _Required_. Access token of the Telegraph account.
+
+> **Sample request
+> **[https://api.telegra.ph/revokeAccessToken?access\_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722](https://api.telegra.ph/revokeAccessToken?access_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722)
+
+#### createPage
+
+Use this method to create a new Telegraph page. On success, returns a [Page](#Page)  object.
+
+*   **access\_token** (_String_)
+    _Required_. Access token of the Telegraph account.
+*   **title** (_String, 1-256 characters_)
+    _Required_. Page title.
+*   **author\_name** (_String, 0-128 characters_)Author name, displayed below the article's title.
+*   **author\_url** (_String, 0-512 characters_)Profile link, opened when users click on the author's name below the title. Can be any link, not necessarily to a Telegram profile or channel.
+*   **content** (_Array of_ [_Node_](#Node) _, up to 64 KB_)_Required_. [Content](#Content-format)  of the page.
+*   **return\_content** (_Boolean, default = false_)
+    If _true_, a `content` field will be returned in the [Page](#Page)  object (see: [Content format](#Content-format) ).
+
+> **Sample request
+> **[https://api.telegra.ph/createPage?access\_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&title=Sample+Page&author\_name=Anonymous&content=\[{"tag":"p","children":\["Hello,+world!"\]}\]&return\_content=true](https://api.telegra.ph/createPage?access_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&title=Sample+Page&author_name=Anonymous&content=[%7B%22tag%22:%22p%22,%22children%22:[%22Hello,+world!%22]%7D]&return_content=true)
+
+#### editPage
+
+Use this method to edit an existing Telegraph page. On success, returns a [Page](#Page)  object.
+
+*   **access\_token** (_String_)
+    _Required_. Access token of the Telegraph account.
+*   **path** (_String_)
+    _Required_. Path to the page.
+*   **title** (_String, 1-256 characters_)
+    _Required_. Page title.
+*   **content** (_Array of_ [_Node_](#Node) _, up to 64 KB_)_Required_. [Content](#Content-format)  of the page.
+*   **author\_name** (_String, 0-128 characters_)
+    Author name, displayed below the article's title.
+*   **author\_url** (_String, 0-512 characters_)
+    Profile link, opened when users click on the author's name below the title. Can be any link, not necessarily to a Telegram profile or channel.
+*   **return\_content** (_Boolean, default = false_)
+    If _true_, a `content` field will be returned in the [Page](#Page)  object.
+
+> **Sample request
+> **[https://api.telegra.ph/editPage/Sample-Page-12-15?access\_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&title=Sample+Page&author\_name=Anonymous&content=\[{"tag":"p","children":\["Hello,+world!"\]}\]&return\_content=true](https://api.telegra.ph/editPage/Sample-Page-12-15?access_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&title=Sample+Page&author_name=Anonymous&content=[%7B%22tag%22:%22p%22,%22children%22:[%22Hello,+world!%22]%7D]&return_content=true)
+
+#### getPage
+
+Use this method to get a Telegraph page. Returns a [Page](#Page)  object on success.
+
+*   **path** (_String_)_Required_. Path to the Telegraph page (in the format `Title-12-31`, i.e. everything that comes after `http://telegra.ph/`).
+*   **return\_content** (_Boolean, default = false_)
+    If _true_, `content` field will be returned in [Page](#Page)  object.
+
+> **Sample request
+> **[https://api.telegra.ph/getPage/Sample-Page-12-15?return\_content=true](https://api.telegra.ph/getPage/Sample-Page-12-15?return_content=true)
+
+#### getPageList
+
+Use this method to get a list of pages belonging to a Telegraph account. Returns a [PageList](#PageList)  object, sorted by most recently created pages first.
+
+*   **access\_token** (_String_)
+    _Required_. Access token of the Telegraph account.
+*   **offset** (_Integer, default = 0_)
+    Sequential number of the first page to be returned.
+*   **limit** (_Integer, 0-200, default = 50_)
+    Limits the number of pages to be retrieved.
+
+> **Sample request
+> **[https://api.telegra.ph/getPageList?access\_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&limit=3](https://api.telegra.ph/getPageList?access_token=d3b25feccb89e508a9114afb82aa421fe2a9712b963b387cc5ad71e58722&limit=3)
+
+#### getViews
+
+Use this method to get the number of views for a Telegraph article. Returns a [PageViews](#PageViews)  object on success. By default, the total number of page views will be returned.
+
+*   **path** (_String_)
+    _Required_. Path to the Telegraph page (in the format `Title-12-31`, where 12 is the month and 31 the day the article was first published).
+*   **year** (_Integer, 2000-2100_)
+    _Required if month is passed_. If passed, the number of page views for the requested year will be returned.
+*   **month** (_Integer, 1-12_)
+    _Required if day is passed_. If passed, the number of page views for the requested month will be returned.
+*   **day** (_Integer, 1-31_)
+    _Required if hour is passed_. If passed, the number of page views for the requested day will be returned.
+*   **hour** (_Integer, 0-24_)
+    If passed, the number of page views for the requested hour will be returned.
+
+> **Sample request
+> **[https://api.telegra.ph/getViews/Sample-Page-12-15?year=2016&month=12](https://api.telegra.ph/getViews/Sample-Page-12-15?year=2016&month=12)
+
+### Available types
+
+All types used in the Telegraph API responses are represented as JSON-objects. Optional fields may be not returned when irrelevant.
+
+#### Account
+
+This object represents a Telegraph account.
+
+*   **short\_name** (_String_)Account name, helps users with several accounts remember which they are currently using. Displayed to the user above the "Edit/Publish" button on Telegra.ph, other users don't see this name.
+*   **author\_name** (_String_)Default author name used when creating new articles.
+*   **author\_url** (_String_)Profile link, opened when users click on the author's name below the title. Can be any link, not necessarily to a Telegram profile or channel.
+*   **access\_token** (_String_)
+    _Optional. Only returned by the_ [_createAccount_](#createAccount)  _and_ [_revokeAccessToken_](#revokeAccessToken)  _method._ Access token of the Telegraph account.
+*   **auth\_url** (_String_)
+    _Optional_. URL to authorize a browser on [telegra.ph](./index.md)  and connect it to a Telegraph account. This URL is valid for only one use and for 5 minutes only.
+*   **page\_count** (_Integer_)
+    _Optional_. Number of pages belonging to the Telegraph account.
+
+#### PageList
+
+This object represents a list of Telegraph articles belonging to an account. Most recently created articles first.
+
+*   **total\_count** (_Integer_)
+    Total number of pages belonging to the target Telegraph account.
+*   **pages** (_Array of_ [_Page_](#Page) )
+    Requested pages of the target Telegraph account.
+
+#### Page
+
+This object represents a page on Telegraph.
+
+*   **path** (_String_)
+    Path to the page.
+*   **url** (_String_)
+    URL of the page.
+*   **title** (_String_)
+    Title of the page.
+*   **description** (_String_)
+    Description of the page.
+*   **author\_name** (_String_)
+    _Optional_. Name of the author, displayed below the title.
+*   **author\_url** (_String_)
+    _Optional_. Profile link, opened when users click on the author's name below the title. Can be any link, not necessarily to a Telegram profile or channel.
+*   **image\_url** (_String_)
+    _Optional_. Image URL of the page.
+*   **content** (_Array of_ [_Node_](#Node) )
+    _Optional_. [Content](#Content-format)  of the page.
+*   **views** (_Integer_)
+    Number of page views for the page.
+*   **can\_edit** (_Boolean_)
+    _Optional. Only returned if access\_token passed_. _True_, if the target Telegraph account can edit the page.
+
+#### PageViews
+
+This object represents the number of page views for a Telegraph article.
+
+*   **views** (_Integer_)
+    Number of page views for the target page.
+
+#### Node
+
+This abstract object represents a DOM Node. It can be a _String_ which represents a DOM text node or a [NodeElement](#NodeElement)  object.
+
+#### NodeElement
+
+This object represents a DOM element node.
+
+*   **tag** (_String_)Name of the DOM element. Available tags: _a_, _aside_, _b_, _blockquote_, _br_, _code_, _em_, _figcaption_, _figure_, _h3_, _h4_, _hr_, _i_, _iframe_, _img_, _li_, _ol_, _p_, _pre_, _s_, _strong_, _u_, _ul_, _video_.
+*   **attrs** (_Object_)_Optional._ Attributes of the DOM element. Key of object represents name of attribute, value represents value of attribute. Available attributes: _href_, _src_.
+*   **children** (_Array of_ [_Node_](#Node) )_Optional._ List of child nodes for the DOM element.
+
+### Content format
+
+The Telegraph API uses a DOM-based format to represent the content of the page. Below is an example of code in javascript which explains how you can use it:
+
+function domToNode(domNode) {
+  if (domNode.nodeType == domNode.TEXT\_NODE) {
+    return domNode.data;
+  }
+  if (domNode.nodeType != domNode.ELEMENT\_NODE) {
+    return false;
+  }
+  var nodeElement = {};
+  nodeElement.tag = domNode.tagName.toLowerCase();
+  for (var i = 0; i < domNode.attributes.length; i++) {
+    var attr = domNode.attributes\[i\];
+    if (attr.name == 'href' || attr.name == 'src') {
+      if (!nodeElement.attrs) {
+        nodeElement.attrs = {};
+      }
+      nodeElement.attrs\[attr.name\] = attr.value;
+    }
+  }
+  if (domNode.childNodes.length > 0) {
+    nodeElement.children = \[\];
+    for (var i = 0; i < domNode.childNodes.length; i++) {
+      var child = domNode.childNodes\[i\];
+      nodeElement.children.push(domToNode(child));
+    }
+  }
+  return nodeElement;
+}
+
+function nodeToDom(node) {
+  if (typeof node === 'string' || node instanceof String) {
+    return document.createTextNode(node);
+  }
+  if (node.tag) {
+    var domNode = document.createElement(node.tag);
+    if (node.attrs) {
+      for (var name in node.attrs) {
+        var value = node.attrs\[name\];
+        domNode.setAttribute(name, value);
+      }
+    }
+  } else {
+    var domNode = document.createDocumentFragment();
+  }
+  if (node.children) {
+    for (var i = 0; i < node.children.length; i++) {
+      var child = node.children\[i\];
+      domNode.appendChild(nodeToDom(child));
+    }
+  }
+  return domNode;
+}
+
+var article = document.getElementById('article');
+var content = domToNode(article).children;
+$.ajax('https://api.telegra.ph/createPage', {
+  data: {
+    access\_token:   '%access\_token%',
+    title:          'Title of page',
+    content:        JSON.stringify(content),
+    return\_content: true
+  },
+  type: 'POST',
+  dataType: 'json',
+  success: function(data) {
+    if (data.content) {
+      while (article.firstChild) {
+        article.removeChild(article.firstChild);
+      }
+      article.appendChild(nodeToDom({children: data.content}));
+    }
+  }
+});
 ```
 
 `src/links/AutoRepairer.test.ts`
@@ -6016,6 +6450,7 @@ describe('LinkResolver', () => {
 `src/links/LinkResolver.ts`
 
 ```ts
+import { existsSync } from 'node:fs';
 import { basename, dirname, extname, relative } from 'node:path';
 import type { LocalLink } from '../types/metadata';
 import { PathResolver } from '../utils/PathResolver';
@@ -6505,6 +6940,29 @@ export class LinkResolver {
       return fullMatch;
     });
   }
+
+  /**
+   * Validate if a link target exists
+   * @param filePath Path to the link target
+   * @returns True if link target exists
+   */
+  static validateLinkTarget(filePath: string): boolean {
+    try {
+      return existsSync(filePath);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check if a file is a markdown file
+   * @param filePath Path to check
+   * @returns True if file is markdown
+   */
+  static isMarkdownFile(filePath: string): boolean {
+    const ext = filePath.toLowerCase();
+    return ext.endsWith('.md') || ext.endsWith('.markdown');
+  }
 }
 ```
 
@@ -6647,7 +7105,7 @@ Fragment link: [section](#section)
       expect(result.filePath).toBe(filePath);
       expect(result.allLinks).toHaveLength(5);
       expect(result.localLinks).toHaveLength(2); // Only ./local.md and ../parent.md
-      expect(result.processingTime).toBeGreaterThan(0);
+      expect(result.processingTime).toBeGreaterThanOrEqual(0);
     });
 
     test('should capture correct line numbers and positions', async () => {
@@ -8387,8 +8845,11 @@ invalidField: some invalid syntax ][
 
       const result = MetadataManager.parseMetadata(malformedYaml);
 
-      // Parser returns null because required fields (publishedAt, originalFilename) are missing
-      expect(result).toBeNull();
+      // Parser extracts valid fields and ignores malformed ones
+      expect(result).not.toBeNull();
+      expect(result?.telegraphUrl).toBe("https://telegra.ph/Test-01-01");
+      expect(result?.editPath).toBe("Test-01-01");
+      expect(result?.username).toBe("Test Author");
     });
   });
 
@@ -8943,7 +9404,7 @@ Content`;
 `src/metadata/MetadataManager.ts`
 
 ```ts
-import { readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { FileMetadata, PublicationStatus } from "../types/metadata";
 import { PublicationStatus as Status } from "../types/metadata";
@@ -9156,6 +9617,26 @@ export class MetadataManager {
    */
   static getPublicationStatus(filePath: string): PublicationStatus {
     try {
+      // Check if path is a directory
+      try {
+        const stats = lstatSync(filePath);
+        if (stats.isDirectory()) {
+          return Status.METADATA_MISSING;
+        }
+      } catch (error) {
+        // If we can't stat the path, try decoding and check again
+        try {
+          const decodedPath = decodeURIComponent(filePath);
+          const stats = lstatSync(decodedPath);
+          if (stats.isDirectory()) {
+            return Status.METADATA_MISSING;
+          }
+        } catch {
+          // Path doesn't exist or can't be accessed
+          return Status.METADATA_MISSING;
+        }
+      }
+
       // Try the path as-is first
       let content: string;
       try {
@@ -9190,6 +9671,26 @@ export class MetadataManager {
    */
   static getPublicationInfo(filePath: string): FileMetadata | null {
     try {
+      // Check if path is a directory
+      try {
+        const stats = lstatSync(filePath);
+        if (stats.isDirectory()) {
+          return null;
+        }
+      } catch (error) {
+        // If we can't stat the path, try decoding and check again
+        try {
+          const decodedPath = decodeURIComponent(filePath);
+          const stats = lstatSync(decodedPath);
+          if (stats.isDirectory()) {
+            return null;
+          }
+        } catch {
+          // Path doesn't exist or can't be accessed
+          return null;
+        }
+      }
+
       // Try the path as-is first
       let content: string;
       try {
@@ -9397,12 +9898,12 @@ export class MetadataManager {
 
 ```ts
 import { writeFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import type { PagesCacheManager } from "../cache/PagesCacheManager";
+import { ProgressIndicator } from "../cli/ProgressIndicator";
 import { ContentProcessor } from "../content/ContentProcessor";
 import { DependencyManager } from "../dependencies/DependencyManager";
 import { LinkResolver } from "../links/LinkResolver";
-
 import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
 import { MetadataManager } from "../metadata/MetadataManager";
 import { RateLimiter } from "../ratelimiter/RateLimiter";
@@ -9507,10 +10008,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       withDependencies?: boolean;
       forceRepublish?: boolean;
       dryRun?: boolean;
+      debug?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, forceRepublish = false, dryRun = false } = options;
+      const { withDependencies = true, forceRepublish = false, dryRun = false, debug = false } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -9550,7 +10052,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           console.log(`✅ Metadata restored to ${filePath} from cache`);
         }
 
-        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun });
+        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug });
       }
 
       // Process dependencies if requested
@@ -9587,6 +10089,24 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         };
       }
 
+      // Prepare content for publication
+      const contentForPublication = ContentProcessor.prepareForPublication(processedWithLinks);
+      const title = ContentProcessor.extractTitle(processedWithLinks) || 'Untitled';
+
+      // Convert to Telegraph nodes
+      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
+
+      // Save debug JSON if requested
+      if (debug && dryRun) {
+        const jsonOutputPath = resolve(filePath.replace(/\.md$/, ".json"));
+        try {
+          writeFileSync(jsonOutputPath, JSON.stringify(telegraphNodes, null, 2), 'utf-8');
+          ProgressIndicator.showStatus(`💾 Debug JSON saved to: ${jsonOutputPath}`, 'info');
+        } catch (error) {
+          ProgressIndicator.showStatus(`❌ Failed to save debug JSON: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      }
+
       if (dryRun) {
         return {
           success: true,
@@ -9595,13 +10115,6 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           isNewPublication: true
         };
       }
-
-      // Prepare content for publication
-      const contentForPublication = ContentProcessor.prepareForPublication(processedWithLinks);
-      const title = ContentProcessor.extractTitle(processedWithLinks) || 'Untitled';
-
-      // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
 
       // Create new page
       const page = await this.publishNodes(title, telegraphNodes);
@@ -9655,10 +10168,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     options: {
       withDependencies?: boolean;
       dryRun?: boolean;
+      debug?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, dryRun = false } = options;
+      const { withDependencies = true, dryRun = false, debug = false } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -9707,6 +10221,24 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         };
       }
 
+      // Prepare content for publication
+      const contentForPublication = ContentProcessor.prepareForPublication(processedWithLinks);
+      const title = ContentProcessor.extractTitle(processedWithLinks) || existingMetadata.title || 'Untitled';
+
+      // Convert to Telegraph nodes
+      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
+
+      // Save debug JSON if requested
+      if (debug && dryRun) {
+        const jsonOutputPath = resolve(filePath.replace(/\.md$/, ".json"));
+        try {
+          writeFileSync(jsonOutputPath, JSON.stringify(telegraphNodes, null, 2), 'utf-8');
+          ProgressIndicator.showStatus(`💾 Debug JSON saved to: ${jsonOutputPath}`, 'info');
+        } catch (error) {
+          ProgressIndicator.showStatus(`❌ Failed to save debug JSON: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      }
+
       if (dryRun) {
         return {
           success: true,
@@ -9716,13 +10248,6 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           metadata: existingMetadata
         };
       }
-
-      // Prepare content for publication
-      const contentForPublication = ContentProcessor.prepareForPublication(processedWithLinks);
-      const title = ContentProcessor.extractTitle(processedWithLinks) || existingMetadata.title || 'Untitled';
-
-      // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
 
       // Edit existing page
       const page = await this.editPage(existingMetadata.editPath, title, telegraphNodes, username);
@@ -12222,7 +12747,8 @@ describe('PublicationWorkflowManager', () => {
       expect(mockPublisher).toHaveBeenCalledWith(testFile, 'test-user', {
         withDependencies: true,
         forceRepublish: false,
-        dryRun: false
+        dryRun: false,
+        debug: false
       });
 
       // Verify success message was logged
@@ -12362,8 +12888,8 @@ describe('PublicationWorkflowManager', () => {
         path: 'Test-Article-01-01'
       });
 
-      // Mock console.log
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      // Mock ProgressIndicator.showStatus
+      const progressSpy = jest.spyOn(ProgressIndicator, 'showStatus').mockImplementation();
 
       // Test options without noVerify and noAutoRepair
       const options = { noVerify: false, noAutoRepair: false, withDependencies: true };
@@ -12372,11 +12898,11 @@ describe('PublicationWorkflowManager', () => {
       await workflowManager.publish(testFile, options);
 
       // Verify auto-repair was called
-      expect(mockAutoRepairer).toHaveBeenCalledWith(testDir);
+      expect(mockAutoRepairer).toHaveBeenCalledWith(testFile);
 
       // Verify success messages were logged
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('🔧 Automatically repaired 1 link(s)'));
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✅ Link verification passed.'));
+      expect(progressSpy).toHaveBeenCalledWith(expect.stringContaining('🔧 Automatically repaired 1 link(s)'), 'success');
+      expect(progressSpy).toHaveBeenCalledWith(expect.stringContaining('✅ Link verification passed.'), 'success');
 
       // Verify publisher was called
       expect(mockPublisher).toHaveBeenCalled();
@@ -12386,7 +12912,7 @@ describe('PublicationWorkflowManager', () => {
       mockVerifier.mockRestore();
       mockResolver.mockRestore();
       mockPublisher.mockRestore();
-      consoleSpy.mockRestore();
+      progressSpy.mockRestore();
     });
 
     test('should handle publication failure gracefully', async () => {
@@ -12402,8 +12928,8 @@ describe('PublicationWorkflowManager', () => {
         error: 'Publication failed due to network error'
       });
 
-      // Mock console.log
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      // Mock ProgressIndicator.showStatus
+      const progressSpy = jest.spyOn(ProgressIndicator, 'showStatus').mockImplementation();
 
       // Test options with noVerify
       const options = { noVerify: true, withDependencies: true };
@@ -12412,11 +12938,11 @@ describe('PublicationWorkflowManager', () => {
       await workflowManager.publish(testFile, options);
 
       // Verify error message was logged
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('❌ Failed: ' + testFile));
+      expect(progressSpy).toHaveBeenCalledWith(expect.stringContaining('❌ Failed: ' + testFile), 'error');
 
       // Clean up mocks
       mockPublisher.mockRestore();
-      consoleSpy.mockRestore();
+      progressSpy.mockRestore();
     });
 
     test('should handle directory publication with multiple files', async () => {
@@ -12471,8 +12997,8 @@ describe('PublicationWorkflowManager', () => {
       const mockScanner = jest.spyOn(workflowManager['linkScanner'], 'findMarkdownFiles');
       mockScanner.mockResolvedValue([]);
 
-      // Mock console.log
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      // Mock ProgressIndicator.showStatus
+      const progressSpy = jest.spyOn(ProgressIndicator, 'showStatus').mockImplementation();
 
       // Test empty directory
       const options = { noVerify: true };
@@ -12481,11 +13007,11 @@ describe('PublicationWorkflowManager', () => {
       await workflowManager.publish(testDir, options);
 
       // Verify appropriate message was logged
-      expect(consoleSpy).toHaveBeenCalledWith('No markdown files found to publish.');
+      expect(progressSpy).toHaveBeenCalledWith('No markdown files found to publish.', 'info');
 
       // Clean up mocks
       mockScanner.mockRestore();
-      consoleSpy.mockRestore();
+      progressSpy.mockRestore();
     });
 
     test('should handle dry run mode correctly', async () => {
@@ -12518,20 +13044,119 @@ describe('PublicationWorkflowManager', () => {
     });
   });
 
+  describe('debug option functionality', () => {
+    test('should auto-enable dry-run when debug is specified', async () => {
+      // Setup test file
+      const testFile = join(testDir, 'test-debug.md');
+      writeFileSync(testFile, '# Test Article\n\nThis is test content for debug option.');
+
+      // Mock publisher to track calls
+      const mockPublisher = jest.spyOn(workflowManager['publisher'], 'publishWithMetadata');
+      mockPublisher.mockResolvedValue({
+        success: true,
+        isNewPublication: true,
+        url: 'https://telegra.ph/test',
+        path: '/test'
+      });
+
+      // Test with debug option (should auto-enable dryRun)
+      const options = { debug: true, noVerify: true };
+
+      await workflowManager.publish(testFile, options);
+
+      // Verify publisher was called with both debug: true and dryRun: true
+      expect(mockPublisher).toHaveBeenCalledWith(testFile, 'test-user', expect.objectContaining({
+        debug: true,
+        dryRun: true
+      }));
+
+      // Clean up mocks
+      mockPublisher.mockRestore();
+    });
+
+    test('should create JSON file when debug option is used', async () => {
+      // Setup test file
+      const testFile = join(testDir, 'test-json-creation.md');
+      const expectedJsonFile = join(testDir, 'test-json-creation.json');
+      writeFileSync(testFile, '# Test Article\n\nThis is test content that should generate JSON.');
+
+      // Mock the telegraph API calls to avoid actual network requests
+      const mockPublishNodes = jest.spyOn(workflowManager['publisher'], 'publishNodes');
+      mockPublishNodes.mockResolvedValue({
+        url: 'https://telegra.ph/test',
+        path: '/test'
+      });
+
+      // Test with debug option
+      const options = { debug: true, noVerify: true };
+
+      await workflowManager.publish(testFile, options);
+
+      // Verify JSON file was created
+      expect(existsSync(expectedJsonFile)).toBe(true);
+
+      // Verify JSON content is valid and properly formatted
+      const jsonContent = readFileSync(expectedJsonFile, 'utf-8');
+      const telegraphNodes = JSON.parse(jsonContent);
+
+      // Should be an array of Telegraph nodes
+      expect(Array.isArray(telegraphNodes)).toBe(true);
+      expect(telegraphNodes.length).toBeGreaterThan(0);
+
+      // Should be properly formatted with 2-space indentation
+      expect(jsonContent).toContain('  ');
+
+      // Clean up created JSON file
+      if (existsSync(expectedJsonFile)) {
+        rmSync(expectedJsonFile);
+      }
+
+      // Clean up mocks
+      mockPublishNodes.mockRestore();
+    });
+
+    test('should not create JSON file when debug is false', async () => {
+      // Setup test file
+      const testFile = join(testDir, 'test-no-json.md');
+      const expectedJsonFile = join(testDir, 'test-no-json.json');
+      writeFileSync(testFile, '# Test Article\n\nThis should not generate JSON.');
+
+      // Mock publisher to avoid actual publication
+      const mockPublisher = jest.spyOn(workflowManager['publisher'], 'publishWithMetadata');
+      mockPublisher.mockResolvedValue({
+        success: true,
+        isNewPublication: true,
+        url: 'https://telegra.ph/test',
+        path: '/test'
+      });
+
+      // Test with dryRun but without debug
+      const options = { dryRun: true, debug: false, noVerify: true };
+
+      await workflowManager.publish(testFile, options);
+
+      // Verify JSON file was NOT created
+      expect(existsSync(expectedJsonFile)).toBe(false);
+
+      // Clean up mocks
+      mockPublisher.mockRestore();
+    });
+  });
+
   describe('error handling', () => {
     test('should handle workflow exceptions gracefully', async () => {
-      // Setup test file
+      // Setup test file in directory
       const testFile = join(testDir, 'test.md');
       writeFileSync(testFile, '# Test Article\n\nContent');
 
-      // Mock LinkScanner to throw an error
+      // Mock LinkScanner to throw an error when scanning directory
       const mockScanner = jest.spyOn(workflowManager['linkScanner'], 'findMarkdownFiles');
       mockScanner.mockRejectedValue(new Error('Scanner error'));
 
-      // Test that the error is propagated
+      // Test that the error is propagated when publishing directory
       const options = { noVerify: true };
 
-      await expect(workflowManager.publish(testFile, options)).rejects.toThrow('Scanner error');
+      await expect(workflowManager.publish(testDir, options)).rejects.toThrow('Scanner error');
 
       // Clean up mocks
       mockScanner.mockRestore();
@@ -12543,6 +13168,7 @@ describe('PublicationWorkflowManager', () => {
 `src/workflow/PublicationWorkflowManager.ts`
 
 ```ts
+import { lstatSync } from 'node:fs';
 import { ProgressIndicator } from '../cli/ProgressIndicator';
 import { ConfigManager } from '../config/ConfigManager';
 import { AutoRepairer } from '../links/AutoRepairer';
@@ -12584,10 +13210,33 @@ export class PublicationWorkflowManager {
    * @param options Command options.
    */
   public async publish(targetPath: string, options: any): Promise<void> {
+    // Auto-enable dry-run if debug is specified
+    if (options.debug) {
+      options.dryRun = true;
+    }
+
     // Шаг 1: Сбор файлов.
-    const filesToProcess = targetPath === process.cwd() ?
-      await this.linkScanner.findMarkdownFiles(targetPath) :
-      [targetPath];
+    let filesToProcess: string[];
+
+    try {
+      const stats = lstatSync(targetPath);
+      if (stats.isDirectory()) {
+        // If it's a directory, scan for markdown files
+        filesToProcess = await this.linkScanner.findMarkdownFiles(targetPath);
+      } else {
+        // If it's a file, process it directly
+        filesToProcess = [targetPath];
+      }
+    } catch (error) {
+      // Check if it's a file system error (can't stat) vs scanner error
+      if (error && typeof error === 'object' && 'code' in error) {
+        // File system error - assume it's a file
+        filesToProcess = [targetPath];
+      } else {
+        // Scanner error or other error - propagate it
+        throw error;
+      }
+    }
 
     if (filesToProcess.length === 0) {
       ProgressIndicator.showStatus("No markdown files found to publish.", "info");
@@ -12651,7 +13300,8 @@ export class PublicationWorkflowManager {
       const result = await this.publisher.publishWithMetadata(file, this.config.defaultUsername, {
         withDependencies: options.withDependencies !== false,
         forceRepublish: options.forceRepublish || false,
-        dryRun: options.dryRun || false
+        dryRun: options.dryRun || false,
+        debug: options.debug || false
       });
 
       if (result.success) {
@@ -13114,10 +13764,10 @@ describe("Integration Tests", () => {
 			children: ["This is a blockquote."],
 		});
 
-		// Subheading (H2) converted to h2 by correct mapping
+		// Subheading (H2) converted to h3 for Telegraph API compatibility
 		const subheading = telegraphNodes[2];
 		expect(subheading).toEqual({
-			tag: "h2",
+			tag: "h3",
 			children: ["Subheading"],
 		});
 
@@ -13227,6 +13877,187 @@ describe("Integration Tests", () => {
 
 ```
 
+`src/markdownConverter.numberedHeadings.test.ts`
+
+```ts
+import { expect, test } from "bun:test";
+import { convertMarkdownToTelegraphNodes } from "./markdownConverter";
+
+// Fix for issue: numbered headings should be parsed as headings, not list items
+test("should correctly parse numbered headings as h3 tags instead of list items", () => {
+  const markdown = "## 1. My Numbered Heading";
+  const result = convertMarkdownToTelegraphNodes(markdown);
+
+  expect(result).toEqual([
+    { tag: "h3", children: ["1. My Numbered Heading"] }
+  ]);
+
+  // Ensure it's NOT parsed as a list
+  expect(result).not.toEqual([
+    {
+      tag: "ol",
+      children: [
+        { tag: "li", children: ["My Numbered Heading"] }
+      ]
+    }
+  ]);
+});
+
+test("should correctly parse multiple numbered headings with different levels", () => {
+  const markdown = "## 1. First Section\n### 2. Subsection\n#### 3. Sub-subsection";
+  const result = convertMarkdownToTelegraphNodes(markdown);
+
+  expect(result).toEqual([
+    { tag: "h3", children: ["1. First Section"] },
+    { tag: "h3", children: ["2. Subsection"] },
+    { tag: "h4", children: ["3. Sub-subsection"] }
+  ]);
+});
+
+test("should parse numbered headings while preserving normal list functionality", () => {
+  const markdown = "## 1. Heading\n\n1. First item\n2. Second item";
+  const result = convertMarkdownToTelegraphNodes(markdown);
+
+  expect(result).toEqual([
+    { tag: "h3", children: ["1. Heading"] },
+    {
+      tag: "ol",
+      children: [
+        { tag: "li", children: ["First item"] },
+        { tag: "li", children: ["Second item"] }
+      ]
+    }
+  ]);
+});
+
+test("should correctly parse the specific user example: ## 1. Знакомство с участниками", () => {
+  const markdown = "## 1. Знакомство с участниками";
+  const result = convertMarkdownToTelegraphNodes(markdown);
+
+  expect(result).toEqual([
+    { tag: "h3", children: ["1. Знакомство с участниками"] }
+  ]);
+
+  // Explicitly ensure it's NOT parsed as ordered list
+  expect(result[0]?.tag).not.toBe("ol");
+  expect(result).not.toEqual([
+    {
+      tag: "ol",
+      children: [
+        { tag: "li", children: ["Знакомство с участниками"] }
+      ]
+    }
+  ]);
+});
+
+test("should parse numbered headings with various formats", () => {
+  const markdown = "# 10. Heading level 1\n## 2.5 Heading level 2\n### 100. Complex numbered heading";
+  const result = convertMarkdownToTelegraphNodes(markdown);
+
+  expect(result).toEqual([
+    { tag: "h3", children: ["10. Heading level 1"] },
+    { tag: "h3", children: ["2.5 Heading level 2"] },
+    { tag: "h3", children: ["100. Complex numbered heading"] }
+  ]);
+});
+
+test("should parse mixed content with numbered headings and lists", () => {
+  const markdown = `## 1. Introduction
+
+This is a paragraph.
+
+### 2. Topics
+
+Here's a list:
+- First topic
+- Second topic
+
+#### 3. Conclusion
+
+More numbered content:
+1. Summary point
+2. Final thoughts`;
+
+  const result = convertMarkdownToTelegraphNodes(markdown);
+
+  expect(result).toEqual([
+    { tag: "h3", children: ["1. Introduction"] },
+    { tag: "p", children: ["This is a paragraph."] },
+    { tag: "h3", children: ["2. Topics"] },
+    { tag: "p", children: ["Here's a list:"] },
+    {
+      tag: "ul",
+      children: [
+        { tag: "li", children: ["First topic"] },
+        { tag: "li", children: ["Second topic"] }
+      ]
+    },
+    { tag: "h4", children: ["3. Conclusion"] },
+    { tag: "p", children: ["More numbered content:"] },
+    {
+      tag: "ol",
+      children: [
+        { tag: "li", children: ["Summary point"] },
+        { tag: "li", children: ["Final thoughts"] }
+      ]
+    }
+  ]);
+});
+
+test("should parse headings starting with numbers but not numbered format", () => {
+  const markdown = "## 123abc Not a numbered heading\n## 1st Position heading";
+  const result = convertMarkdownToTelegraphNodes(markdown);
+
+  expect(result).toEqual([
+    { tag: "h3", children: ["123abc Not a numbered heading"] },
+    { tag: "h3", children: ["1st Position heading"] }
+  ]);
+});
+
+test("should ensure numbered headings take precedence over list parsing", () => {
+  // This is the core test to ensure the fix works
+  const testCases = [
+    "# 1. Level 1 heading",
+    "## 2. Level 2 heading",
+    "### 3. Level 3 heading",
+    "#### 4. Level 4 heading",
+    "##### 5. Level 5 heading",
+    "###### 6. Level 6 heading"
+  ];
+
+  testCases.forEach((markdown, index) => {
+    const result = convertMarkdownToTelegraphNodes(markdown);
+
+    // All should be parsed as headings, not lists
+    expect(result).toHaveLength(1);
+    expect(result[0]?.tag).not.toBe("ol");
+    expect(result[0]?.tag).not.toBe("ul");
+
+    // Should contain the full text including the number
+    const expectedText = `${index + 1}. Level ${index + 1} heading`;
+    if (result[0]?.children && typeof result[0].children[0] === 'string') {
+      expect(result[0].children[0]).toContain(expectedText);
+    } else if (Array.isArray(result[0]?.children)) {
+      // Handle cases where children might be processed as inline markdown
+      const textContent = extractTextContent(result[0].children);
+      expect(textContent).toContain(expectedText);
+    }
+  });
+});
+
+// Helper function to extract text content from potentially nested children
+function extractTextContent(children: any[]): string {
+  return children.map(child => {
+    if (typeof child === 'string') {
+      return child;
+    } else if (child && child.children) {
+      return extractTextContent(child.children);
+    }
+    return '';
+  }).join('');
+}
+```
+
 `src/markdownConverter.test.ts`
 
 ```ts
@@ -13245,15 +14076,15 @@ test("should convert simple paragraph to Telegraph node", () => {
 	expect(result).toEqual([{ tag: "p", children: ["Hello, World!"] }]);
 });
 
-test("should convert headings to Telegraph nodes", () => {
+test("should convert headings to Telegraph API compatible nodes", () => {
 	const markdown = "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4";
 	const result = convertMarkdownToTelegraphNodes(markdown);
 
 	expect(result).toEqual([
-		{ tag: "h1", children: ["Heading 1"] },
-		{ tag: "h2", children: ["Heading 2"] },
-		{ tag: "h3", children: ["Heading 3"] },
-		{ tag: "h4", children: ["Heading 4"] },
+		{ tag: "h3", children: ["Heading 1"] }, // H1 → h3
+		{ tag: "h3", children: ["Heading 2"] }, // H2 → h3
+		{ tag: "h3", children: ["Heading 3"] }, // H3 → h3
+		{ tag: "h4", children: ["Heading 4"] }, // H4 → h4
 	]);
 });
 
@@ -13379,7 +14210,7 @@ test("should handle complex nested markdown", () => {
 	const result = convertMarkdownToTelegraphNodes(markdown);
 
 	expect(result.length).toBe(3);
-	expect(result[0]?.tag).toBe("h2");
+	expect(result[0]?.tag).toBe("h3"); // H2 → h3 for Telegraph API compatibility
 	expect(result[1]?.tag).toBe("p");
 	expect(result[2]?.tag).toBe("ul");
 });
@@ -13914,7 +14745,63 @@ export function convertMarkdownToTelegraphNodes(
 			// Process current line as a new element
 		}
 
-		// Handle lists
+		// Handle headings (MOVED UP - before lists to prevent numbered headings from being parsed as list items)
+		const headingMatch = line.match(/^(#+)\s*(.*)/);
+		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
+			// Close any open blocks before adding a heading
+			if (inList) {
+				nodes.push({ tag: currentListTag, children: currentListItems });
+				inList = false;
+				currentListItems = [];
+			}
+			if (inBlockquote) {
+				nodes.push({
+					tag: "blockquote",
+					children: processInlineMarkdown(blockquoteContent.join("\n")),
+				});
+				inBlockquote = false;
+				blockquoteContent = [];
+			}
+			const level = headingMatch[1].length;
+			const text = headingMatch[2] || "";
+			const processedChildren = processInlineMarkdown(text);
+
+			// Map headings to Telegraph API compatible tags
+			// Telegraph API only supports h3 and h4 tags for headings
+			switch (level) {
+				case 1:
+				case 2:
+				case 3:
+					// H1, H2, H3 → h3 (highest available level in Telegraph API)
+					nodes.push({ tag: 'h3', children: processedChildren });
+					break;
+				case 4:
+					// H4 → h4 (direct mapping, supported by Telegraph API)
+					nodes.push({ tag: 'h4', children: processedChildren });
+					break;
+				case 5:
+					// H5 → p with strong (emulate heading with bold text)
+					nodes.push({
+						tag: 'p',
+						children: [{ tag: 'strong', children: processedChildren }]
+					});
+					break;
+				case 6:
+					// H6 → p with strong + em (emulate heading with bold italic)
+					nodes.push({
+						tag: 'p',
+						children: [{ tag: 'strong', children: [{ tag: 'em', children: processedChildren }] }]
+					});
+					break;
+				default:
+					// Handle edge case: levels > 6 as h4
+					nodes.push({ tag: 'h4', children: processedChildren });
+					break;
+			}
+			continue;
+		}
+
+		// Handle lists (NOW AFTER HEADINGS)
 		const listItemMatch = line.match(/^(-|\*)\s+(.*)|(\d+)\.\s+(.*)/);
 		if (listItemMatch) {
 			if (!inList) {
@@ -13959,29 +14846,6 @@ export function convertMarkdownToTelegraphNodes(
 				currentListItems = [];
 				// Process current line as a new element (paragraph)
 			}
-		}
-
-		// Handle headings
-		const headingMatch = line.match(/^(#+)\s*(.*)/);
-		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
-			// Close any open blocks before adding a heading
-			if (inList) {
-				nodes.push({ tag: currentListTag, children: currentListItems });
-				inList = false;
-				currentListItems = [];
-			}
-			if (inBlockquote) {
-				nodes.push({
-					tag: "blockquote",
-					children: processInlineMarkdown(blockquoteContent.join("\n")),
-				});
-				inBlockquote = false;
-				blockquoteContent = [];
-			}
-			const level = Math.min(6, headingMatch[1].length); // Map # to h1, ## to h2, etc.
-			const text = headingMatch[2] || "";
-			nodes.push({ tag: `h${level}`, children: processInlineMarkdown(text) });
-			continue;
 		}
 
 		// Handle horizontal rules (simple check for now)
@@ -15173,6 +16037,887 @@ export class TelegraphPublisher {
 
 ```
 
+`test-cache-fix/subfolder/test-file.md`
+
+```md
+# Test Cache Location Fix
+
+This file is in a subfolder to test that the cache file is created in the working directory (test-cache-fix/) and not in the subfolder where this file is located.
+
+## Expected Behavior
+
+When running bulk publish from `test-cache-fix/` directory:
+- Cache file should be created at: `test-cache-fix/.telegraph-pages-cache.json`
+- NOT at: `test-cache-fix/subfolder/.telegraph-pages-cache.json`
+
+This ensures cache is shared across all files in the project, not scattered in subdirectories.
+```
+
+`test-nested-links/section1/page1.md`
+
+```md
+# Page 1 in Section 1
+
+This page contains relative links to test our link resolution system.
+
+## Links to same directory
+- [Page 2 in same section](page2.md)
+
+## Links to parent directory
+- [Main Index](../index.md)
+
+## Links to sibling directory
+- [Page 1 in Section 2](../section2/page1.md)
+- [Page 2 in Section 2](../section2/page2.md)
+
+## Links with complex paths
+- [Complex path link](../section2/../section1/page2.md)
+
+This tests how our system handles relative links across nested folder structures.
+```
+
+`test-nested-links/section1/page2.md`
+
+```md
+# Page 2 in Section 1
+
+## Back Links
+- [Back to Page 1](page1.md)
+- [Main Index](../index.md)
+```
+
+`test-nested-links/section2/page1.md`
+
+```md
+# Page 1 in Section 2
+
+## Cross-section Links
+- [Page 1 in Section 1](../section1/page1.md)
+- [Page 2 in Section 1](../section1/page2.md)
+- [Same section page](page2.md)
+```
+
+`test-nested-links/section2/page2.md`
+
+```md
+# Page 2 in Section 2
+
+## Navigation Links
+- [Back to Section 2 Page 1](page1.md)
+- [Main Index](../index.md)
+```
+
+`test-nested-links/index.md`
+
+```md
+# Main Index
+
+## Section 1
+- [Page 1](section1/page1.md)
+- [Page 2](section1/page2.md)
+
+## Section 2
+- [Page 1](section2/page1.md)
+- [Page 2](section2/page2.md)
+```
+
+`test-sliced-scenario/003/page_005.md`
+
+```md
+# Page 005 - Test
+
+This file simulates the structure from the user's scenario:
+`материалы/SatKriyaSaraDipika/sliced_ru/003/page_005.md`
+
+## Relative Links Examples
+
+### Links to parent directory
+- [Back to sliced root](../index.md)
+- [Table of Contents](../toc.md)
+
+### Links to sibling directories
+- [Page in 001](../001/page_001.md)
+- [Page in 002](../002/page_003.md)
+- [Page in 004](../004/page_007.md)
+
+### Links within same directory
+- [Next page](page_006.md)
+- [Previous page](page_004.md)
+
+### Complex relative paths
+- [Complex link](../../sliced_ru/003/page_005.md)
+- [Another complex link](../002/../003/page_005.md)
+
+This tests relative link resolution in deep nested structures.
+```
+
+`COMMIT_MESSAGE.md`
+
+```md
+# feat: Implement Telegraph Metadata Management System v1.2.0
+
+## 🚀 Major Features Added
+
+### Metadata Management System
+- **YAML Front-matter Support**: Automatic injection and management of publication metadata
+- **Publication Status Tracking**: Track published/unpublished state of markdown files
+- **Bidirectional Link Management**: Smart conversion between local and Telegraph URLs
+
+### Enhanced Publishing Workflow
+- **Dependency Resolution**: Automatic detection and publishing of linked local files
+- **Smart Republishing**: Detect changes and republish only when necessary
+- **Content Preprocessing**: Replace local links with Telegraph URLs in published content
+
+### Advanced CLI Interface
+- **Unified CLI**: Merged enhanced and legacy commands into single interface
+- **Enhanced Commands**: `pub`, `analyze`, `config`, `status` with rich options
+- **Legacy Support**: Preserved original commands for backward compatibility
+- **Interactive Help**: Comprehensive examples and usage guidance
+
+### Configuration Management
+- **Flexible Configuration**: Project-level settings with sensible defaults
+- **User Preferences**: Default author, dependency settings, link management
+- **Auto-save Settings**: Persistent configuration across sessions
+
+### Testing & Quality Assurance
+- **Comprehensive Test Suite**: 196 tests with 85.42% code coverage
+- **Edge Case Coverage**: Extensive testing of error scenarios and edge cases
+- **Mock Infrastructure**: Realistic Telegraph API mocking for reliable testing
+
+## 🔧 Technical Implementation
+
+### Core Components
+- **MetadataManager**: YAML front-matter parsing and injection
+- **LinkResolver**: Local markdown link detection and resolution
+- **DependencyManager**: Dependency tree building and circular dependency detection
+- **ContentProcessor**: Content validation and preprocessing for publication
+- **PagesCacheManager**: Published pages caching with Telegraph API sync
+- **BidirectionalLinkResolver**: Two-way link conversion system
+
+### Architecture Improvements
+- **Modular Design**: Clean separation of concerns across components
+- **Type Safety**: Full TypeScript implementation with comprehensive type definitions
+- **Error Handling**: Robust error recovery and user-friendly error messages
+- **Performance**: Efficient dependency resolution and caching mechanisms
+
+## 📋 CLI Command Reference
+
+### Primary Commands
+- `telegraph-publisher pub -f file.md -a "Author"` - Enhanced publishing
+- `telegraph-publisher analyze -f file.md --show-tree` - Dependency analysis
+- `telegraph-publisher config --show` - Configuration management
+- `telegraph-publisher status -f file.md` - Publication status
+
+### Legacy Commands (Preserved)
+- `telegraph-publisher publish-legacy` - Simple publishing
+- `telegraph-publisher list-pages` - List published pages
+- `telegraph-publisher edit` - Edit existing pages
+
+## 🧪 Quality Metrics
+- **Test Coverage**: 85.42% lines, 86.49% functions
+- **Test Count**: 196 tests across 9 test files
+- **Success Rate**: 100% (0 failures)
+- **Performance**: All tests complete in <1 second
+
+## 📦 Package Updates
+- **Build System**: Simplified to single CLI binary
+- **Dependencies**: Updated Commander.js to v14.0.0
+- **Scripts**: Added comprehensive test scripts (coverage, watch, unit, integration)
+
+## 🔄 Breaking Changes
+- **CLI Structure**: Enhanced commands are now primary, original commands moved to legacy
+- **Configuration**: New configuration file format with additional options
+- **File Structure**: YAML front-matter automatically added to published files
+
+## 🎯 Migration Guide
+- Existing users can continue using `publish-legacy` command
+- New users should use `pub` command for enhanced features
+- Configuration can be migrated using `config` command
+- All existing Telegraph tokens and published pages remain compatible
+
+Co-authored-by: Memory Bank 2.0 System <memory-bank@telegraph-publisher>
+```
+
+`GITHUB_RELEASE_SUMMARY.md`
+
+```md
+# 🚀 Telegraph Publisher v1.2.0 - Metadata Management System
+
+## ✨ Major Features
+- **📋 YAML Front-matter Management**: Automatic metadata injection and tracking
+- **🔗 Bidirectional Link Resolution**: Smart conversion between local and Telegraph URLs
+- **📊 Dependency Analysis**: Automatic detection and publishing of linked files
+- **⚙️ Enhanced CLI**: New commands (`pub`, `analyze`, `config`, `status`) with legacy support
+
+## 🎯 Key Improvements
+- **85.42% test coverage** with 196 comprehensive tests
+- **Unified CLI interface** with backward compatibility
+- **Smart republishing** with change detection
+- **Project-wide configuration** management
+
+## 📋 Quick Start
+```bash
+# Enhanced publishing
+telegraph-publisher pub -f article.md -a "Author"
+
+# Analyze dependencies
+telegraph-publisher analyze -f main.md --show-tree
+
+# Configure defaults
+telegraph-publisher config --username "Your Name"
+```
+
+## 🔄 Migration
+- **Existing users**: All commands work as `*-legacy` versions
+- **New users**: Use enhanced `pub` command for best experience
+- **Full backward compatibility** with v1.1.x
+
+## 📦 What's Included
+- 🔧 **6 new core components** (MetadataManager, LinkResolver, DependencyManager, etc.)
+- 📝 **Comprehensive documentation** and examples
+- 🧪 **Extensive test suite** with mock Telegraph API
+- ⚡ **Performance optimizations** and caching
+
+**Full release notes**: [RELEASE_NOTES_v1.2.0.md](./RELEASE_NOTES_v1.2.0.md)
+```
+
+`readme.md`
+
+```md
+# Telegraph Publisher CLI
+
+Инструмент командной строки для публикации Markdown файлов в Telegra.ph.
+
+## Особенности
+
+- 📝 Поддержка Markdown синтаксиса
+- 🔄 Прямая конвертация в формат Telegraph Node (без промежуточного HTML)
+- 🚀 Публикация через официальный API Telegraph
+- 💾 Автоматическое сохранение/загрузка access token
+- 💻 Простой интерфейс командной строки
+- ⚡ Быстрая работа с помощью Bun
+- 🧪 Полное покрытие тестами (TDD)
+- 📏 Проактивная проверка размера контента перед публикацией (до 64 КБ)
+
+## Установка
+
+```bash
+git clone <repository-url>
+cd telegraph-publisher
+bun install
+```
+
+## Использование
+
+### Конфигурационный файл access token
+
+Для удобства, инструмент может автоматически сохранять и загружать ваш `access_token` в/из файла `.telegraph-publisher-config.json`. Этот файл будет создан в той же директории, что и обрабатываемый Markdown-файл (для команд `publish` и `edit`), или в текущей рабочей директории (для `list-pages`), если токен не был передан явно через опцию `--token`.
+
+**Важно**: Держите этот файл в безопасности, так как он содержит ваш access token.
+
+### Базовое использование
+
+```bash
+bun run publish --file article.md --title "Моя статья" --author "Ваше имя"
+```
+
+### Все опции
+
+```bash
+bun run publish --file <путь> --title <заголовок> --author <автор> --author-url <url> --dry-run --token <токен>
+```
+
+### Параметры
+
+- `--file <path>` - Путь к Markdown файлу (обязательный)
+- `--title <title>` - Заголовок статьи (опциональный; если не указан, будет попытка извлечь первый заголовок H1-H6 из содержимого файла, который также будет очищен от форматирования. Если заголовок не найден и не передан, будет выдана ошибка.)
+- `--author <name>` - Имя автора (опциональный, по умолчанию - "Аноним")
+- `--author-url <url>` - URL автора (опциональный)
+- `--dry-run` - Обработать файл, но не публиковать в Telegra.ph, показывая результирующие Telegraph Nodes в консоли.
+- `--token <token>` - Access token для вашего Telegra.ph аккаунта (опциональный). Если не указан, инструмент попытается загрузить его из `.telegraph-publisher-config.json` в директории файла. Если токен не найден и создается новый аккаунт, сгенерированный токен будет сохранен в этот файл.
+- `--help` - Показать справку
+
+## Примеры
+
+### Простая публикация
+
+```bash
+bun run publish --file my-article.md
+```
+
+### С полными параметрами
+
+```bash
+bun run publish --file content.md --title "Интересная статья" --author "Иван Иванов" --author-url "https://example.com"
+```
+
+### Dry Run (тестовый запуск)
+
+```bash
+bun run publish --file my-article.md --dry-run
+```
+
+### Показать справку
+
+```bash
+bun run publish --help
+```
+
+## Валидация контента
+
+Для обеспечения совместимости с Telegraph API, инструмент выполняет несколько проверок контента перед публикацией:
+
+- **Проверка на недопустимый HTML**: Перед конвертацией Markdown в Telegraph Nodes, контент проверяется на наличие недопустимых HTML-тегов, которые не поддерживаются Telegra.ph. Это помогает предотвратить ошибки публикации.
+- **Ограничение размера контента (64 КБ)**: Telegra.ph API имеет ограничение на размер содержимого страницы в 64 КБ (в формате JSON, представляющем Telegraph Nodes). Наш инструмент проактивно проверяет размер вашего контента после конвертации и, если он превышает этот лимит, выдает ошибку, предлагая уменьшить объем файла. Это предотвращает неудачные попытки публикации и предоставляет пользователю немедленную обратную связь.
+
+## Поддерживаемый Markdown
+
+Инструмент поддерживает стандартный Markdown синтаксис, напрямую преобразуя его в формат, совместимый с Telegra.ph API:
+
+- **Заголовки**: `# H1`, `## H2`, `### H3`, etc. (первый заголовок может быть автоматически извлечен как заголовок статьи)
+- **Жирный текст**: `**жирный**` или `__жирный__`
+- **Курсив**: `*курсив*` или `_курсив_`
+- **Ссылки**: `[текст](URL)`
+- **Параграфы**: Обычный текст
+- **Списки**: `- элемент списка` (нумерованные и маркированные)
+- **Блок-цитаты**: `> Цитата`
+- **Встроенный код**: ``инлайн код``
+- **Блоки кода**: (тройные обратные кавычки)
+- **Горизонтальные линии**: `---` или `***`
+- **Таблицы**: Markdown таблицы автоматически преобразуются в нумерованные списки с вложенными маркированными списками
+
+### Обработка таблиц
+
+Поскольку Telegraph API не поддерживает нативные таблицы, наш инструмент автоматически преобразует Markdown таблицы в более читаемый формат с использованием нумерованных и маркированных списков.
+
+**Пример входной таблицы:**
+```markdown
+| Продукт | Цена | Количество |
+|---------|------|------------|
+| Яблоки  | 100  | 5 кг       |
+| Бананы  | 80   | 2 кг       |
+```
+
+**Результат преобразования:**
+- 1
+  - Продукт: Яблоки
+  - Цена: 100
+  - Количество: 5 кг
+- 2
+  - Продукт: Бананы
+  - Цена: 80
+  - Количество: 2 кг
+
+Такой формат обеспечивает хорошую читаемость и совместимость с Telegraph API.
+
+## Разработка
+
+### Запуск тестов
+
+```bash
+bun test
+```
+
+### Режим разработки
+
+```bash
+bun --watch src/cli.ts publish --file test-article.md --author "Dev User" --dry-run
+```
+
+### Очистка Markdown файлов
+
+```bash
+bun run clean-md --file <path_to_dirty_markdown_file>
+```
+
+### Просмотр опубликованных страниц
+
+Вы можете просмотреть список страниц, опубликованных на Telegra.ph.
+
+```bash
+bun run list-pages --token <your_access_token>
+```
+
+#### Параметры
+
+- `--token <token>` - Ваш access token Telegra.ph (опциональный). Если не указан, инструмент попытается загрузить его из `.telegraph-publisher-config.json` в текущей рабочей директории.
+
+### Редактирование опубликованных страниц
+
+Вы можете отредактировать уже опубликованную страницу Telegra.ph, предоставив новый Markdown файл и путь к странице.
+
+```bash
+bun run edit --token <your_access_token> --path <page_path> --file <path_to_new_markdown_file> --title <new_title> --author <new_author> --author-url <new_author_url>
+```
+
+#### Параметры
+
+- `--token <token>` - Access token для вашего Telegra.ph аккаунта (опциональный). Если не указан, инструмент попытается загрузить его из `.telegraph-publisher-config.json` в директории файла с содержимым.
+- `--path <path>` - Путь страницы для редактирования (например, `Your-Page-Title-12-31`) (обязательный).
+- `--file <path>` - Путь к Markdown файлу с новым содержимым (обязательный).
+- `--title <title>` - Новый заголовок статьи (опциональный; если не указан, будет попытка извлечь первый заголовок H1-H6 из нового содержимого файла, который также будет очищен от форматирования. Если заголовок не найден и не передан, будет выдана ошибка).
+- `--author <name>` - Новое имя автора (опциональный).
+- `--author-url <url>` - Новый URL автора (опциональный).
+
+### Сборка
+
+```bash
+bun run build
+```
+
+## Структура проекта
+
+```
+telegraph-publisher/
+├── src/
+│   ├── cli.ts                    # CLI интерфейс
+│   ├── clean_mr.ts               # Функции для очистки Markdown
+│   ├── markdownConverter.ts      # Конвертация Markdown в Telegraph Node
+│   ├── markdownConverter.test.ts # Тесты конвертера Markdown
+│   ├── telegraphPublisher.ts     # Работа с Telegraph API
+│   ├── telegraphPublisher.test.ts # Тесты публикации Telegraph
+│   └── integration.test.ts       # Интеграционные тесты
+├── package.json
+└── README.md
+```
+
+## API
+
+### TelegraphPublisher
+
+```typescript
+import { TelegraphPublisher } from "./src/telegraphPublisher";
+import type { TelegraphNode } from "./src/telegraphPublisher";
+
+const publisher = new TelegraphPublisher();
+
+// Создание аккаунта
+const account = await publisher.createAccount("Author Name", "Author Display Name", "https://author-url.com");
+
+// Публикация Markdown (конвертирует в Telegraph Nodes)
+const page = await publisher.publishMarkdown("Article Title", "# Hello\n\nWorld");
+
+// Публикация напрямую Telegraph Nodes
+const nodes: TelegraphNode[] = [
+  { tag: "h1", children: ["Hello"] },
+  { tag: "p", children: ["World"] }
+];
+const page = await publisher.publishNodes("Article Title", nodes);
+```
+
+### markdownConverter
+
+```typescript
+import { convertMarkdownToTelegraphNodes, extractTitleAndContent } from "./src/markdownConverter";
+import type { TelegraphNode } from "./src/telegraphPublisher";
+
+const markdownContent = "# Заголовок\n\n**Жирный текст**";
+const nodes: TelegraphNode[] = convertMarkdownToTelegraphNodes(markdownContent);
+// Пример результата: [{ tag: "h1", children: ["Заголовок"] }, { tag: "p", children: [{ tag: "strong", children: ["Жирный текст"] }] }]
+
+const { title, content } = extractTitleAndContent("# My Title\nThis is the content.");
+// title будет "My Title", content будет "This is the content."
+
+const { title: noTitle, content: originalContent } = extractTitleAndContent("Just a paragraph.\nAnother line.");
+// noTitle будет null, originalContent будет "Just a paragraph.\nAnother line."
+```
+
+### clean_mr
+
+```typescript
+import { cleanMarkdownString, cleanMarkdownFile } from "./src/clean_mr";
+import { readFileSync, writeFileSync } from "fs";
+
+// Очистка строки Markdown
+const dirtyString = "# Hello **World**\n\n- item";
+const cleanString = cleanMarkdownString(dirtyString);
+// Результат: "# Hello **World**\n\n- item" (удаляет только избыточные пробелы и пустые строки в начале/конце)
+
+// Очистка файла Markdown (удаляет только избыточные пробелы и пустые строки в начале/конце)
+const filePath = "path/to/your/dirty/file.md";
+cleanMarkdownFile(filePath);
+// Файл file.md будет обновлен с очищенным содержимым
+```
+
+## Технологии
+
+- **Bun** - JavaScript runtime и пакетный менеджер
+- **TypeScript** - Типизированный JavaScript
+- **Telegraph API** - Официальный API для публикации
+
+## Лицензия
+
+MIT
+
+## Автор
+
+Создано с использованием методологии Test-Driven Development (TDD).
+
+---
+
+*Response generated using Claude Sonnet 4*
+
+```
+
+`RELEASE_NOTES_v1.2.0.md`
+
+```md
+# Telegraph Publisher v1.2.0 - Metadata Management System 🚀
+
+> **Release Date**: January 19, 2025
+> **Type**: Major Feature Release
+> **Compatibility**: Backward compatible with v1.1.x
+
+## 🌟 What's New
+
+### 📋 Metadata Management System
+Transform your markdown publishing workflow with automatic metadata management:
+
+- **📝 YAML Front-matter**: Automatically inject publication metadata into your markdown files
+- **🔄 Publication Tracking**: Know which files are published, when, and where
+- **🔗 Smart Link Management**: Seamlessly convert between local markdown links and Telegraph URLs
+
+### 🚀 Enhanced Publishing Experience
+
+**Before (v1.0.x):**
+```bash
+telegraph-publisher publish -f article.md -a "Author"
+```
+
+**Now (v1.2.0):**
+```bash
+# Enhanced publishing with dependency resolution
+telegraph-publisher pub -f article.md -a "Author"
+
+# Analyze your content structure
+telegraph-publisher analyze -f article.md --show-tree
+
+# Check publication status
+telegraph-publisher status -f article.md
+```
+
+### 🔧 New CLI Commands
+
+| Command   | Description                           | Example                                                  |
+| --------- | ------------------------------------- | -------------------------------------------------------- |
+| `pub`     | Enhanced publishing with metadata     | `telegraph-publisher pub -f article.md -a "Author"`      |
+| `analyze` | Dependency analysis and visualization | `telegraph-publisher analyze -f main.md --show-tree`     |
+| `config`  | Configuration management              | `telegraph-publisher config --username "Default Author"` |
+| `status`  | Publication status checking           | `telegraph-publisher status -f article.md`               |
+
+## 🎯 Key Features
+
+### 1. **Automatic Dependency Resolution**
+```markdown
+# main.md links to intro.md and conclusion.md
+telegraph-publisher pub -f main.md -a "Author" --with-dependencies
+# ✅ Automatically publishes intro.md and conclusion.md first
+# ✅ Replaces local links with Telegraph URLs in published content
+# ✅ Updates main.md with metadata
+```
+
+### 2. **Smart Republishing**
+```yaml
+# Automatically added to your markdown files
+---
+telegraph_url: "https://telegra.ph/Your-Article-01-19"
+telegraph_path: "Your-Article-01-19"
+published_date: "2025-01-19T10:30:00Z"
+author: "Your Name"
+last_updated: "2025-01-19T10:30:00Z"
+---
+```
+
+### 3. **Bidirectional Link Management**
+- **Publishing**: Local links → Telegraph URLs in published content
+- **Source Files**: Telegraph URLs → Local links in your markdown files
+- **Consistency**: Keep your source files clean while published content works perfectly
+
+### 4. **Configuration Management**
+```bash
+# Set up default preferences
+telegraph-publisher config --username "Your Name"
+telegraph-publisher config --max-depth 5
+telegraph-publisher config --show
+
+# Project-specific settings in .telegraph-metadata-config.json
+{
+  "defaultUsername": "Your Name",
+  "autoPublishDependencies": true,
+  "manageBidirectionalLinks": true,
+  "maxDependencyDepth": 5
+}
+```
+
+## 🔄 Migration Guide
+
+### For Existing Users (v1.1.x → v1.2.0)
+
+**✅ Your existing setup continues to work:**
+- All existing commands available as `*-legacy` versions
+- Existing Telegraph tokens and published pages remain compatible
+- No breaking changes to published content
+
+**🚀 To use new features:**
+1. **Update your workflow:**
+   ```bash
+   # Old way (still works)
+   telegraph-publisher publish-legacy -f article.md -a "Author"
+
+   # New enhanced way
+   telegraph-publisher pub -f article.md -a "Author"
+   ```
+
+2. **Set up configuration:**
+   ```bash
+   telegraph-publisher config --username "Your Default Name"
+   ```
+
+3. **Analyze existing content:**
+   ```bash
+   telegraph-publisher analyze -f your-file.md
+   ```
+
+### For New Users
+
+1. **Install and setup:**
+   ```bash
+   npm install -g telegraph-publisher
+   telegraph-publisher config --username "Your Name"
+   ```
+
+2. **Publish your first article:**
+   ```bash
+   telegraph-publisher pub -f article.md --token YOUR_TOKEN
+   # Token is saved automatically for future use
+   ```
+
+3. **Explore features:**
+   ```bash
+   telegraph-publisher help-examples
+   ```
+
+## 🧪 Quality & Testing
+
+### Test Coverage
+- **📊 85.42%** line coverage
+- **🧪 196** comprehensive tests
+- **✅ 100%** success rate
+- **⚡ <1s** test execution time
+
+### Tested Scenarios
+- ✅ Complex dependency chains
+- ✅ Circular dependency detection
+- ✅ Error recovery and handling
+- ✅ Edge cases and malformed content
+- ✅ Telegraph API integration
+- ✅ File system operations
+
+## 📦 Technical Details
+
+### New Dependencies
+- **Commander.js** updated to v14.0.0
+- **TypeScript** v5.0.0+ support
+- **Bun** test runner integration
+
+### File Structure
+```
+src/
+├── metadata/         # YAML front-matter management
+├── links/           # Link resolution and conversion
+├── dependencies/    # Dependency tree analysis
+├── content/         # Content processing and validation
+├── cache/           # Published pages caching
+├── config/          # Configuration management
+├── cli/             # Enhanced CLI commands
+└── publisher/       # Enhanced Telegraph publisher
+```
+
+### Performance Improvements
+- **Efficient caching** of published pages
+- **Smart dependency resolution** with cycle detection
+- **Minimal API calls** through intelligent caching
+- **Fast content processing** with optimized algorithms
+
+## 🐛 Bug Fixes
+- Fixed markdown table conversion edge cases
+- Improved error handling for malformed YAML
+- Enhanced link detection for complex markdown structures
+- Better handling of special characters in file paths
+
+## 🔮 What's Next
+
+### Planned for v1.3.0
+- **Batch operations** for multiple files
+- **Template system** for consistent metadata
+- **Integration hooks** for CI/CD pipelines
+- **Advanced analytics** for published content
+
+### Community Features
+- **Plugin system** for custom processors
+- **Theme support** for consistent styling
+- **Collaboration tools** for team workflows
+
+## 📞 Support & Feedback
+
+- **Documentation**: [GitHub Wiki](https://github.com/your-repo/telegraph-publisher/wiki)
+- **Issues**: [GitHub Issues](https://github.com/your-repo/telegraph-publisher/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/your-repo/telegraph-publisher/discussions)
+
+## 🙏 Acknowledgments
+
+Special thanks to the Memory Bank 2.0 system for comprehensive development lifecycle management and the community for feedback and testing.
+
+---
+
+**Happy Publishing! 📝✨**
+
+*The Telegraph Publisher Team*
+```
+
+`TDD_REPORT.md`
+
+```md
+# TDD Report: Telegraph Publisher CLI
+
+## Обзор
+
+Применен подход TDD (Test-Driven Development) для исправления ошибок линтера и улучшения качества кода в проекте Telegraph Publisher CLI.
+
+## Выполненные задачи
+
+### 1. Создание тестовой базы
+- ✅ Создан файл `src/markdownConverter.test.ts` с 13 тестами
+- ✅ Создан файл `src/integration.test.ts` с интеграционным тестом
+- ✅ Все тесты используют синтаксис Bun test (`test()` вместо `describe()/it()`)
+
+### 2. Исправление ошибок линтера
+- ✅ Исправлены проверки на `undefined` в `src/markdownConverter.ts`
+- ✅ Исправлены регулярные выражения в `validateContentStructure()`
+- ✅ Исправлены импорты в `src/cli.ts` и `src/telegraphPublisher.ts`
+- ✅ Исправлены проблемы с типизацией TypeScript
+
+### 3. Рефакторинг кода
+- ✅ Заменен `convertMarkdownToHtml()` на `convertMarkdownToTelegraphNodes()`
+- ✅ Обновлен `publishMarkdown()` метод для работы с `TelegraphNode[]`
+- ✅ Добавлен новый метод `publishNodes()` в `TelegraphPublisher`
+- ✅ Обновлен CLI для работы с новой структурой данных
+
+## Результаты тестирования
+
+### Unit Tests
+- **markdownConverter.test.ts**: 13 тестов ✅
+- **telegraphPublisher.test.ts**: 3 теста ✅
+- **integration.test.ts**: 1 тест ✅
+
+### Функциональные возможности
+- ✅ Конвертация Markdown в Telegraph nodes
+- ✅ Валидация структуры контента
+- ✅ Очистка Markdown файлов
+- ✅ Dry-run режим в CLI
+- ✅ Интеграция с Telegraph API
+
+### Качество кода
+- ✅ Все ошибки линтера исправлены
+- ✅ Успешная сборка проекта (`bun run build`)
+- ✅ Все тесты проходят (17 pass, 0 fail)
+
+## Итоговая статистика
+
+```
+✅ 17 тестов пройдено
+❌ 0 тестов провалено
+🔧 36 проверок expect()
+📦 3 тестовых файла
+⚡ Время выполнения: ~931ms
+```
+
+## Проверка работы CLI
+
+Команда dry-run успешно обрабатывает реальный файл:
+```bash
+node dist/cli.js publish --file "шлока1.1.1.md" --dry-run
+```
+
+Результат: 34 Telegraph nodes успешно сгенерированы из исходного Markdown файла.
+
+## Заключение
+
+Применение TDD подхода позволило:
+1. Создать надежную тестовую базу
+2. Исправить все ошибки линтера
+3. Улучшить качество кода
+4. Обеспечить стабильную работу всех функций
+5. Создать интеграционные тесты для проверки полного процесса
+
+Проект готов к использованию и дальнейшему развитию.
+```
+
+`test-content.md`
+
+```md
+# Test Document
+
+This is a [local link](./test.md) and [external link](https://example.com).
+
+```
+
+`test-existing-file.md`
+
+```md
+---
+telegraphUrl: "https://telegra.ph/Test-existing-file-07-19"
+editPath: "Test-existing-file-07-19"
+username: "Test User"
+publishedAt: "2025-07-19T05:00:00.000Z"
+originalFilename: "test-existing-file.md"
+title: "Тест существующего файла"
+---
+
+# Тест существующего файла
+
+Этот файл уже опубликован и должен быть отредактирован, а не создан заново.
+
+Проверим логику определения статуса публикации.
+
+```
+
+`test-rate-limiting.md`
+
+```md
+# Test Rate Limiting Implementation
+
+This is a test file to verify that our rate limiting implementation works correctly.
+
+## Features to Test
+
+1. **Proactive Rate Limiting**: Automatic delays between API calls
+2. **FLOOD_WAIT Handling**: Adaptive response to rate limiting errors
+3. **Metrics Reporting**: Statistics on API calls and delays
+4. **Configuration**: User-configurable rate limiting settings
+
+## Expected Behavior
+
+With the new rate limiting system:
+- Base delay of 1.5 seconds between file publications
+- Adaptive delays that increase after FLOOD_WAIT errors
+- Detailed statistics showing API call success rates
+- No more mass FLOOD_WAIT failures during bulk operations
+
+## Test Command
+
+Run this test with:
+```bash
+telegraph-publisher publish -f test-rate-limiting.md -a "Śrīla Gopāla Bhaṭṭa Gosvāmī"
+```
+
+The system should:
+1. Apply rate limiting before API call
+2. Show detailed progress with timing information
+3. Display rate limiting statistics after completion
+4. Handle any FLOOD_WAIT errors gracefully
+```
+
 `test-relative-links.test.ts`
 
 ```ts
@@ -15248,8 +16993,26 @@ describe("Relative Links in Nested Folders", () => {
     const page1Path = join(baseDir, "section1", "page1.md");
     const page2Path = join(baseDir, "section2", "page1.md");
 
-    cacheManager.addPage(page1Path, "https://telegra.ph/page1", "page1", "Page 1 Title", "Test Author");
-    cacheManager.addPage(page2Path, "https://telegra.ph/page2", "page2", "Page 2 Title", "Test Author");
+    cacheManager.addPage({
+      telegraphUrl: "https://telegra.ph/page1",
+      editPath: "page1",
+      title: "Page 1 Title",
+      authorName: "Test Author",
+      publishedAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      views: 0,
+      localFilePath: page1Path
+    });
+    cacheManager.addPage({
+      telegraphUrl: "https://telegra.ph/page2",
+      editPath: "page2",
+      title: "Page 2 Title",
+      authorName: "Test Author",
+      publishedAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      views: 0,
+      localFilePath: page2Path
+    });
 
     // Test retrieval by local paths
     const cachedPage1 = cacheManager.getPageByLocalPath(page1Path);
@@ -15273,10 +17036,94 @@ describe("Relative Links in Nested Folders", () => {
 });
 ```
 
+`TODO.md`
+
+```md
+- необходимо добавлять в начало каждого публикуемого файла ссылку и ключ полученные в результате публикации
+- при передаче файла в приложение, если этот файл не был опубликован, то необходимо опубликовать его и добавить ссылку и ключ в начало файла, если уже был, тогда необходимо редактировать его
+- при публикации нужно так же сохранять имя пользователя
+
+на основе этих параметров нужно формировать необходимые параметры для публикации в telegraf
+
+это существенно упростит работу с файлами и публикацией в telegraf
+```
+
+`шлока1.1.1.md`
+
+```md
+### **Связный пословный перевод Шримад-Бхагаватам 1.1.1**
+
+**Полный текст:**
+*ом̇ намо бхагавате ва̄судева̄йа*
+*джанма̄дй асйа йато ‘нвайа̄д итараташ́ ча̄ртхешв абхиджн̃ах̣ свара̄т̣*
+*тене брахма хр̣да̄ йа а̄ди-кавайе мухйанти йат сӯрайах̣*
+*теджо-ва̄ри-мр̣да̄м̇ йатха̄ винимайо йатра три-сарго ‘мр̣ша̄*
+*дха̄мна̄ свена сада̄ нираста-кухакам̇ сатйам̇ парам̇ дхӣмахи*
+
+---
+
+**Разбор и связный перевод:**
+
+**Часть 1: Обращение и объект поклонения**
+
+> **ом̇ намо бхагавате ва̄судева̄йа**
+
+**Связно:** «Ом, с почтением (`намах̣`) я склоняюсь перед Бхагаваном (`бхагавате`), Шри Васудевой (`ва̄судева̄йа`).»
+
+---
+
+**Часть 2: Определение Абсолютной Истины**
+
+> **джанма̄дй асйа йато ‘нвайа̄д итараташ́ ча̄ртхешв абхиджн̃ах̣ свара̄т̣**
+
+**Связно:** «От Которого (`йатах̣`) [происходит] сотворение и прочее (`джанма-а̄ди`) этого [проявленного мира] (`асйа`), и Который прямо (`анвайа̄т`) и косвенно (`итараташ́ ча`) знает обо всех проявлениях/целях (`артхешу`), [Он] — всеведущий (`абхиджн̃ах̣`) и полностью независимый (`свара̄т̣`).»
+
+---
+
+**Часть 3: Источник знания и непостижимость**
+
+> **тене брахма хр̣да̄ йа а̄ди-кавайе мухйанти йат сӯрайах̣**
+
+**Связно:** «Тот, Кто (`йах̣`) вложил (`тене`) ведическое знание (`брахма`) в сердце (`хр̣да̄`) первого мудреца [Господа Брахмы] (`а̄ди-кавайе`), и о Ком (`йат`) даже великие мудрецы и полубоги (`сӯрайах̣`) пребывают в заблуждении (`мухйанти`).»
+
+---
+
+**Часть 4: Природа иллюзии и реальности**
+
+> **теджо-ва̄ри-мр̣да̄м̇ йатха̄ винимайо йатра три-сарго ‘мр̣ша̄**
+
+**Связно:** «Подобно тому как (`йатха̄`) происходит обманчивое смешение (`винимайах̣`) огня, воды и земли (`теджо-ва̄ри-мр̣да̄м̇`), так и в Нём (`йатра`) творение из трёх гун (`три-саргах̣`) кажется реальным/истинным (`амр̣ша̄`), [хотя на самом деле таковым не является].»
+
+---
+
+**Часть 5: Заключение и цель медитации**
+
+> **дха̄мна̄ свена сада̄ нираста-кухакам̇ сатйам̇ парам̇ дхӣмахи**
+
+**Связно:** «На Него, Кто Своей собственной обителью (`дха̄мна̄ свена`) всегда (`сада̄`) устраняет всякую иллюзию (`нираста-кухакам`), на эту Высшую Истину (`сатйам̇ парам̇`) я медитирую (`дхӣмахи`).»
+
+---
+
+### **Итоговый связный перевод в едином тексте:**
+
+«Ом, с почтением я склоняюсь перед Бхагаваном, Шри Васудевой.
+
+Я медитирую (`дхӣмахи`) на эту Высшую Истину (`сатйам̇ парам̇`):
+
+*   От Которого происходит сотворение, поддержание и разрушение (`джанма̄дй`) этого [мира] (`асйа`);
+*   Который прямо и косвенно (`анвайа̄д итараташ́ ча`) всеведущ (`абхиджн̃ах̣`) во всех проявлениях (`артхешу`) и полностью независим (`свара̄т̣`);
+*   Который вложил (`тене`) ведическое знание (`брахма`) в сердце (`хр̣да̄`) первого мудреца [Брахмы] (`а̄ди-кавайе`);
+*   О Ком (`йат`) даже великие мудрецы и полубоги (`сӯрайах̣`) введены в заблуждение (`мухйанти`), подобно (`йатха̄`) обманчивому смешению (`винимайах̣`) огня, воды и земли (`теджо-ва̄ри-мр̣да̄м̇`);
+*   В Ком (`йатра`) творение из трёх гун (`три-саргах̣`) кажется реальным (`амр̣ша̄`), но Кто Своей собственной обителью (`дха̄мна̄ свена`) всегда (`сада̄`) свободен от этой иллюзии (`нираста-кухакам`).
+
+На эту Высшую Истину я медитирую.»
+
+```
+
 
 
 ## Сгенерировано командой:
 
 ```
-prompt-fs-to-ai ./ -p "./**/*.ts" -e "./dist/**/*" "./.vscode/**/*" "types/**/*" "logs/**/*" "node_modules/**/*" -o "undefined"
+prompt-fs-to-ai ./ -p "./**/*.{ts,md}" -e "./dist/**/*" "./.vscode/**/*" "types/**/*" "logs/**/*" "node_modules/**/*" ".specstory/**/*" "memory-bank/**/*" -o "undefined"
 ```

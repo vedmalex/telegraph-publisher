@@ -292,7 +292,63 @@ export function convertMarkdownToTelegraphNodes(
 			// Process current line as a new element
 		}
 
-		// Handle lists
+		// Handle headings (MOVED UP - before lists to prevent numbered headings from being parsed as list items)
+		const headingMatch = line.match(/^(#+)\s*(.*)/);
+		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
+			// Close any open blocks before adding a heading
+			if (inList) {
+				nodes.push({ tag: currentListTag, children: currentListItems });
+				inList = false;
+				currentListItems = [];
+			}
+			if (inBlockquote) {
+				nodes.push({
+					tag: "blockquote",
+					children: processInlineMarkdown(blockquoteContent.join("\n")),
+				});
+				inBlockquote = false;
+				blockquoteContent = [];
+			}
+			const level = headingMatch[1].length;
+			const text = headingMatch[2] || "";
+			const processedChildren = processInlineMarkdown(text);
+
+			// Map headings to Telegraph API compatible tags
+			// Telegraph API only supports h3 and h4 tags for headings
+			switch (level) {
+				case 1:
+				case 2:
+				case 3:
+					// H1, H2, H3 → h3 (highest available level in Telegraph API)
+					nodes.push({ tag: 'h3', children: processedChildren });
+					break;
+				case 4:
+					// H4 → h4 (direct mapping, supported by Telegraph API)
+					nodes.push({ tag: 'h4', children: processedChildren });
+					break;
+				case 5:
+					// H5 → p with strong (emulate heading with bold text)
+					nodes.push({
+						tag: 'p',
+						children: [{ tag: 'strong', children: processedChildren }]
+					});
+					break;
+				case 6:
+					// H6 → p with strong + em (emulate heading with bold italic)
+					nodes.push({
+						tag: 'p',
+						children: [{ tag: 'strong', children: [{ tag: 'em', children: processedChildren }] }]
+					});
+					break;
+				default:
+					// Handle edge case: levels > 6 as h4
+					nodes.push({ tag: 'h4', children: processedChildren });
+					break;
+			}
+			continue;
+		}
+
+		// Handle lists (NOW AFTER HEADINGS)
 		const listItemMatch = line.match(/^(-|\*)\s+(.*)|(\d+)\.\s+(.*)/);
 		if (listItemMatch) {
 			if (!inList) {
@@ -337,29 +393,6 @@ export function convertMarkdownToTelegraphNodes(
 				currentListItems = [];
 				// Process current line as a new element (paragraph)
 			}
-		}
-
-		// Handle headings
-		const headingMatch = line.match(/^(#+)\s*(.*)/);
-		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
-			// Close any open blocks before adding a heading
-			if (inList) {
-				nodes.push({ tag: currentListTag, children: currentListItems });
-				inList = false;
-				currentListItems = [];
-			}
-			if (inBlockquote) {
-				nodes.push({
-					tag: "blockquote",
-					children: processInlineMarkdown(blockquoteContent.join("\n")),
-				});
-				inBlockquote = false;
-				blockquoteContent = [];
-			}
-			const level = Math.min(6, headingMatch[1].length); // Map # to h1, ## to h2, etc.
-			const text = headingMatch[2] || "";
-			nodes.push({ tag: `h${level}`, children: processInlineMarkdown(text) });
-			continue;
 		}
 
 		// Handle horizontal rules (simple check for now)

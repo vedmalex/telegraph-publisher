@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { LinkResolver } from "../links/LinkResolver";
 import { LinkScanner } from "../links/LinkScanner";
@@ -166,6 +166,27 @@ export class DependencyManager {
     this.processingStack.add(filePath);
 
     try {
+      // Check if path is a directory
+      try {
+        const stats = lstatSync(filePath);
+        if (stats.isDirectory()) {
+          console.error(`Error processing file ${filePath}: Cannot process directory as file`);
+          return this.createNode(filePath, currentDepth, []);
+        }
+      } catch (error) {
+        // If we can't stat the path, try decoding and check again
+        try {
+          const decodedPath = decodeURIComponent(filePath);
+          const stats = lstatSync(decodedPath);
+          if (stats.isDirectory()) {
+            console.error(`Error processing file ${decodedPath}: Cannot process directory as file`);
+            return this.createNode(filePath, currentDepth, []);
+          }
+        } catch {
+          // Path doesn't exist, will be handled by readFileSync below
+        }
+      }
+
       // Read file content and find local links
       let content: string;
       try {

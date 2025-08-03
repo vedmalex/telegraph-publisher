@@ -49,8 +49,11 @@ invalidField: some invalid syntax ][
 
       const result = MetadataManager.parseMetadata(malformedYaml);
 
-      // Parser returns null because required fields (publishedAt, originalFilename) are missing
-      expect(result).toBeNull();
+      // Parser extracts valid fields and ignores malformed ones
+      expect(result).not.toBeNull();
+      expect(result?.telegraphUrl).toBe("https://telegra.ph/Test-01-01");
+      expect(result?.editPath).toBe("Test-01-01");
+      expect(result?.username).toBe("Test Author");
     });
   });
 

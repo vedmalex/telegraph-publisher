@@ -1,10 +1,10 @@
 import { writeFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import type { PagesCacheManager } from "../cache/PagesCacheManager";
+import { ProgressIndicator } from "../cli/ProgressIndicator";
 import { ContentProcessor } from "../content/ContentProcessor";
 import { DependencyManager } from "../dependencies/DependencyManager";
 import { LinkResolver } from "../links/LinkResolver";
-
 import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
 import { MetadataManager } from "../metadata/MetadataManager";
 import { RateLimiter } from "../ratelimiter/RateLimiter";
@@ -109,10 +109,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       withDependencies?: boolean;
       forceRepublish?: boolean;
       dryRun?: boolean;
+      debug?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, forceRepublish = false, dryRun = false } = options;
+      const { withDependencies = true, forceRepublish = false, dryRun = false, debug = false } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -152,7 +153,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           console.log(`✅ Metadata restored to ${filePath} from cache`);
         }
 
-        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun });
+        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug });
       }
 
       // Process dependencies if requested
@@ -189,6 +190,24 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         };
       }
 
+      // Prepare content for publication
+      const contentForPublication = ContentProcessor.prepareForPublication(processedWithLinks);
+      const title = ContentProcessor.extractTitle(processedWithLinks) || 'Untitled';
+
+      // Convert to Telegraph nodes
+      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
+
+      // Save debug JSON if requested
+      if (debug && dryRun) {
+        const jsonOutputPath = resolve(filePath.replace(/\.md$/, ".json"));
+        try {
+          writeFileSync(jsonOutputPath, JSON.stringify(telegraphNodes, null, 2), 'utf-8');
+          ProgressIndicator.showStatus(`💾 Debug JSON saved to: ${jsonOutputPath}`, 'info');
+        } catch (error) {
+          ProgressIndicator.showStatus(`❌ Failed to save debug JSON: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      }
+
       if (dryRun) {
         return {
           success: true,
@@ -197,13 +216,6 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           isNewPublication: true
         };
       }
-
-      // Prepare content for publication
-      const contentForPublication = ContentProcessor.prepareForPublication(processedWithLinks);
-      const title = ContentProcessor.extractTitle(processedWithLinks) || 'Untitled';
-
-      // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
 
       // Create new page
       const page = await this.publishNodes(title, telegraphNodes);
@@ -257,10 +269,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     options: {
       withDependencies?: boolean;
       dryRun?: boolean;
+      debug?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, dryRun = false } = options;
+      const { withDependencies = true, dryRun = false, debug = false } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -309,6 +322,24 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         };
       }
 
+      // Prepare content for publication
+      const contentForPublication = ContentProcessor.prepareForPublication(processedWithLinks);
+      const title = ContentProcessor.extractTitle(processedWithLinks) || existingMetadata.title || 'Untitled';
+
+      // Convert to Telegraph nodes
+      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
+
+      // Save debug JSON if requested
+      if (debug && dryRun) {
+        const jsonOutputPath = resolve(filePath.replace(/\.md$/, ".json"));
+        try {
+          writeFileSync(jsonOutputPath, JSON.stringify(telegraphNodes, null, 2), 'utf-8');
+          ProgressIndicator.showStatus(`💾 Debug JSON saved to: ${jsonOutputPath}`, 'info');
+        } catch (error) {
+          ProgressIndicator.showStatus(`❌ Failed to save debug JSON: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      }
+
       if (dryRun) {
         return {
           success: true,
@@ -318,13 +349,6 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           metadata: existingMetadata
         };
       }
-
-      // Prepare content for publication
-      const contentForPublication = ContentProcessor.prepareForPublication(processedWithLinks);
-      const title = ContentProcessor.extractTitle(processedWithLinks) || existingMetadata.title || 'Untitled';
-
-      // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
 
       // Edit existing page
       const page = await this.editPage(existingMetadata.editPath, title, telegraphNodes, username);

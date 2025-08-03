@@ -70,8 +70,26 @@ describe("Relative Links in Nested Folders", () => {
     const page1Path = join(baseDir, "section1", "page1.md");
     const page2Path = join(baseDir, "section2", "page1.md");
 
-    cacheManager.addPage(page1Path, "https://telegra.ph/page1", "page1", "Page 1 Title", "Test Author");
-    cacheManager.addPage(page2Path, "https://telegra.ph/page2", "page2", "Page 2 Title", "Test Author");
+    cacheManager.addPage({
+      telegraphUrl: "https://telegra.ph/page1",
+      editPath: "page1",
+      title: "Page 1 Title",
+      authorName: "Test Author",
+      publishedAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      views: 0,
+      localFilePath: page1Path
+    });
+    cacheManager.addPage({
+      telegraphUrl: "https://telegra.ph/page2",
+      editPath: "page2",
+      title: "Page 2 Title",
+      authorName: "Test Author",
+      publishedAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      views: 0,
+      localFilePath: page2Path
+    });
 
     // Test retrieval by local paths
     const cachedPage1 = cacheManager.getPageByLocalPath(page1Path);

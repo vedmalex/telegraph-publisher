@@ -13,15 +13,15 @@ test("should convert simple paragraph to Telegraph node", () => {
 	expect(result).toEqual([{ tag: "p", children: ["Hello, World!"] }]);
 });
 
-test("should convert headings to Telegraph nodes", () => {
+test("should convert headings to Telegraph API compatible nodes", () => {
 	const markdown = "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4";
 	const result = convertMarkdownToTelegraphNodes(markdown);
 
 	expect(result).toEqual([
-		{ tag: "h1", children: ["Heading 1"] },
-		{ tag: "h2", children: ["Heading 2"] },
-		{ tag: "h3", children: ["Heading 3"] },
-		{ tag: "h4", children: ["Heading 4"] },
+		{ tag: "h3", children: ["Heading 1"] }, // H1 → h3
+		{ tag: "h3", children: ["Heading 2"] }, // H2 → h3
+		{ tag: "h3", children: ["Heading 3"] }, // H3 → h3
+		{ tag: "h4", children: ["Heading 4"] }, // H4 → h4
 	]);
 });
 
@@ -147,7 +147,7 @@ test("should handle complex nested markdown", () => {
 	const result = convertMarkdownToTelegraphNodes(markdown);
 
 	expect(result.length).toBe(3);
-	expect(result[0]?.tag).toBe("h2");
+	expect(result[0]?.tag).toBe("h3"); // H2 → h3 for Telegraph API compatibility
 	expect(result[1]?.tag).toBe("p");
 	expect(result[2]?.tag).toBe("ul");
 });

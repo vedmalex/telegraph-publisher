@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { FileMetadata, PublicationStatus } from "../types/metadata";
 import { PublicationStatus as Status } from "../types/metadata";
@@ -211,6 +211,26 @@ export class MetadataManager {
    */
   static getPublicationStatus(filePath: string): PublicationStatus {
     try {
+      // Check if path is a directory
+      try {
+        const stats = lstatSync(filePath);
+        if (stats.isDirectory()) {
+          return Status.METADATA_MISSING;
+        }
+      } catch (error) {
+        // If we can't stat the path, try decoding and check again
+        try {
+          const decodedPath = decodeURIComponent(filePath);
+          const stats = lstatSync(decodedPath);
+          if (stats.isDirectory()) {
+            return Status.METADATA_MISSING;
+          }
+        } catch {
+          // Path doesn't exist or can't be accessed
+          return Status.METADATA_MISSING;
+        }
+      }
+
       // Try the path as-is first
       let content: string;
       try {
@@ -245,6 +265,26 @@ export class MetadataManager {
    */
   static getPublicationInfo(filePath: string): FileMetadata | null {
     try {
+      // Check if path is a directory
+      try {
+        const stats = lstatSync(filePath);
+        if (stats.isDirectory()) {
+          return null;
+        }
+      } catch (error) {
+        // If we can't stat the path, try decoding and check again
+        try {
+          const decodedPath = decodeURIComponent(filePath);
+          const stats = lstatSync(decodedPath);
+          if (stats.isDirectory()) {
+            return null;
+          }
+        } catch {
+          // Path doesn't exist or can't be accessed
+          return null;
+        }
+      }
+
       // Try the path as-is first
       let content: string;
       try {
