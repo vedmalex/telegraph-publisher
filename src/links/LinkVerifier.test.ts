@@ -1129,23 +1129,39 @@ describe('LinkVerifier', () => {
       const result = (verifier as any).generateSlug('Pre-existing hyphens & symbols!');
       expect(result).toBe('Pre-existing-hyphens-&-symbols!');
     });
+
+    test('removes only < and > characters as per Telegra.ph rules', () => {
+      const result = (verifier as any).generateSlug('Title with <tags> and >arrows<');
+      expect(result).toBe('Title-with-tags-and-arrows');
+    });
+
+    test('preserves Markdown formatting as per research findings', () => {
+      const result = (verifier as any).generateSlug('**Bold Title**');
+      expect(result).toBe('**Bold-Title**');
+    });
+
+    test('preserves complex punctuation from research', () => {
+      const result = (verifier as any).generateSlug('Title with @#$%^&*()-+=[]{}|;\'"');
+      expect(result).toBe('Title-with-@#$%^&*()-+=[]{}|;\'\"');
+    });
   });
 
   describe('anchor generation with Markdown formatting', () => {
-    test('should clean bold formatting from headings', async () => {
+    test('should preserve bold formatting in anchors according to Telegra.ph rules', async () => {
       const targetFile = join(testDir, 'target.md');
       const sourceFile = join(testDir, 'source.md');
 
       // Create target file with bold heading
       writeFileSync(targetFile, '# **Bold Title**\n\nContent here');
-      writeFileSync(sourceFile, '[Link to bold](./target.md#Bold-Title)');
+      // Updated: anchor should include asterisks as per Telegra.ph behavior
+      writeFileSync(sourceFile, '[Link to bold](./target.md#**Bold-Title**)');
 
       const link: MarkdownLink = {
         text: 'Link to bold',
-        href: './target.md#Bold-Title',
+        href: './target.md#**Bold-Title**',
         lineNumber: 1,
         columnStart: 0,
-        columnEnd: 35
+        columnEnd: 41
       };
 
       const scanResult: FileScanResult = {
@@ -1160,20 +1176,21 @@ describe('LinkVerifier', () => {
       expect(result.brokenLinks).toHaveLength(0);
     });
 
-    test('should clean italic formatting from headings', async () => {
+    test('should preserve italic formatting in anchors according to Telegra.ph rules', async () => {
       const targetFile = join(testDir, 'target.md');
       const sourceFile = join(testDir, 'source.md');
 
       // Create target file with italic heading
       writeFileSync(targetFile, '## *Italic Title*\n\nContent here');
-      writeFileSync(sourceFile, '[Link to italic](./target.md#Italic-Title)');
+      // Updated: anchor should include asterisks as per Telegra.ph behavior
+      writeFileSync(sourceFile, '[Link to italic](./target.md#*Italic-Title*)');
 
       const link: MarkdownLink = {
         text: 'Link to italic',
-        href: './target.md#Italic-Title',
+        href: './target.md#*Italic-Title*',
         lineNumber: 1,
         columnStart: 0,
-        columnEnd: 38
+        columnEnd: 39
       };
 
       const scanResult: FileScanResult = {
@@ -1188,20 +1205,21 @@ describe('LinkVerifier', () => {
       expect(result.brokenLinks).toHaveLength(0);
     });
 
-    test('should clean link formatting from headings', async () => {
+    test('should preserve link formatting in anchors according to Telegra.ph rules', async () => {
       const targetFile = join(testDir, 'target.md');
       const sourceFile = join(testDir, 'source.md');
 
       // Create target file with link in heading
       writeFileSync(targetFile, '### [Link Title](https://example.com)\n\nContent here');
-      writeFileSync(sourceFile, '[Link to link heading](./target.md#Link-Title)');
+      // Updated: anchor should include brackets and parentheses as per Telegra.ph behavior
+      writeFileSync(sourceFile, '[Link to link heading](./target.md#[Link-Title](https://example.com))');
 
       const link: MarkdownLink = {
         text: 'Link to link heading',
-        href: './target.md#Link-Title',
+        href: './target.md#[Link-Title](https://example.com)',
         lineNumber: 1,
         columnStart: 0,
-        columnEnd: 48
+        columnEnd: 71
       };
 
       const scanResult: FileScanResult = {
@@ -1216,20 +1234,21 @@ describe('LinkVerifier', () => {
       expect(result.brokenLinks).toHaveLength(0);
     });
 
-    test('should clean mixed formatting from headings', async () => {
+    test('should preserve mixed formatting in anchors according to Telegra.ph rules', async () => {
       const targetFile = join(testDir, 'target.md');
       const sourceFile = join(testDir, 'source.md');
 
       // Create target file with mixed formatting
       writeFileSync(targetFile, '#### **Bold** and *Italic* Text\n\nContent here');
-      writeFileSync(sourceFile, '[Link to mixed](./target.md#Bold-and-Italic-Text)');
+      // Updated: anchor should preserve all Markdown formatting
+      writeFileSync(sourceFile, '[Link to mixed](./target.md#**Bold**-and-*Italic*-Text)');
 
       const link: MarkdownLink = {
         text: 'Link to mixed',
-        href: './target.md#Bold-and-Italic-Text',
+        href: './target.md#**Bold**-and-*Italic*-Text',
         lineNumber: 1,
         columnStart: 0,
-        columnEnd: 43
+        columnEnd: 52
       };
 
       const scanResult: FileScanResult = {
@@ -1244,20 +1263,21 @@ describe('LinkVerifier', () => {
       expect(result.brokenLinks).toHaveLength(0);
     });
 
-    test('should clean complex nested formatting from headings', async () => {
+    test('should preserve complex nested formatting in anchors according to Telegra.ph rules', async () => {
       const targetFile = join(testDir, 'target.md');
       const sourceFile = join(testDir, 'source.md');
 
       // Create target file with complex nested formatting
       writeFileSync(targetFile, '##### **Bold _nested_ text** with `code`\n\nContent here');
-      writeFileSync(sourceFile, '[Link to complex](./target.md#Bold-nested-text-with-code)');
+      // Updated: anchor should preserve all Markdown formatting including nested formatting
+      writeFileSync(sourceFile, '[Link to complex](./target.md#**Bold-_nested_-text**-with-`code`)');
 
       const link: MarkdownLink = {
         text: 'Link to complex',
-        href: './target.md#Bold-nested-text-with-code',
+        href: './target.md#**Bold-_nested_-text**-with-`code`',
         lineNumber: 1,
         columnStart: 0,
-        columnEnd: 50
+        columnEnd: 62
       };
 
       const scanResult: FileScanResult = {
@@ -1272,13 +1292,13 @@ describe('LinkVerifier', () => {
       expect(result.brokenLinks).toHaveLength(0);
     });
 
-    test('should still detect broken links with cleaned anchors', async () => {
+    test('should still detect broken links with incorrect anchor format', async () => {
       const targetFile = join(testDir, 'target.md');
       const sourceFile = join(testDir, 'source.md');
 
-      // Create target file with bold heading
+      // Create target file with bold heading (generates anchor: **Bold-Title**)
       writeFileSync(targetFile, '# **Bold Title**\n\nContent here');
-      // Link to wrong anchor (with typo)
+      // Link to wrong anchor (missing asterisks and has typo)
       writeFileSync(sourceFile, '[Link with typo](./target.md#Bold-Titel)');
 
       const link: MarkdownLink = {
@@ -1302,20 +1322,21 @@ describe('LinkVerifier', () => {
       expect(result.brokenLinks[0].link.href).toBe('./target.md#Bold-Titel');
     });
 
-    test('should work with cyrillic headings with formatting', async () => {
+    test('should work with cyrillic headings with formatting preserved', async () => {
       const targetFile = join(testDir, 'target.md');
       const sourceFile = join(testDir, 'source.md');
 
       // Create target file with cyrillic bold heading
       writeFileSync(targetFile, '# **Тема 1: Введение: Практические наставления и сиддханта**\n\nСодержимое');
-      writeFileSync(sourceFile, '[Ссылка](./target.md#Тема-1:-Введение:-Практические-наставления-и-сиддханта)');
+      // Updated: anchor should preserve asterisks as per Telegra.ph behavior
+      writeFileSync(sourceFile, '[Ссылка](./target.md#**Тема-1:-Введение:-Практические-наставления-и-сиддханта**)');
 
       const link: MarkdownLink = {
         text: 'Ссылка',
-        href: './target.md#Тема-1:-Введение:-Практические-наставления-и-сиддханта',
+        href: './target.md#**Тема-1:-Введение:-Практические-наставления-и-сиддханта**',
         lineNumber: 1,
         columnStart: 0,
-        columnEnd: 82
+        columnEnd: 87
       };
 
       const scanResult: FileScanResult = {

@@ -96,8 +96,8 @@ export class LinkScanner {
     const links: MarkdownLink[] = [];
     const lines = content.split('\n');
 
-    // Improved regex to handle nested brackets - matches balanced brackets
-    const linkRegex = /\[([^[\]]*(?:\[[^\]]*\][^[\]]*)*)\]\(([^)]+)\)/g;
+    // Improved regex to handle nested brackets and balanced parentheses in URLs
+    const linkRegex = /\[([^[\]]*(?:\[[^\]]*\][^[\]]*)*)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g;
 
     lines.forEach((line, lineIndex) => {
       linkRegex.lastIndex = 0; // Reset regex state

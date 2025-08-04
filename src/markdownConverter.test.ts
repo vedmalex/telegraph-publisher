@@ -49,13 +49,13 @@ test("should convert H5/H6 headings to h4 with visual prefixes for anchor suppor
 			children: [{
 				tag: "ul",
 				children: [
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Heading-5" }, children: ["» Heading 5"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Heading-6" }, children: ["»» Heading 6"] }] }
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-Heading-5" }, children: ["> Heading 5"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Heading-6" }, children: [">> Heading 6"] }] }
 				]
 			}]
 		},
-		{ tag: "h4", children: ["» Heading 5"] }, // H5 → h4 with » prefix
-		{ tag: "h4", children: ["»» Heading 6"] }, // H6 → h4 with »» prefix
+		{ tag: "h4", children: ["> Heading 5"] }, // H5 → h4 with > prefix
+		{ tag: "h4", children: [">> Heading 6"] }, // H6 → h4 with >> prefix
 	]);
 });
 
@@ -74,9 +74,9 @@ test("should handle all heading levels comprehensively", () => {
 					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H2" }, children: ["H2"] }] },
 					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H3" }, children: ["H3"] }] },
 					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H4" }, children: ["H4"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-H5" }, children: ["» H5"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-H6" }, children: ["»» H6"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»»-H7+" }, children: ["»»» H7+"] }] }
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-H5" }, children: ["> H5"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-H6" }, children: [">> H6"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>>-H7+" }, children: [">>> H7+"] }] }
 				]
 			}]
 		},
@@ -84,9 +84,9 @@ test("should handle all heading levels comprehensively", () => {
 		{ tag: "h3", children: ["H2"] },
 		{ tag: "h3", children: ["H3"] },
 		{ tag: "h4", children: ["H4"] },
-		{ tag: "h4", children: ["» H5"] },
-		{ tag: "h4", children: ["»» H6"] },
-		{ tag: "h4", children: ["»»» H7+"] }, // Edge case: H7+ → h4 with »»» prefix
+		{ tag: "h4", children: ["> H5"] },
+		{ tag: "h4", children: [">> H6"] },
+		{ tag: "h4", children: [">>> H7+"] }, // Edge case: H7+ → h4 with >>> prefix
 	]);
 });
 
@@ -96,21 +96,21 @@ test("should preserve inline formatting in H5/H6 with prefixes", () => {
 
 	expect(result).toEqual([
 		// ToC should be generated first (2 headings = 2+ requirement met)
-		// Note: ToC uses raw markdown text for anchor generation, not processed formatting
+		// Note: ToC uses processInlineMarkdown for children to render formatting
 		{
 			tag: "aside",
 			children: [{
 				tag: "ul",
 				children: [
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-**Bold**-H5-with-*italic*" }, children: ["» **Bold** H5 with *italic*"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Link-[text](url)-in-H6" }, children: ["»» Link [text](url) in H6"] }] }
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-**Bold**-H5-with-*italic*" }, children: ["> ", { tag: "strong", children: ["Bold"] }, " H5 with ", { tag: "em", children: ["italic"] }] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Link-[text](url)-in-H6" }, children: [">> Link ", { tag: "a", attrs: { href: "url" }, children: ["text"] }, " in H6"] }] }
 				]
 			}]
 		},
 		{
 			tag: "h4",
 			children: [
-				"» ",
+				"> ",
 				{ tag: "strong", children: ["Bold"] },
 				" H5 with ",
 				{ tag: "em", children: ["italic"] }
@@ -119,7 +119,7 @@ test("should preserve inline formatting in H5/H6 with prefixes", () => {
 		{
 			tag: "h4",
 			children: [
-				"»» Link ",
+				">> Link ",
 				{ tag: "a", attrs: { href: "url" }, children: ["text"] },
 				" in H6"
 			]
@@ -148,19 +148,19 @@ test("should generate proper anchors for H5/H6 headings - integration test", () 
 				tag: "ul",
 				children: [
 					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Regular-Heading" }, children: ["Regular Heading"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Important-Section" }, children: ["» Important Section"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Sub-Important-Section" }, children: ["»» Sub Important Section"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Мой-раздел" }, children: ["» Мой раздел"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Section-with-@#$%-Special-Characters!" }, children: ["»» Section with @#$% Special Characters!"] }] }
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-Important-Section" }, children: ["> Important Section"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Sub-Important-Section" }, children: [">> Sub Important Section"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-Мой-раздел" }, children: ["> Мой раздел"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Section-with-@#$%-Special-Characters!" }, children: [">> Section with @#$% Special Characters!"] }] }
 				]
 			}]
 		},
 		// Then the actual headings
 		{ tag: "h3", children: ["Regular Heading"] }, // Should generate anchor: "Regular-Heading"
-		{ tag: "h4", children: ["» Important Section"] }, // Should generate anchor: "»-Important-Section"
-		{ tag: "h4", children: ["»» Sub Important Section"] }, // Should generate anchor: "»»-Sub-Important-Section"
-		{ tag: "h4", children: ["» Мой раздел"] }, // Should generate anchor: "»-Мой-раздел"
-		{ tag: "h4", children: ["»» Section with @#$% Special Characters!"] }, // Should generate anchor: "»»-Section-with-@#$%-Special-Characters!"
+		{ tag: "h4", children: ["> Important Section"] }, // Should generate anchor: ">-Important-Section"
+		{ tag: "h4", children: [">> Sub Important Section"] }, // Should generate anchor: ">>-Sub-Important-Section"
+		{ tag: "h4", children: ["> Мой раздел"] }, // Should generate anchor: ">-Мой-раздел"
+		{ tag: "h4", children: [">> Section with @#$% Special Characters!"] }, // Should generate anchor: ">>-Section-with-@#$%-Special-Characters!"
 	]);
 });
 
@@ -226,8 +226,8 @@ test("should handle ToC with H5/H6 prefixed headings correctly", () => {
 			tag: "ul",
 			children: [
 				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Introduction" }, children: ["Introduction"] }] },
-				{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Important-Note" }, children: ["» Important Note"] }] },
-				{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Warning" }, children: ["»» Warning"] }] }
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-Important-Note" }, children: ["> Important Note"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Warning" }, children: [">> Warning"] }] }
 			]
 		}]
 	});

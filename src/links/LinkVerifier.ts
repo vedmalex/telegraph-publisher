@@ -54,8 +54,14 @@ export class LinkVerifier {
           // 2. NEW: Verify anchor existence if a fragment is present
           if (fragment) {
             const targetAnchors = this.getAnchorsForFile(resolvedPath);
-            // Decode URI component for non-latin characters but only slugify if it changed
-            const decodedFragment = decodeURIComponent(fragment);
+            // Try to decode URI component for non-latin characters, but handle decode errors gracefully
+            let decodedFragment: string;
+            try {
+              decodedFragment = decodeURIComponent(fragment);
+            } catch {
+              // If decoding fails (invalid URI), use original fragment
+              decodedFragment = fragment;
+            }
             const requestedAnchor = decodedFragment === fragment ? fragment : this.generateSlug(decodedFragment);
 
             if (!targetAnchors.has(requestedAnchor)) {
@@ -248,12 +254,17 @@ export class LinkVerifier {
 
   /**
    * Generates a URL-friendly anchor from a heading text according to Telegra.ph rules.
-   * Per anchors.md spec: only replace spaces with hyphens. Keep case and all other characters.
-   * @param text The heading text.
-   * @returns An anchor string with spaces replaced by hyphens.
+   * Based on empirical research: remove only < and > characters, replace spaces with hyphens.
+   * Preserve all other characters including Markdown formatting, case, punctuation, and Unicode.
+   * @param text The heading text (including any Markdown formatting).
+   * @returns An anchor string compliant with Telegra.ph behavior.
    */
   private generateSlug(text: string): string {
-    return text.trim().replace(/ /g, '-');
+    if (!text) return '';
+    return text
+      .trim()
+      .replace(/[<>]/g, '') // 1. Remove < and > characters only
+      .replace(/ /g, '-');  // 2. Replace spaces with hyphens
   }
 
   /**
@@ -276,9 +287,9 @@ export class LinkVerifier {
       while ((match = headingRegex.exec(content)) !== null) {
         const headingText = match[2]?.trim();
         if (headingText) {
-          // Clean Markdown formatting from heading text before generating anchor
-          const cleanedText = cleanMarkdownString(headingText);
-          anchors.add(this.generateSlug(cleanedText));
+          // Use raw heading text directly (including Markdown formatting)
+          // to match Telegra.ph's actual anchor generation behavior
+          anchors.add(this.generateSlug(headingText));
         }
       }
 

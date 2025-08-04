@@ -31,6 +31,17 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   private currentAccessToken?: string;
   private rateLimiter: RateLimiter;
   private baseCacheDirectory?: string;
+  
+  // Metadata cache for dependency processing
+  private metadataCache = new Map<string, {
+    status: PublicationStatus;
+    metadata: FileMetadata | null;
+    timestamp: number;
+  }>();
+  
+  // Hash cache for content hash calculation
+  private hashCache = new Map<string, { hash: string; timestamp: number }>();
+  private readonly CACHE_TTL = 5000; // 5 seconds
 
   constructor(config: MetadataConfig) {
     super();
@@ -97,6 +108,24 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   }
 
   /**
+   * Calculate content hash with caching
+   * @param content Content to hash
+   * @returns SHA-256 hash of the content
+   */
+  private calculateContentHash(content: string): string {
+    const cacheKey = content.substring(0, 100); // First 100 chars as key
+    const cached = this.hashCache.get(cacheKey);
+    
+    if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
+      return cached.hash;
+    }
+    
+    const hash = createHash('sha256').update(content, 'utf8').digest('hex');
+    this.hashCache.set(cacheKey, { hash, timestamp: Date.now() });
+    return hash;
+  }
+
+  /**
    * Publish file with metadata management and dependency resolution
    * @param filePath Path to file to publish
    * @param username Author username
@@ -111,10 +140,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       forceRepublish?: boolean;
       dryRun?: boolean;
       debug?: boolean;
+      generateAside?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, forceRepublish = false, dryRun = false, debug = false } = options;
+      const { withDependencies = true, forceRepublish = false, dryRun = false, debug = false, generateAside = true } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -132,8 +162,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // If file has metadata or exists in cache, treat as published (unless forced)
       const isPublished = publicationStatus === PublicationStatus.PUBLISHED || cacheInfo !== null;
 
-      if (isPublished && !forceRepublish) {
-        // File is already published, use edit instead
+      if (isPublished) {
+        // File is already published, use edit instead (regardless of force flags)
         // If we have cache info but no file metadata, we need to restore metadata to file
         if (cacheInfo && !existingMetadata) {
           console.log(`📋 Found ${filePath} in cache but missing metadata in file, restoring...`);
@@ -159,12 +189,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           console.log(`✅ Metadata restored to ${filePath} from cache`);
         }
 
-        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug });
+        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug, generateAside, forceRepublish });
       }
 
       // Process dependencies if requested
       if (withDependencies) {
-        const dependencyResult = await this.publishDependencies(filePath, username, dryRun);
+        const dependencyResult = await this.publishDependencies(filePath, username, dryRun, generateAside);
         if (!dependencyResult.success) {
           return {
             success: false,
@@ -201,7 +231,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const title = ContentProcessor.extractTitle(processedWithLinks) || 'Untitled';
 
       // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
+      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside });
 
       // Save debug JSON if requested
       if (debug && dryRun) {
@@ -282,10 +312,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       dryRun?: boolean;
       debug?: boolean;
       forceRepublish?: boolean;
+      generateAside?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, dryRun = false, debug = false } = options;
+      const { withDependencies = true, dryRun = false, debug = false, generateAside = true, forceRepublish = false } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -302,7 +333,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       // Process dependencies if requested
       if (withDependencies) {
-        const dependencyResult = await this.publishDependencies(filePath, username, dryRun);
+        const dependencyResult = await this.publishDependencies(filePath, username, dryRun, generateAside);
         if (!dependencyResult.success) {
           return {
             success: false,
@@ -315,8 +346,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Process the main file
       const processed = ContentProcessor.processFile(filePath);
 
-      // NEW: Content change detection
-      if (!options.forceRepublish) {
+      // NEW: Content change detection (skip when debug mode is enabled)
+      if (!forceRepublish && !debug) {
         const currentHash = this.calculateContentHash(processed.contentWithoutMetadata);
         
         if (existingMetadata.contentHash && existingMetadata.contentHash === currentHash) {
@@ -359,7 +390,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const title = ContentProcessor.extractTitle(processedWithLinks) || existingMetadata.title || 'Untitled';
 
       // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication);
+      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside });
 
       // Save debug JSON if requested
       if (debug && dryRun) {
@@ -440,7 +471,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   async publishDependencies(
     filePath: string,
     username: string,
-    dryRun: boolean = false
+    dryRun: boolean = false,
+    generateAside: boolean = true
   ): Promise<{ success: boolean; error?: string; publishedFiles?: string[] }> {
     try {
       // Build dependency tree
@@ -455,39 +487,53 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         // Continue with publishing, but log the warning
       }
 
-      // Get files that need to be published
-      const filesToPublish = this.dependencyManager.getFilesToPublish(dependencyTree);
+      // Initialize processing state
+      const publishedFiles: string[] = [];
+      const stats = this.initializeStatsTracking(analysis, filePath);
+      
+      // Clear metadata cache at start of operation
+      this.clearMetadataCache();
 
-      if (filesToPublish.length === 0) {
+      // Show initial progress
+      if (stats.totalFiles > 0) {
+        ProgressIndicator.showStatus(
+          `🔄 Processing ${stats.totalFiles} dependencies...`, 
+          "info"
+        );
+      } else {
         return { success: true, publishedFiles: [] };
       }
 
-      const publishedFiles: string[] = [];
-
-      // Publish files in dependency order
-      for (const fileToPublish of analysis.publishOrder) {
-        if (filesToPublish.includes(fileToPublish) && fileToPublish !== filePath) {
-          const result = await this.publishWithMetadata(fileToPublish, username, {
-            withDependencies: false, // Avoid infinite recursion
-            dryRun
-          });
-
-          if (result.success) {
-            publishedFiles.push(fileToPublish);
-            this.dependencyManager.markAsProcessed(fileToPublish);
-          } else {
-            return {
-              success: false,
-              error: `Failed to publish dependency ${fileToPublish}: ${result.error}`,
-              publishedFiles
-            };
-          }
+      // Process all files with status-based handling
+      for (const fileToProcess of analysis.publishOrder) {
+        if (fileToProcess === filePath) continue; // Skip root file
+        
+        try {
+          await this.processFileByStatus(fileToProcess, username, dryRun, publishedFiles, stats, generateAside);
+          stats.processedFiles++;
+        } catch (error) {
+          // Clear cache on error
+          this.clearMetadataCache();
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: `Failed to process dependency ${basename(fileToProcess)}: ${errorMessage}`,
+            publishedFiles
+          };
         }
       }
 
+      // Clear metadata cache after operation
+      this.clearMetadataCache();
+
+      // Report final results
+      this.reportProcessingResults(stats, dryRun);
+      
       return { success: true, publishedFiles };
 
     } catch (error) {
+      // Clear cache on error
+      this.clearMetadataCache();
       console.error(`Error publishing dependencies for ${filePath}:`, error);
       return {
         success: false,
@@ -686,10 +732,264 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       console.warn('Content hash calculation failed:', error);
       ProgressIndicator.showStatus(
         `⚠️ Content hash calculation failed. Proceeding with publication.`, 
-        "warn"
+        "warning"
       );
       // Return empty string to trigger publication (fail-safe behavior)
       return '';
+    }
+  }
+
+  /**
+   * Initialize statistics tracking for dependency processing
+   * @param analysis Dependency analysis results
+   * @param rootFilePath Root file path to exclude from count
+   * @returns Statistics tracking object
+   */
+  private initializeStatsTracking(analysis: any, rootFilePath: string) {
+    const totalFiles = analysis.publishOrder.filter((file: string) => file !== rootFilePath).length;
+    return {
+      totalFiles,
+      processedFiles: 0,
+      backfilledFiles: 0,
+      skippedFiles: 0,
+      warningFiles: 0,
+      unpublishedFiles: 0
+    };
+  }
+
+  /**
+   * Clear metadata cache
+   */
+  private clearMetadataCache(): void {
+    this.metadataCache.clear();
+  }
+
+  /**
+   * Get cached metadata for a file with smart caching
+   * @param filePath File path to get metadata for
+   * @returns Cached metadata result
+   */
+  private getCachedMetadata(filePath: string) {
+    const cached = this.metadataCache.get(filePath);
+    if (cached && (Date.now() - cached.timestamp) < 5000) { // 5 second TTL
+      return cached;
+    }
+    
+    const status = MetadataManager.getPublicationStatus(filePath);
+    const metadata = status === PublicationStatus.PUBLISHED 
+      ? MetadataManager.getPublicationInfo(filePath) 
+      : null;
+      
+    const result = { status, metadata, timestamp: Date.now() };
+    this.metadataCache.set(filePath, result);
+    return result;
+  }
+
+  /**
+   * Process a file based on its publication status
+   * @param fileToProcess File path to process
+   * @param username Username for publishing
+   * @param dryRun Whether to perform dry run
+   * @param publishedFiles Array to track published files
+   * @param stats Statistics tracking object
+   */
+  private async processFileByStatus(
+    fileToProcess: string,
+    username: string,
+    dryRun: boolean,
+    publishedFiles: string[],
+    stats: any,
+    generateAside: boolean = true
+  ): Promise<void> {
+    const { status, metadata } = this.getCachedMetadata(fileToProcess);
+    
+    switch (status) {
+      case PublicationStatus.NOT_PUBLISHED:
+        await this.handleUnpublishedFile(fileToProcess, username, dryRun, publishedFiles, stats, generateAside);
+        break;
+        
+      case PublicationStatus.PUBLISHED:
+        await this.handlePublishedFile(fileToProcess, username, dryRun, publishedFiles, stats, metadata, generateAside);
+        break;
+        
+      case PublicationStatus.METADATA_CORRUPTED:
+      case PublicationStatus.METADATA_MISSING:
+        await this.handleCorruptedMetadata(fileToProcess, status, stats);
+        break;
+        
+      default:
+        this.logUnknownStatus(fileToProcess, status);
+        stats.warningFiles++;
+    }
+  }
+
+  /**
+   * Handle unpublished file (existing logic)
+   * @param filePath File path to publish
+   * @param username Username for publishing
+   * @param dryRun Whether to perform dry run
+   * @param publishedFiles Array to track published files
+   * @param stats Statistics tracking object
+   */
+  private async handleUnpublishedFile(
+    filePath: string,
+    username: string,
+    dryRun: boolean,
+    publishedFiles: string[],
+    stats: any,
+    generateAside: boolean = true
+  ): Promise<void> {
+    if (dryRun) {
+      ProgressIndicator.showStatus(`🔍 DRY-RUN: Would publish '${basename(filePath)}'`, "info");
+    } else {
+      ProgressIndicator.showStatus(`📄 Publishing '${basename(filePath)}'...`, "info");
+    }
+
+    const result = await this.publishWithMetadata(filePath, username, {
+      withDependencies: false, // Avoid infinite recursion
+      dryRun,
+      generateAside
+    });
+
+    if (result.success) {
+      publishedFiles.push(filePath);
+      stats.unpublishedFiles++;
+      this.dependencyManager.markAsProcessed(filePath);
+    } else {
+      throw new Error(`Failed to publish dependency ${filePath}: ${result.error}`);
+    }
+  }
+
+  /**
+   * Handle published file with potential content hash backfilling
+   * @param filePath File path to check/update
+   * @param username Username for publishing
+   * @param dryRun Whether to perform dry run
+   * @param publishedFiles Array to track published files
+   * @param stats Statistics tracking object
+   * @param metadata File metadata
+   */
+  private async handlePublishedFile(
+    filePath: string,
+    username: string,
+    dryRun: boolean,
+    publishedFiles: string[],
+    stats: any,
+    metadata: FileMetadata | null,
+    generateAside: boolean = true
+  ): Promise<void> {
+    if (metadata && !metadata.contentHash) {
+      // File is published but missing contentHash - backfill it
+      if (dryRun) {
+        ProgressIndicator.showStatus(`🔍 DRY-RUN: Would backfill content hash for '${basename(filePath)}'`, "info");
+      } else {
+        ProgressIndicator.showStatus(`📝 Updating '${basename(filePath)}' to add content hash...`, "info");
+      }
+      
+      // Force an edit operation to backfill the content hash
+      const result = await this.editWithMetadata(filePath, username, {
+        withDependencies: false,
+        dryRun,
+        forceRepublish: true, // Use force to bypass the normal hash check
+        generateAside
+      });
+
+      if (result.success) {
+        publishedFiles.push(filePath); // Consider it "published" in this run
+        stats.backfilledFiles++;
+      } else {
+        throw new Error(`Failed to update dependency ${filePath} with hash: ${result.error}`);
+      }
+    } else {
+      // File already has contentHash or metadata is corrupted - skip
+      ProgressIndicator.showStatus(`⏭️ Skipping '${basename(filePath)}' (content hash already present)`, "info");
+      stats.skippedFiles++;
+    }
+  }
+
+  /**
+   * Handle files with corrupted or missing metadata
+   * @param filePath File path with metadata issues
+   * @param status Publication status
+   * @param stats Statistics tracking object
+   */
+  private async handleCorruptedMetadata(
+    filePath: string,
+    status: PublicationStatus,
+    stats: any
+  ): Promise<void> {
+    const statusText = status === PublicationStatus.METADATA_CORRUPTED ? 'corrupted' : 'missing';
+    ProgressIndicator.showStatus(
+      `⚠️ Skipping '${basename(filePath)}' due to ${statusText} metadata`, 
+      "warning"
+    );
+    stats.warningFiles++;
+  }
+
+  /**
+   * Log warning for unknown publication status
+   * @param filePath File path with unknown status
+   * @param status Unknown status
+   */
+  private logUnknownStatus(filePath: string, status: PublicationStatus): void {
+    console.warn(`Unknown publication status '${status}' for file: ${filePath}`);
+    ProgressIndicator.showStatus(
+      `⚠️ Unknown status for '${basename(filePath)}': ${status}`, 
+      "warning"
+    );
+  }
+
+  /**
+   * Report final processing results
+   * @param stats Statistics tracking object
+   * @param dryRun Whether this was a dry run
+   */
+  private reportProcessingResults(stats: any, dryRun: boolean): void {
+    const { totalFiles, backfilledFiles, skippedFiles, warningFiles, unpublishedFiles } = stats;
+    
+    if (dryRun) {
+      ProgressIndicator.showStatus(
+        `🔍 DRY-RUN COMPLETE: ${totalFiles} dependencies analyzed`, 
+        "info"
+      );
+      if (backfilledFiles > 0) {
+        ProgressIndicator.showStatus(
+          `📝 Would backfill content hash for ${backfilledFiles} dependencies`, 
+          "info"
+        );
+      }
+      if (unpublishedFiles > 0) {
+        ProgressIndicator.showStatus(
+          `📄 Would publish ${unpublishedFiles} new dependencies`, 
+          "info"
+        );
+      }
+    } else {
+      if (backfilledFiles > 0) {
+        ProgressIndicator.showStatus(
+          `✅ Successfully backfilled content hash for ${backfilledFiles} dependencies`, 
+          "success"
+        );
+      }
+      if (unpublishedFiles > 0) {
+        ProgressIndicator.showStatus(
+          `✅ Successfully published ${unpublishedFiles} new dependencies`, 
+          "success"
+        );
+      }
+      if (skippedFiles > 0) {
+        ProgressIndicator.showStatus(
+          `⏭️ Skipped ${skippedFiles} dependencies (already have content hash)`, 
+          "info"
+        );
+      }
+    }
+    
+    if (warningFiles > 0) {
+      ProgressIndicator.showStatus(
+        `⚠️ Completed with ${warningFiles} warnings - check logs for details`, 
+        "warning"
+      );
     }
   }
 }

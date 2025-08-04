@@ -1,0 +1,20 @@
+# Specification Changes Log - Final Features Implementation
+
+## [2025-08-04 17:15] - Phase: VAN
+**Change Type:** Correction
+**Affected Requirement:** FEAT-ASIDE-ENHANCEMENT-001
+**Reason:** User discovered critical bug in ToC generation not covered in original analysis
+**Previous Value:** "Feature already fully implemented and working correctly"
+**New Value:** "Feature has critical bug - generates nested links in ToC for heading-links"
+**Impact Assessment:** Changes task from validation-only to actual implementation
+**Stakeholder:** User bug report with concrete evidence (BUG/index.json, index.md, sample_index.htm)
+
+### Bug Details:
+- **Problem**: ToC for heading `## [Аналогии](./аналогии.md)` creates nested links:
+  - Outer link: `href="#Аналогии"` (correct for ToC navigation)
+  - Inner link: `href="https://telegra.ph/Analiz-analogij-iz-SHrimad-Bhagavatam-11-08-02"` (incorrect - should be plain text)
+- **Root Cause**: Line 218 in `markdownConverter.ts` uses `processInlineMarkdown(heading.displayText)` which processes Markdown links
+- **Expected Behavior**: ToC should contain only plain text with anchor links, no nested external links
+- **Evidence**: User-provided BUG/ files showing JSON structure and HTML output
+
+---

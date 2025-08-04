@@ -42,6 +42,9 @@ export class EnhancedCommands {
       .option("--debug", "Save the generated Telegraph JSON to a file (implies --dry-run)")
       .option("--no-verify", "Skip mandatory local link verification before publishing")
       .option("--no-auto-repair", "Disable automatic link repair (publication will fail if broken links are found)")
+      .option("--aside", "Automatically generate a Table of Contents (aside block) at the start of the article (default: true)")
+      .option("--no-aside", "Disable automatic generation of the Table of Contents")
+      .option("--force", "Bypass link verification and publish anyway (for debugging)")
       .option("--token <token>", "Access token (optional, will try to load from config)")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {

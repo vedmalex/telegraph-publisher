@@ -141,6 +141,23 @@ function parseTable(tableLines: string[]): TelegraphNode {
 }
 
 /**
+ * Creates children nodes for ToC links that handle formatting but prevent nested links
+ * @param heading The heading object with text and display information
+ * @returns Array of TelegraphNode children for the ToC link
+ */
+function createTocChildren(heading: { level: number; text: string; displayText: string; textForAnchor: string }): TelegraphNode[] {
+	// Check if this is a heading-link (e.g., "## [Link Text](./file.md)")
+	const linkInHeadingMatch = heading.text.match(/^\[(.*?)\]\((.*?)\)$/);
+	if (linkInHeadingMatch) {
+		// For heading-links, use only the plain text to avoid nested links
+		return [heading.textForAnchor];
+	}
+	
+	// For normal headings with formatting, process inline Markdown to preserve bold, italic, etc.
+	return processInlineMarkdown(heading.displayText);
+}
+
+/**
  * Generates a Table of Contents (ToC) as an aside element from Markdown content.
  * Only generates ToC if there are 2 or more headings in the document.
  * Uses the same heading processing logic as the main converter for consistency.
@@ -148,7 +165,7 @@ function parseTable(tableLines: string[]): TelegraphNode {
  * @returns TelegraphNode for aside element with ToC, or null if insufficient headings.
  */
 function generateTocAside(markdown: string): TelegraphNode | null {
-	const headings: { level: number; text: string; displayText: string }[] = [];
+	const headings: { level: number; text: string; displayText: string; textForAnchor: string }[] = [];
 	const lines = markdown.split(/\r?\n/);
 
 	// 1. Scan for all headings using the same regex as main converter
@@ -157,6 +174,15 @@ function generateTocAside(markdown: string): TelegraphNode | null {
 		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
 			const level = headingMatch[1].length;
 			const originalText = headingMatch[2].trim();
+			let textForAnchor = originalText;
+			
+			// NEW: Check if the heading text is a Markdown link
+			const linkInHeadingMatch = originalText.match(/^\[(.*?)\]\((.*?)\)$/);
+			if (linkInHeadingMatch) {
+				// If it's a link, use only its text part for the anchor
+				textForAnchor = linkInHeadingMatch[1] || '';
+			}
+
 			let displayText = originalText;
 
 			// 2. Apply the same heading strategy logic as main converter
@@ -167,19 +193,22 @@ function generateTocAside(markdown: string): TelegraphNode | null {
 				case 4:
 					displayText = originalText;
 					break;
-				case 5:
-					displayText = `» ${originalText}`;
-					break;
-				case 6:
-					displayText = `»» ${originalText}`;
-					break;
-				default:
-					// Handle edge case: levels > 6
-					displayText = `»»» ${originalText}`;
-					break;
+							case 5:
+				displayText = `> ${originalText}`;
+				textForAnchor = linkInHeadingMatch ? `> ${linkInHeadingMatch[1]}` : `> ${originalText}`;
+				break;
+			case 6:
+				displayText = `>> ${originalText}`;
+				textForAnchor = linkInHeadingMatch ? `>> ${linkInHeadingMatch[1]}` : `>> ${originalText}`;
+				break;
+			default:
+				// Handle edge case: levels > 6
+				displayText = `>>> ${originalText}`;
+				textForAnchor = linkInHeadingMatch ? `>>> ${linkInHeadingMatch[1]}` : `>>> ${originalText}`;
+				break;
 			}
 
-			headings.push({ level, text: originalText, displayText });
+			headings.push({ level, text: originalText, displayText, textForAnchor });
 		}
 	}
 
@@ -191,14 +220,17 @@ function generateTocAside(markdown: string): TelegraphNode | null {
 	// 4. Build ToC structure as list items
 	const listItems: TelegraphNode[] = [];
 	for (const heading of headings) {
-		// Use the same anchor generation logic as LinkVerifier
-		// IMPORTANT: Generate anchor from displayText to match what LinkVerifier will find
-		const anchor = heading.displayText.trim().replace(/ /g, '-');
+		// IMPORTANT: Use textForAnchor for anchor generation to handle link headings properly
+		// Based on empirical research: remove only < and > characters, replace spaces with hyphens
+		const anchor = heading.textForAnchor
+			.trim()
+			.replace(/[<]/g, '') // 1. Remove < characters only (preserve > for H5/H6 prefixes)
+			.replace(/ /g, '-');  // 2. Replace spaces with hyphens
 		
 		const linkNode: TelegraphNode = {
 			tag: 'a',
 			attrs: { href: `#${anchor}` },
-			children: [heading.displayText] // Use display text with prefixes
+			children: createTocChildren(heading)
 		};
 		
 		listItems.push({
@@ -226,13 +258,16 @@ function generateTocAside(markdown: string): TelegraphNode | null {
  */
 export function convertMarkdownToTelegraphNodes(
 	markdown: string,
+	options: { generateToc?: boolean } = { generateToc: true }
 ): TelegraphNode[] {
 	const nodes: TelegraphNode[] = [];
 	
-	// Generate and add Table of Contents if there are 2+ headings
-	const tocAside = generateTocAside(markdown);
-	if (tocAside) {
-		nodes.push(tocAside);
+	// Generate and add Table of Contents if enabled and there are 2+ headings
+	if (options.generateToc !== false) {
+		const tocAside = generateTocAside(markdown);
+		if (tocAside) {
+			nodes.push(tocAside);
+		}
 	}
 	
 	const lines = markdown.split(/\r?\n/);
@@ -416,17 +451,17 @@ export function convertMarkdownToTelegraphNodes(
 				case 5:
 					// H5 → h4 with visual prefix to preserve hierarchy and enable anchors
 					tag = 'h4';
-					displayText = `» ${originalText}`;
+					displayText = `> ${originalText}`;
 					break;
 				case 6:
 					// H6 → h4 with double visual prefix to preserve hierarchy and enable anchors
 					tag = 'h4';
-					displayText = `»» ${originalText}`;
+					displayText = `>> ${originalText}`;
 					break;
 				default:
 					// Handle edge case: levels > 6 as h4 with triple visual prefix
 					tag = 'h4';
-					displayText = `»»» ${originalText}`;
+					displayText = `>>> ${originalText}`;
 					break;
 			}
 
@@ -587,7 +622,7 @@ function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
 		{ regex: /\*(.*?)\*/g, tag: "em" },
 		{ regex: /_(.*?)_/g, tag: "em" },
 		{ regex: /`(.*?)`/g, tag: "code" },
-		{ regex: /\[(.*?)\]\((.*?)\)/g, tag: "a", isLink: true },
+		{ regex: /\[(.*?)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g, tag: "a", isLink: true },
 	];
 
 	// Find all matches with their positions

@@ -75,7 +75,7 @@ export class PublicationWorkflowManager {
 
     let allBrokenLinks: BrokenLink[] = [];
 
-    if (!options.noVerify) {
+    if (!options.noVerify && !options.force) {
       ProgressIndicator.showStatus("🔎 Verifying local links...", "info");
       let needsReverification = true;
 
@@ -122,6 +122,9 @@ export class PublicationWorkflowManager {
       } else {
         ProgressIndicator.showStatus("✅ Link verification passed.", "success");
       }
+    } else if (options.force) {
+      ProgressIndicator.showStatus("⚠️ Bypassing link verification due to --force flag.", "warning");
+      ProgressIndicator.showStatus("🔧 This mode is intended for debugging only.", "warning");
     }
 
     // Шаг 5: Публикация.
@@ -129,9 +132,10 @@ export class PublicationWorkflowManager {
       ProgressIndicator.showStatus(`⚙️ Publishing: ${file}`, "info");
       const result = await this.publisher.publishWithMetadata(file, this.config.defaultUsername, {
         withDependencies: options.withDependencies !== false,
-        forceRepublish: options.forceRepublish || false,
+        forceRepublish: options.forceRepublish || options.force || false,
         dryRun: options.dryRun || false,
-        debug: options.debug || false
+        debug: options.debug || false,
+        generateAside: options.aside !== false
       });
 
       if (result.success) {

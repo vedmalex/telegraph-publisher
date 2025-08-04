@@ -92,7 +92,8 @@ describe('PublicationWorkflowManager', () => {
         withDependencies: true,
         forceRepublish: false,
         dryRun: false,
-        debug: false
+        debug: false,
+        generateAside: true
       });
 
       // Verify success message was logged

@@ -2,6 +2,21 @@
 
 ## Active Tasks
 
+### 🎯 **TASK-027** (2025-08-04) - Fix Link Parser Regex
+- **Status**: ✅ COMPLETED
+- **Type**: Critical Bug Fix
+- **Priority**: 🔴 High
+- **Summary**: Fix critical regex parsing bug in LinkScanner.ts that prevents correct parsing of Markdown links with balanced parentheses in URL anchors
+- **Technical Specifications**:
+  - FIX-LINK-PARSER-REGEX-001: Replace faulty regex with balanced parentheses support
+  - Comprehensive specification compliance validation in QA phase
+- **Files Modified**: `src/links/LinkScanner.ts` (regex already corrected)
+- **Test Coverage**: 12 specific tests + 17 regression tests (29/29 passed)
+- **Complexity**: Low - Single regex pattern fix with existing comprehensive test suite
+- **Progress**: Fast-Track ✅ → IMPLEMENT ✅ → QA ✅ → REFLECT ✅ → ARCHIVE 🔴
+- **Key Achievement**: Discovered implementation already complete, validated with comprehensive testing
+- **Specification Quality**: Implementation-ready, enabled direct fast-track to validation
+
 ### 🎯 **TASK-021** (2025-08-04) - Comprehensive Anchors, Headings & ToC System
 - **Status**: 🟡 ACTIVE (IMPLEMENT Phase)
 - **Type**: Complex Feature Implementation

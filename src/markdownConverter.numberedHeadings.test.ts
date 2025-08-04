@@ -4,7 +4,7 @@ import { convertMarkdownToTelegraphNodes } from "./markdownConverter";
 // Fix for issue: numbered headings should be parsed as headings, not list items
 test("should correctly parse numbered headings as h3 tags instead of list items", () => {
   const markdown = "## 1. My Numbered Heading";
-  const result = convertMarkdownToTelegraphNodes(markdown);
+  const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
 
   expect(result).toEqual([
     { tag: "h3", children: ["1. My Numbered Heading"] }
@@ -23,7 +23,7 @@ test("should correctly parse numbered headings as h3 tags instead of list items"
 
 test("should correctly parse multiple numbered headings with different levels", () => {
   const markdown = "## 1. First Section\n### 2. Subsection\n#### 3. Sub-subsection";
-  const result = convertMarkdownToTelegraphNodes(markdown);
+  const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
 
   expect(result).toEqual([
     { tag: "h3", children: ["1. First Section"] },
@@ -34,7 +34,7 @@ test("should correctly parse multiple numbered headings with different levels", 
 
 test("should parse numbered headings while preserving normal list functionality", () => {
   const markdown = "## 1. Heading\n\n1. First item\n2. Second item";
-  const result = convertMarkdownToTelegraphNodes(markdown);
+  const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
 
   expect(result).toEqual([
     { tag: "h3", children: ["1. Heading"] },
@@ -50,7 +50,7 @@ test("should parse numbered headings while preserving normal list functionality"
 
 test("should correctly parse the specific user example: ## 1. Знакомство с участниками", () => {
   const markdown = "## 1. Знакомство с участниками";
-  const result = convertMarkdownToTelegraphNodes(markdown);
+  const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
 
   expect(result).toEqual([
     { tag: "h3", children: ["1. Знакомство с участниками"] }
@@ -70,7 +70,7 @@ test("should correctly parse the specific user example: ## 1. Знакомств
 
 test("should parse numbered headings with various formats", () => {
   const markdown = "# 10. Heading level 1\n## 2.5 Heading level 2\n### 100. Complex numbered heading";
-  const result = convertMarkdownToTelegraphNodes(markdown);
+  const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
 
   expect(result).toEqual([
     { tag: "h3", children: ["10. Heading level 1"] },
@@ -96,7 +96,7 @@ More numbered content:
 1. Summary point
 2. Final thoughts`;
 
-  const result = convertMarkdownToTelegraphNodes(markdown);
+  const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
 
   expect(result).toEqual([
     { tag: "h3", children: ["1. Introduction"] },
@@ -124,7 +124,7 @@ More numbered content:
 
 test("should parse headings starting with numbers but not numbered format", () => {
   const markdown = "## 123abc Not a numbered heading\n## 1st Position heading";
-  const result = convertMarkdownToTelegraphNodes(markdown);
+  const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
 
   expect(result).toEqual([
     { tag: "h3", children: ["123abc Not a numbered heading"] },
@@ -144,7 +144,7 @@ test("should ensure numbered headings take precedence over list parsing", () => 
   ];
 
   testCases.forEach((markdown, index) => {
-    const result = convertMarkdownToTelegraphNodes(markdown);
+    const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
 
     // All should be parsed as headings, not lists
     expect(result).toHaveLength(1);
