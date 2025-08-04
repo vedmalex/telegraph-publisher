@@ -600,7 +600,7 @@ export class EnhancedCommands {
 
     const reportGenerator = new ReportGenerator(verbose);
     const scanner = new LinkScanner();
-    const verifier = new LinkVerifier(PathResolver.getInstance());
+    const verifier = new LinkVerifier(PathResolver.getInstance(), targetPath);
     const resolver = new LinkResolver();
 
     const startTime = Date.now();

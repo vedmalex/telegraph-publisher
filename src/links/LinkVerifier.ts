@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, basename } from 'node:path';
 import type { PathResolver } from '../utils/PathResolver';
 import { cleanMarkdownString } from '../clean_mr';
+import { AnchorCacheManager } from '../cache/AnchorCacheManager';
+import { ContentProcessor } from '../content/ContentProcessor';
+import { MetadataManager } from '../metadata/MetadataManager';
+import { AnchorGenerator } from '../utils/AnchorGenerator';
 import {
   type BrokenLink,
   type FileScanResult,
@@ -15,11 +19,24 @@ import {
  */
 export class LinkVerifier {
   private pathResolver: PathResolver;
-  // Cache for file anchors to avoid re-reading and re-parsing files
-  private anchorCache: Map<string, Set<string>> = new Map();
+  private anchorCacheManager?: AnchorCacheManager;
+  private fallbackMode: boolean = false;
 
-  constructor(pathResolver: PathResolver) {
+  constructor(pathResolver: PathResolver, projectRoot?: string) {
     this.pathResolver = pathResolver;
+    
+    // Initialize persistent cache if projectRoot is provided
+    if (projectRoot) {
+      try {
+        this.anchorCacheManager = new AnchorCacheManager(projectRoot);
+      } catch (error) {
+        console.warn('⚠️ Anchor cache initialization failed, using fallback mode:', error);
+        this.fallbackMode = true;
+      }
+    } else {
+      // Legacy mode - no cache available
+      this.fallbackMode = true;
+    }
   }
 
   /**
@@ -68,11 +85,19 @@ export class LinkVerifier {
               // NEW: Find closest match for intelligent suggestions
               const suggestion = this.findClosestAnchor(requestedAnchor, targetAnchors);
               const suggestions = suggestion ? [`${pathPart}#${suggestion}`] : [];
+              
+              // Add available anchors list to help users
+              const availableAnchors = Array.from(targetAnchors);
+              if (availableAnchors.length > 0) {
+                suggestions.push(`Available anchors in ${basename(resolvedPath)}: ${availableAnchors.join(', ')}`);
+              } else {
+                suggestions.push(`No anchors found in ${basename(resolvedPath)}`);
+              }
 
               brokenLinks.push({
                 filePath: scanResult.filePath,
                 link,
-                suggestions, // Now populated with intelligent suggestions
+                suggestions, // Now populated with intelligent suggestions and available anchors
                 canAutoFix: false // Keep false for anchor fixes (safety)
               });
             }
@@ -269,37 +294,95 @@ export class LinkVerifier {
 
   /**
    * Extracts all valid anchors (from headings) from a Markdown file.
-   * Results are cached to improve performance.
+   * Uses persistent cache with content hash validation for improved performance.
    * @param filePath The absolute path to the Markdown file.
    * @returns A Set containing all valid anchor slugs for the file.
    */
   private getAnchorsForFile(filePath: string): Set<string> {
-    if (this.anchorCache.has(filePath)) {
-      return this.anchorCache.get(filePath)!;
-    }
-
     try {
       const content = readFileSync(filePath, 'utf-8');
-      const headingRegex = /^(#{1,6})\s+(.*)/gm;
-      const anchors = new Set<string>();
-
-      let match;
-      while ((match = headingRegex.exec(content)) !== null) {
-        const headingText = match[2]?.trim();
-        if (headingText) {
-          // Use raw heading text directly (including Markdown formatting)
-          // to match Telegra.ph's actual anchor generation behavior
-          anchors.add(this.generateSlug(headingText));
-        }
+      
+      // Use persistent cache if available
+      if (this.anchorCacheManager && !this.fallbackMode) {
+        return this.getAnchorsWithCache(filePath, content);
       }
-
-      this.anchorCache.set(filePath, anchors);
-      return anchors;
+      
+      // Fallback to direct parsing
+      return this.parseAnchorsFromContent(content);
+      
     } catch (error) {
       // If the file can't be read, return an empty set.
       // The file existence check will handle the "broken link" error.
       return new Set<string>();
     }
+  }
+
+  /**
+   * Get anchors using persistent cache with hash validation
+   * @param filePath The absolute path to the file
+   * @param content The file content
+   * @returns Set of anchor slugs
+   */
+  private getAnchorsWithCache(filePath: string, content: string): Set<string> {
+    try {
+      // Calculate content hash for cache validation
+      const contentWithoutMetadata = MetadataManager.removeMetadata(content);
+      const currentHash = ContentProcessor.calculateContentHash(contentWithoutMetadata);
+      
+      // Check cache validity
+      const cacheResult = this.anchorCacheManager!.getAnchorsIfValid(filePath, currentHash);
+      
+      if (cacheResult.valid && cacheResult.anchors) {
+        return cacheResult.anchors;
+      }
+      
+      // Cache miss or invalid - parse and update cache
+      const anchors = this.parseAnchorsFromContent(content);
+      this.anchorCacheManager!.updateAnchors(filePath, currentHash, anchors);
+      
+      // Save cache after update
+      this.anchorCacheManager!.saveCache();
+      
+      return anchors;
+      
+    } catch (error) {
+      console.warn(`Cache operation failed for ${filePath}, using direct parsing:`, error);
+      // Fall back to direct parsing on any cache error
+      return this.parseAnchorsFromContent(content);
+    }
+  }
+
+  /**
+   * Parse anchors directly from content without cache
+   * Uses unified AnchorGenerator for 100% consistency with TOC generation
+   * @param content The file content
+   * @returns Set of anchor slugs
+   */
+  private parseAnchorsFromContent(content: string): Set<string> {
+    // Feature flag: Use unified AnchorGenerator for consistent anchor generation
+    const USE_UNIFIED_ANCHORS = process.env.USE_UNIFIED_ANCHORS === 'true' || 
+                                process.env.NODE_ENV !== 'production';
+    
+    if (USE_UNIFIED_ANCHORS) {
+      // Use AnchorGenerator for unified anchor generation
+      return AnchorGenerator.extractAnchors(content);
+    }
+    
+    // Fallback to legacy implementation for production safety
+    const headingRegex = /^(#{1,6})\s+(.*)/gm;
+    const anchors = new Set<string>();
+
+    let match;
+    while ((match = headingRegex.exec(content)) !== null) {
+      const headingText = match[2]?.trim();
+      if (headingText) {
+        // Use raw heading text directly (including Markdown formatting)
+        // to match Telegra.ph's actual anchor generation behavior
+        anchors.add(this.generateSlug(headingText));
+      }
+    }
+
+    return anchors;
   }
 
   /**

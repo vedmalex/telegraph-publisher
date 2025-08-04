@@ -120,7 +120,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       return cached.hash;
     }
     
-    const hash = createHash('sha256').update(content, 'utf8').digest('hex');
+    const hash = ContentProcessor.calculateContentHash(content);
     this.hashCache.set(cacheKey, { hash, timestamp: Date.now() });
     return hash;
   }
@@ -727,7 +727,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
    */
   private calculateContentHash(content: string): string {
     try {
-      return createHash('sha256').update(content, 'utf8').digest('hex');
+      return ContentProcessor.calculateContentHash(content);
     } catch (error) {
       console.warn('Content hash calculation failed:', error);
       ProgressIndicator.showStatus(

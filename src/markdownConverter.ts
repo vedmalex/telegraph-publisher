@@ -1,4 +1,5 @@
 import type { TelegraphNode } from "./telegraphPublisher"; // Import TelegraphNode interface
+import { AnchorGenerator, type HeadingInfo } from "./utils/AnchorGenerator"; // Import unified anchor generator
 
 /**
  * Validates cleaned content to ensure it does not contain unsupported syntax, like raw HTML tags.
@@ -158,6 +159,23 @@ function createTocChildren(heading: { level: number; text: string; displayText: 
 }
 
 /**
+ * Creates children nodes for ToC links using HeadingInfo from AnchorGenerator.
+ * Handles heading-links by extracting only the text to avoid nested link elements.
+ * @param headingInfo The HeadingInfo object from AnchorGenerator.
+ * @returns Array of TelegraphNode elements for the link content.
+ */
+function createTocChildrenFromHeadingInfo(headingInfo: HeadingInfo): TelegraphNode[] {
+	// Check if this is a heading-link using metadata
+	if (headingInfo.metadata.hasLink && headingInfo.linkInfo) {
+		// For heading-links, use only the plain text to avoid nested links
+		return [headingInfo.linkInfo.text];
+	}
+	
+	// For normal headings with formatting, process inline Markdown to preserve bold, italic, etc.
+	return processInlineMarkdown(headingInfo.displayText);
+}
+
+/**
  * Generates a Table of Contents (ToC) as an aside element from Markdown content.
  * Only generates ToC if there are 2 or more headings in the document.
  * Uses the same heading processing logic as the main converter for consistency.
@@ -250,6 +268,50 @@ function generateTocAside(markdown: string): TelegraphNode | null {
 }
 
 /**
+ * Generates a Table of Contents (ToC) using the unified AnchorGenerator.
+ * This ensures 100% consistency between TOC anchors and link validation anchors.
+ * Only generates ToC if there are 2 or more headings in the document.
+ * @param markdown The raw Markdown content to scan for headings.
+ * @returns TelegraphNode for aside element with ToC, or null if insufficient headings.
+ */
+function generateTocAsideWithAnchorGenerator(markdown: string): TelegraphNode | null {
+	// Use AnchorGenerator to parse headings with unified logic
+	const headings = AnchorGenerator.parseHeadingsFromContent(markdown);
+	
+	// Check if ToC should be generated (2+ headings required)
+	if (headings.length < 2) {
+		return null;
+	}
+
+	// Build ToC structure as list items
+	const listItems: TelegraphNode[] = [];
+	for (const headingInfo of headings) {
+		// Generate anchor using unified algorithm
+		const anchor = AnchorGenerator.generateAnchor(headingInfo);
+		
+		const linkNode: TelegraphNode = {
+			tag: 'a',
+			attrs: { href: `#${anchor}` },
+			children: createTocChildrenFromHeadingInfo(headingInfo)
+		};
+		
+		listItems.push({
+			tag: 'li',
+			children: [linkNode],
+		});
+	}
+
+	// Return aside element with unordered list
+	return {
+		tag: 'aside',
+		children: [{
+			tag: 'ul',
+			children: listItems
+		}]
+	};
+}
+
+/**
  * Converts Markdown content directly into an array of TelegraphNode objects.
  * This function replaces the need for an intermediate HTML conversion step and 'mrkdwny' library.
  * It directly parses Markdown elements into the structure expected by the Telegra.ph API.
@@ -264,7 +326,14 @@ export function convertMarkdownToTelegraphNodes(
 	
 	// Generate and add Table of Contents if enabled and there are 2+ headings
 	if (options.generateToc !== false) {
-		const tocAside = generateTocAside(markdown);
+		// Feature flag: Use unified AnchorGenerator for consistent anchor generation
+		const USE_UNIFIED_ANCHORS = process.env.USE_UNIFIED_ANCHORS === 'true' || 
+									process.env.NODE_ENV !== 'production';
+		
+		const tocAside = USE_UNIFIED_ANCHORS 
+			? generateTocAsideWithAnchorGenerator(markdown)
+			: generateTocAside(markdown);
+			
 		if (tocAside) {
 			nodes.push(tocAside);
 		}

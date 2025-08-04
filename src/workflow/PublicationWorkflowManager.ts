@@ -27,6 +27,7 @@ export class PublicationWorkflowManager {
     this.accessToken = accessToken;
     this.pathResolver = PathResolver.getInstance();
     this.linkScanner = new LinkScanner();
+    // LinkVerifier and AutoRepairer will be initialized in publish() with correct projectRoot
     this.linkVerifier = new LinkVerifier(this.pathResolver);
     this.linkResolver = new LinkResolver();
     this.autoRepairer = new AutoRepairer();
@@ -44,6 +45,11 @@ export class PublicationWorkflowManager {
     if (options.debug) {
       options.dryRun = true;
     }
+
+    // Initialize LinkVerifier and AutoRepairer with correct project root for anchor caching
+    const currentWorkingDir = process.cwd();
+    this.linkVerifier = new LinkVerifier(this.pathResolver, currentWorkingDir);
+    this.autoRepairer = new AutoRepairer(currentWorkingDir);
 
     // Шаг 1: Сбор файлов.
     let filesToProcess: string[];

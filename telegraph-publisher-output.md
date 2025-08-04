@@ -68,14 +68,18 @@
     │   │   └── PathResolver.ts
     │   ├── workflow/
     │   │   ├── index.ts
+    │   │   ├── PublicationWorkflowManager.force-flag.test.ts
+    │   │   ├── PublicationWorkflowManager.publish-vs-edit-paths.test.ts
     │   │   ├── PublicationWorkflowManager.test.ts
     │   │   └── PublicationWorkflowManager.ts
     │   ├── clean_mr.ts
     │   ├── cli.ts
     │   ├── integration.test.ts
+    │   ├── markdownConverter.encoding-fix.test.ts
     │   ├── markdownConverter.numberedHeadings.test.ts
     │   ├── markdownConverter.parentheses-bug.test.ts
     │   ├── markdownConverter.test.ts
+    │   ├── markdownConverter.toc-heading-links.test.ts
     │   ├── markdownConverter.ts
     │   ├── slice_book.ts
     │   ├── telegraphPublisher.test.ts
@@ -13417,13 +13421,13 @@ This will be force republished with debug enabled`;
       
       writeFileSync(testFile, markdownWithMetadata);
 
-      const mockPublishNodes = jest.spyOn(publisher, 'publishNodes');
-      mockPublishNodes.mockResolvedValue({
-        url: 'https://telegra.ph/force-republish-new',
-        path: '/force-republish-new'
+      const mockEditPage = jest.spyOn(publisher, 'editPage');
+      mockEditPage.mockResolvedValue({
+        url: 'https://telegra.ph/force-republish',
+        path: '/edit/force-republish'
       });
 
-      // Call publishWithMetadata with forceRepublish (should use publish path, not edit path)
+      // Call publishWithMetadata with forceRepublish (should use edit path, but bypass content checks)
       const result = await publisher.publishWithMetadata(testFile, 'test-user', {
         debug: true,
         dryRun: true,
@@ -13431,9 +13435,9 @@ This will be force republished with debug enabled`;
         withDependencies: false
       });
 
-      // Verify it was treated as new publication (forceRepublish)
+      // Verify it was treated as edit operation (correct behavior after fix)
       expect(result.success).toBe(true);
-      expect(result.isNewPublication).toBe(true);
+      expect(result.isNewPublication).toBe(false);
 
       // Verify JSON file was created
       expect(existsSync(expectedJsonFile)).toBe(true);
@@ -13442,7 +13446,7 @@ This will be force republished with debug enabled`;
       expect(Array.isArray(jsonContent)).toBe(true);
       expect(JSON.stringify(jsonContent)).toContain('This will be force republished');
 
-      mockPublishNodes.mockRestore();
+      mockEditPage.mockRestore();
     });
   });
 });
@@ -14092,8 +14096,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // If file has metadata or exists in cache, treat as published (unless forced)
       const isPublished = publicationStatus === PublicationStatus.PUBLISHED || cacheInfo !== null;
 
-      if (isPublished && !forceRepublish) {
-        // File is already published, use edit instead
+      if (isPublished) {
+        // File is already published, use edit instead (regardless of force flags)
         // If we have cache info but no file metadata, we need to restore metadata to file
         if (cacheInfo && !existingMetadata) {
           console.log(`📋 Found ${filePath} in cache but missing metadata in file, restoring...`);
@@ -14119,7 +14123,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           console.log(`✅ Metadata restored to ${filePath} from cache`);
         }
 
-        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug, generateAside });
+        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug, generateAside, forceRepublish });
       }
 
       // Process dependencies if requested
@@ -14246,7 +14250,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, dryRun = false, debug = false, generateAside = true } = options;
+      const { withDependencies = true, dryRun = false, debug = false, generateAside = true, forceRepublish = false } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -14277,7 +14281,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const processed = ContentProcessor.processFile(filePath);
 
       // NEW: Content change detection (skip when debug mode is enabled)
-      if (!options.forceRepublish && !debug) {
+      if (!forceRepublish && !debug) {
         const currentHash = this.calculateContentHash(processed.contentWithoutMetadata);
         
         if (existingMetadata.contentHash && existingMetadata.contentHash === currentHash) {
@@ -17041,6 +17045,442 @@ export class PathResolver {
 export { PublicationWorkflowManager } from './PublicationWorkflowManager';
 ```
 
+`src/workflow/PublicationWorkflowManager.force-flag.test.ts`
+
+```ts
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { PublicationWorkflowManager } from './PublicationWorkflowManager';
+import { ConfigManager } from '../config/ConfigManager';
+
+/**
+ * Test suite for --force flag functionality
+ * Validates that --force properly triggers forceRepublish behavior
+ */
+describe('PublicationWorkflowManager - Force Flag Fix', () => {
+  let tempDir: string;
+  let workflowManager: PublicationWorkflowManager;
+  let publishedFile: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'test-force-flag-'));
+    const config = ConfigManager.getMetadataConfig(tempDir);
+    workflowManager = new PublicationWorkflowManager(config, 'test-token-force');
+    
+    // Create a file with metadata (simulating already published file)
+    publishedFile = join(tempDir, 'published-file.md');
+    const publishedContent = `---
+telegraphUrl: "https://telegra.ph/published-file"
+editPath: "published-file"
+username: "test"
+publishedAt: "2025-08-04T14:00:00.000Z"
+originalFilename: "published-file.md"
+title: "Published File"
+contentHash: "existing-hash-12345"
+---
+
+# Published File
+
+This file is already published and has metadata.`;
+
+    writeFileSync(publishedFile, publishedContent);
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('should use edit path for published files WITHOUT --force flag', async () => {
+    const options = {
+      withDependencies: false,
+      forceRepublish: false,
+      force: false, // No force flag
+      dryRun: true,
+      debug: false,
+      noVerify: true
+    };
+
+    // Mock console.log to capture output
+    const originalLog = console.log;
+    const outputs: string[] = [];
+    console.log = (...args) => {
+      outputs.push(args.join(' '));
+    };
+
+    try {
+      await workflowManager.publish(publishedFile, options);
+      
+      // Should show "Updated successfully!" (edit path)
+      const updateMessage = outputs.find(msg => msg.includes('Updated successfully!'));
+      expect(updateMessage).toBeDefined();
+      
+      // Should NOT show "Published successfully!" (publish path)  
+      const publishMessage = outputs.find(msg => msg.includes('Published successfully!'));
+      expect(publishMessage).toBeUndefined();
+      
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it('should use edit path for published files WITH --force flag (correct behavior)', async () => {
+    const options = {
+      withDependencies: false,
+      forceRepublish: false,
+      force: true, // Force flag enabled
+      dryRun: true,
+      debug: false,
+      noVerify: true
+    };
+
+    // Mock console.log to capture output
+    const originalLog = console.log;
+    const outputs: string[] = [];
+    console.log = (...args) => {
+      outputs.push(args.join(' '));
+    };
+
+    try {
+      await workflowManager.publish(publishedFile, options);
+      
+      // Should show "Updated successfully!" (edit path - correct behavior)
+      const updateMessage = outputs.find(msg => msg.includes('Updated successfully!'));
+      expect(updateMessage).toBeDefined();
+      
+      // Should NOT show "Published successfully!" (would indicate bug)
+      const publishMessage = outputs.find(msg => msg.includes('Published successfully!'));
+      expect(publishMessage).toBeUndefined();
+      
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it('should use edit path for published files WITH --force-republish flag (correct behavior)', async () => {
+    const options = {
+      withDependencies: false,
+      forceRepublish: true, // Force republish flag
+      force: false,
+      dryRun: true,
+      debug: false,
+      noVerify: true
+    };
+
+    // Mock console.log to capture output
+    const originalLog = console.log;
+    const outputs: string[] = [];
+    console.log = (...args) => {
+      outputs.push(args.join(' '));
+    };
+
+    try {
+      await workflowManager.publish(publishedFile, options);
+      
+      // Should show "Updated successfully!" (edit path - correct behavior)
+      const updateMessage = outputs.find(msg => msg.includes('Updated successfully!'));
+      expect(updateMessage).toBeDefined();
+      
+      // Should NOT show "Published successfully!" (would indicate bug)
+      const publishMessage = outputs.find(msg => msg.includes('Published successfully!'));
+      expect(publishMessage).toBeUndefined();
+      
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it('should show bypass warning when using --force flag', async () => {
+    const options = {
+      withDependencies: false,
+      forceRepublish: false,
+      force: true, // Force flag for link verification bypass
+      dryRun: true,
+      debug: false,
+      noVerify: false // Enable verification to see bypass message
+    };
+
+    // Mock ProgressIndicator to capture status messages
+    const originalShowStatus = require('../cli/ProgressIndicator').ProgressIndicator.showStatus;
+    const statusMessages: string[] = [];
+    require('../cli/ProgressIndicator').ProgressIndicator.showStatus = (message: string) => {
+      statusMessages.push(message);
+    };
+
+    try {
+      await workflowManager.publish(publishedFile, options);
+      
+      // Should show bypass warning
+      const bypassMessage = statusMessages.find(msg => 
+        msg.includes('Bypassing link verification due to --force flag')
+      );
+      expect(bypassMessage).toBeDefined();
+      
+      // Should show debug warning
+      const debugMessage = statusMessages.find(msg => 
+        msg.includes('This mode is intended for debugging only')
+      );
+      expect(debugMessage).toBeDefined();
+      
+    } finally {
+      require('../cli/ProgressIndicator').ProgressIndicator.showStatus = originalShowStatus;
+    }
+  });
+
+  it('should handle combination of --force and --force-republish correctly', async () => {
+    const options = {
+      withDependencies: false,
+      forceRepublish: true, // Both flags enabled
+      force: true,
+      dryRun: true,
+      debug: false,
+      noVerify: true
+    };
+
+    // Mock console.log to capture output
+    const originalLog = console.log;
+    const outputs: string[] = [];
+    console.log = (...args) => {
+      outputs.push(args.join(' '));
+    };
+
+    try {
+      await workflowManager.publish(publishedFile, options);
+      
+      // Should still use edit path (correct behavior regardless of flag combination)
+      const updateMessage = outputs.find(msg => msg.includes('Updated successfully!'));
+      expect(updateMessage).toBeDefined();
+      
+      // Should NOT create new publication even with both flags
+      const publishMessage = outputs.find(msg => msg.includes('Published successfully!'));
+      expect(publishMessage).toBeUndefined();
+      
+    } finally {
+      console.log = originalLog;
+    }
+  });
+});
+```
+
+`src/workflow/PublicationWorkflowManager.publish-vs-edit-paths.test.ts`
+
+```ts
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { PublicationWorkflowManager } from './PublicationWorkflowManager';
+import { ConfigManager } from '../config/ConfigManager';
+
+/**
+ * Test suite for correct publish vs edit path behavior
+ * Validates that force flags don't create new pages for existing publications
+ */
+describe('PublicationWorkflowManager - Publish vs Edit Path Logic', () => {
+  let tempDir: string;
+  let workflowManager: PublicationWorkflowManager;
+  let publishedFile: string;
+  let newFile: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'test-publish-edit-paths-'));
+    const config = ConfigManager.getMetadataConfig(tempDir);
+    workflowManager = new PublicationWorkflowManager(config, 'test-token-paths');
+    
+    // Create a file with metadata (existing publication)
+    publishedFile = join(tempDir, 'published.md');
+    const publishedContent = `---
+telegraphUrl: "https://telegra.ph/published-page"
+editPath: "published-page"
+username: "test"
+publishedAt: "2025-08-04T14:00:00.000Z"
+originalFilename: "published.md"
+title: "Published Page"
+contentHash: "existing-hash"
+---
+
+# Published Page
+
+This file is already published with metadata.`;
+
+    writeFileSync(publishedFile, publishedContent);
+    
+    // Create a file without metadata (new file)
+    newFile = join(tempDir, 'new.md');
+    const newContent = `# New Page
+
+This file has no metadata.`;
+
+    writeFileSync(newFile, newContent);
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('should use edit path for published files regardless of force flags', async () => {
+    const testCases = [
+      { name: 'no flags', options: { force: false, forceRepublish: false } },
+      { name: '--force', options: { force: true, forceRepublish: false } },
+      { name: '--force-republish', options: { force: false, forceRepublish: true } },
+      { name: 'both flags', options: { force: true, forceRepublish: true } }
+    ];
+
+    for (const testCase of testCases) {
+      // Mock console.log to capture output
+      const originalLog = console.log;
+      const outputs: string[] = [];
+      console.log = (...args) => {
+        outputs.push(args.join(' '));
+      };
+
+      try {
+        await workflowManager.publish(publishedFile, {
+          withDependencies: false,
+          dryRun: true,
+          debug: false,
+          noVerify: true,
+          ...testCase.options
+        });
+
+        // Should always use edit path for published files
+        const updateMessage = outputs.find(msg => msg.includes('Updated successfully!'));
+        expect(updateMessage).toBeDefined();
+
+        // Should never create new publication for existing files
+        const publishMessage = outputs.find(msg => msg.includes('Published successfully!'));
+        expect(publishMessage).toBeUndefined();
+
+        console.log(`✅ ${testCase.name}: Edit path used correctly`);
+
+      } finally {
+        console.log = originalLog;
+      }
+    }
+  });
+
+  it('should use publish path for new files', async () => {
+    // Mock console.log to capture output
+    const originalLog = console.log;
+    const outputs: string[] = [];
+    console.log = (...args) => {
+      outputs.push(args.join(' '));
+    };
+
+    try {
+      await workflowManager.publish(newFile, {
+        withDependencies: false,
+        dryRun: true,
+        debug: false,
+        noVerify: true,
+        force: true,
+        forceRepublish: true
+      });
+
+      // Should use publish path for new files
+      const publishMessage = outputs.find(msg => msg.includes('Published successfully!'));
+      expect(publishMessage).toBeDefined();
+
+      // Should not use edit path for new files
+      const updateMessage = outputs.find(msg => msg.includes('Updated successfully!'));
+      expect(updateMessage).toBeUndefined();
+
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it('should force republish behavior bypass content checks in edit path', async () => {
+    // Test that force flags bypass content hash checks but still use edit path
+    
+    // Mock console.log to capture output
+    const originalLog = console.log;
+    const outputs: string[] = [];
+    console.log = (...args) => {
+      outputs.push(args.join(' '));
+    };
+
+    try {
+      // First test without force flags - should skip due to unchanged content
+      await workflowManager.publish(publishedFile, {
+        withDependencies: false,
+        dryRun: true,
+        debug: false,
+        noVerify: true,
+        force: false,
+        forceRepublish: false
+      });
+
+      const skipMessage = outputs.find(msg => msg.includes('Content unchanged. Skipping'));
+      
+      if (skipMessage) {
+        // Content was skipped - now test with force flag
+        outputs.length = 0; // Clear outputs
+        
+        await workflowManager.publish(publishedFile, {
+          withDependencies: false,
+          dryRun: true,
+          debug: false,
+          noVerify: true,
+          force: true, // Should bypass content check
+          forceRepublish: false
+        });
+
+        // Should force update even with unchanged content
+        const updateMessage = outputs.find(msg => msg.includes('Updated successfully!'));
+        expect(updateMessage).toBeDefined();
+        
+        // Should still use edit path, not create new publication
+        const publishMessage = outputs.find(msg => msg.includes('Published successfully!'));
+        expect(publishMessage).toBeUndefined();
+      }
+
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it('should distinguish between file metadata and cache info for path decision', async () => {
+    // This test validates that path decision is based on publication status,
+    // not just force flags
+    
+    const testFile = join(tempDir, 'cache-test.md');
+    const content = `# Cache Test
+
+This file will test cache vs metadata logic.`;
+
+    writeFileSync(testFile, content);
+
+    // Mock console.log to capture output
+    const originalLog = console.log;
+    const outputs: string[] = [];
+    console.log = (...args) => {
+      outputs.push(args.join(' '));
+    };
+
+    try {
+      // New file should use publish path even with force flags
+      await workflowManager.publish(testFile, {
+        withDependencies: false,
+        dryRun: true,
+        debug: false,
+        noVerify: true,
+        force: true,
+        forceRepublish: true
+      });
+
+      // Should use publish path for truly new files
+      const publishMessage = outputs.find(msg => msg.includes('Published successfully!'));
+      expect(publishMessage).toBeDefined();
+
+    } finally {
+      console.log = originalLog;
+    }
+  });
+});
+```
+
 `src/workflow/PublicationWorkflowManager.test.ts`
 
 ```ts
@@ -17693,7 +18133,7 @@ export class PublicationWorkflowManager {
       ProgressIndicator.showStatus(`⚙️ Publishing: ${file}`, "info");
       const result = await this.publisher.publishWithMetadata(file, this.config.defaultUsername, {
         withDependencies: options.withDependencies !== false,
-        forceRepublish: options.forceRepublish || false,
+        forceRepublish: options.forceRepublish || options.force || false,
         dryRun: options.dryRun || false,
         debug: options.debug || false,
         generateAside: options.aside !== false
@@ -18272,6 +18712,172 @@ describe("Integration Tests", () => {
 
 ```
 
+`src/markdownConverter.encoding-fix.test.ts`
+
+```ts
+import { describe, it, expect } from 'bun:test';
+import { convertMarkdownToTelegraphNodes } from './markdownConverter';
+
+/**
+ * Test suite for H5/H6 encoding fix
+ * Validates that ASCII > symbols are used instead of Unicode » symbols
+ */
+describe('MarkdownConverter - H5/H6 Encoding Fix', () => {
+  
+  it('should use ASCII > symbols instead of Unicode » for H5/H6 headings', () => {
+    const markdown = `##### H5 Heading
+###### H6 Heading`;
+
+    const nodes = convertMarkdownToTelegraphNodes(markdown, { generateToc: true });
+    
+    // Find ToC
+    const tocAside = nodes.find(node => typeof node === 'object' && node.tag === 'aside');
+    expect(tocAside).toBeDefined();
+    
+    if (tocAside && typeof tocAside === 'object' && tocAside.children) {
+      const ul = tocAside.children[0];
+      if (typeof ul === 'object' && ul.tag === 'ul' && ul.children) {
+        const listItems = ul.children;
+        
+        // H5 ToC item
+        const h5Item = listItems[0];
+        if (typeof h5Item === 'object' && h5Item.children) {
+          const h5Link = h5Item.children[0];
+          if (typeof h5Link === 'object' && h5Link.children) {
+            const h5Text = h5Link.children[0];
+            expect(h5Text).toBe('> H5 Heading'); // ASCII > not Unicode »
+            
+            // Check character codes
+            if (typeof h5Text === 'string') {
+              const firstChar = h5Text.charCodeAt(0);
+              expect(firstChar).toBe(62); // ASCII > = 62, not Unicode » = 187
+            }
+          }
+        }
+        
+        // H6 ToC item  
+        const h6Item = listItems[1];
+        if (typeof h6Item === 'object' && h6Item.children) {
+          const h6Link = h6Item.children[0];
+          if (typeof h6Link === 'object' && h6Link.children) {
+            const h6Text = h6Link.children[0];
+            expect(h6Text).toBe('>> H6 Heading'); // ASCII >> not Unicode »»
+            
+            // Check character codes
+            if (typeof h6Text === 'string') {
+              const firstChar = h6Text.charCodeAt(0);
+              const secondChar = h6Text.charCodeAt(1);
+              expect(firstChar).toBe(62); // ASCII >
+              expect(secondChar).toBe(62); // ASCII >
+            }
+          }
+        }
+      }
+    }
+    
+    // Find H5 and H6 heading elements
+    const h5Element = nodes.find(node => 
+      typeof node === 'object' && 
+      node.tag === 'h4' && 
+      Array.isArray(node.children) && 
+      typeof node.children[0] === 'string' && 
+      node.children[0].includes('H5')
+    );
+    
+    const h6Element = nodes.find(node => 
+      typeof node === 'object' && 
+      node.tag === 'h4' && 
+      Array.isArray(node.children) && 
+      typeof node.children[0] === 'string' && 
+      node.children[0].includes('H6')
+    );
+    
+    // Validate heading elements use ASCII > symbols
+    if (h5Element && typeof h5Element === 'object' && h5Element.children) {
+      const h5Text = h5Element.children[0];
+      expect(h5Text).toBe('> H5 Heading');
+      if (typeof h5Text === 'string') {
+        expect(h5Text.charCodeAt(0)).toBe(62); // ASCII >
+      }
+    }
+    
+    if (h6Element && typeof h6Element === 'object' && h6Element.children) {
+      const h6Text = h6Element.children[0];
+      expect(h6Text).toBe('>> H6 Heading');
+      if (typeof h6Text === 'string') {
+        expect(h6Text.charCodeAt(0)).toBe(62); // ASCII >
+        expect(h6Text.charCodeAt(1)).toBe(62); // ASCII >
+      }
+    }
+  });
+
+  it('should prevent UTF-8 encoding issues with ASCII symbols', () => {
+    const markdown = `##### Test Heading`;
+    const nodes = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+    
+    const h5Element = nodes.find(node => 
+      typeof node === 'object' && 
+      node.tag === 'h4' && 
+      Array.isArray(node.children) && 
+      typeof node.children[0] === 'string'
+    );
+    
+    if (h5Element && typeof h5Element === 'object' && h5Element.children) {
+      const text = h5Element.children[0];
+      if (typeof text === 'string') {
+        // Should NOT contain Unicode » (187) that causes Â» display
+        expect(text).not.toContain(String.fromCharCode(187));
+        
+        // Should contain ASCII > (62) that displays correctly
+        expect(text.charCodeAt(0)).toBe(62);
+        
+        // Verify no double-encoding artifacts
+        expect(text).not.toContain('Â');
+        expect(text).not.toContain('Â»');
+      }
+    }
+  });
+
+  it('should handle multiple H5/H6 headings with ASCII symbols', () => {
+    const markdown = `##### First H5
+###### First H6  
+##### Second H5
+###### Second H6`;
+
+    const nodes = convertMarkdownToTelegraphNodes(markdown, { generateToc: true });
+    
+    // Count H4 elements (converted H5/H6)
+    const h4Elements = nodes.filter(node => 
+      typeof node === 'object' && node.tag === 'h4'
+    );
+    
+    expect(h4Elements).toHaveLength(4);
+    
+    // Verify all use ASCII > symbols
+    h4Elements.forEach((element, index) => {
+      if (typeof element === 'object' && element.children) {
+        const text = element.children[0];
+        if (typeof text === 'string') {
+          if (index % 2 === 0) {
+            // H5 elements (even indices)
+            expect(text.charCodeAt(0)).toBe(62); // >
+            expect(text.charCodeAt(1)).toBe(32); // space
+          } else {
+            // H6 elements (odd indices)  
+            expect(text.charCodeAt(0)).toBe(62); // >
+            expect(text.charCodeAt(1)).toBe(62); // >
+            expect(text.charCodeAt(2)).toBe(32); // space
+          }
+          
+          // No Unicode » symbols anywhere
+          expect(text).not.toContain(String.fromCharCode(187));
+        }
+      }
+    });
+  });
+});
+```
+
 `src/markdownConverter.numberedHeadings.test.ts`
 
 ```ts
@@ -18655,13 +19261,13 @@ test("should convert H5/H6 headings to h4 with visual prefixes for anchor suppor
 			children: [{
 				tag: "ul",
 				children: [
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Heading-5" }, children: ["» Heading 5"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Heading-6" }, children: ["»» Heading 6"] }] }
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-Heading-5" }, children: ["> Heading 5"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Heading-6" }, children: [">> Heading 6"] }] }
 				]
 			}]
 		},
-		{ tag: "h4", children: ["» Heading 5"] }, // H5 → h4 with » prefix
-		{ tag: "h4", children: ["»» Heading 6"] }, // H6 → h4 with »» prefix
+		{ tag: "h4", children: ["> Heading 5"] }, // H5 → h4 with > prefix
+		{ tag: "h4", children: [">> Heading 6"] }, // H6 → h4 with >> prefix
 	]);
 });
 
@@ -18680,9 +19286,9 @@ test("should handle all heading levels comprehensively", () => {
 					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H2" }, children: ["H2"] }] },
 					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H3" }, children: ["H3"] }] },
 					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H4" }, children: ["H4"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-H5" }, children: ["» H5"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-H6" }, children: ["»» H6"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»»-H7+" }, children: ["»»» H7+"] }] }
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-H5" }, children: ["> H5"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-H6" }, children: [">> H6"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>>-H7+" }, children: [">>> H7+"] }] }
 				]
 			}]
 		},
@@ -18690,9 +19296,9 @@ test("should handle all heading levels comprehensively", () => {
 		{ tag: "h3", children: ["H2"] },
 		{ tag: "h3", children: ["H3"] },
 		{ tag: "h4", children: ["H4"] },
-		{ tag: "h4", children: ["» H5"] },
-		{ tag: "h4", children: ["»» H6"] },
-		{ tag: "h4", children: ["»»» H7+"] }, // Edge case: H7+ → h4 with »»» prefix
+		{ tag: "h4", children: ["> H5"] },
+		{ tag: "h4", children: [">> H6"] },
+		{ tag: "h4", children: [">>> H7+"] }, // Edge case: H7+ → h4 with >>> prefix
 	]);
 });
 
@@ -18708,15 +19314,15 @@ test("should preserve inline formatting in H5/H6 with prefixes", () => {
 			children: [{
 				tag: "ul",
 				children: [
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-**Bold**-H5-with-*italic*" }, children: ["» ", { tag: "strong", children: ["Bold"] }, " H5 with ", { tag: "em", children: ["italic"] }] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Link-[text](url)-in-H6" }, children: ["»» Link ", { tag: "a", attrs: { href: "url" }, children: ["text"] }, " in H6"] }] }
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-**Bold**-H5-with-*italic*" }, children: ["> ", { tag: "strong", children: ["Bold"] }, " H5 with ", { tag: "em", children: ["italic"] }] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Link-[text](url)-in-H6" }, children: [">> Link ", { tag: "a", attrs: { href: "url" }, children: ["text"] }, " in H6"] }] }
 				]
 			}]
 		},
 		{
 			tag: "h4",
 			children: [
-				"» ",
+				"> ",
 				{ tag: "strong", children: ["Bold"] },
 				" H5 with ",
 				{ tag: "em", children: ["italic"] }
@@ -18725,7 +19331,7 @@ test("should preserve inline formatting in H5/H6 with prefixes", () => {
 		{
 			tag: "h4",
 			children: [
-				"»» Link ",
+				">> Link ",
 				{ tag: "a", attrs: { href: "url" }, children: ["text"] },
 				" in H6"
 			]
@@ -18754,19 +19360,19 @@ test("should generate proper anchors for H5/H6 headings - integration test", () 
 				tag: "ul",
 				children: [
 					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Regular-Heading" }, children: ["Regular Heading"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Important-Section" }, children: ["» Important Section"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Sub-Important-Section" }, children: ["»» Sub Important Section"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Мой-раздел" }, children: ["» Мой раздел"] }] },
-					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Section-with-@#$%-Special-Characters!" }, children: ["»» Section with @#$% Special Characters!"] }] }
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-Important-Section" }, children: ["> Important Section"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Sub-Important-Section" }, children: [">> Sub Important Section"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-Мой-раздел" }, children: ["> Мой раздел"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Section-with-@#$%-Special-Characters!" }, children: [">> Section with @#$% Special Characters!"] }] }
 				]
 			}]
 		},
 		// Then the actual headings
 		{ tag: "h3", children: ["Regular Heading"] }, // Should generate anchor: "Regular-Heading"
-		{ tag: "h4", children: ["» Important Section"] }, // Should generate anchor: "»-Important-Section"
-		{ tag: "h4", children: ["»» Sub Important Section"] }, // Should generate anchor: "»»-Sub-Important-Section"
-		{ tag: "h4", children: ["» Мой раздел"] }, // Should generate anchor: "»-Мой-раздел"
-		{ tag: "h4", children: ["»» Section with @#$% Special Characters!"] }, // Should generate anchor: "»»-Section-with-@#$%-Special-Characters!"
+		{ tag: "h4", children: ["> Important Section"] }, // Should generate anchor: ">-Important-Section"
+		{ tag: "h4", children: [">> Sub Important Section"] }, // Should generate anchor: ">>-Sub-Important-Section"
+		{ tag: "h4", children: ["> Мой раздел"] }, // Should generate anchor: ">-Мой-раздел"
+		{ tag: "h4", children: [">> Section with @#$% Special Characters!"] }, // Should generate anchor: ">>-Section-with-@#$%-Special-Characters!"
 	]);
 });
 
@@ -18832,8 +19438,8 @@ test("should handle ToC with H5/H6 prefixed headings correctly", () => {
 			tag: "ul",
 			children: [
 				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Introduction" }, children: ["Introduction"] }] },
-				{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Important-Note" }, children: ["» Important Note"] }] },
-				{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Warning" }, children: ["»» Warning"] }] }
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-Important-Note" }, children: ["> Important Note"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Warning" }, children: [">> Warning"] }] }
 			]
 		}]
 	});
@@ -19218,6 +19824,289 @@ test("should handle table with empty cells", () => {
 
 ```
 
+`src/markdownConverter.toc-heading-links.test.ts`
+
+```ts
+import { describe, it, expect } from 'bun:test';
+import { convertMarkdownToTelegraphNodes } from './markdownConverter';
+
+/**
+ * Test suite for ToC generation with heading-links
+ * Validates fix for nested link bug discovered in user report
+ */
+describe('MarkdownConverter - ToC Heading Links', () => {
+  
+  it('should generate ToC with plain text for heading-links (user bug fix)', () => {
+    // Test case based on user's bug report: BUG/index.md
+    const testMarkdown = `## [Аналогии](./аналогии.md)
+
+Some content here.
+
+## [Домашнее задание](./задание.md)
+
+More content.`;
+
+    const nodes = convertMarkdownToTelegraphNodes(testMarkdown, { generateToc: true });
+
+    // Find the ToC (aside element)
+    const tocAside = nodes.find(node => typeof node === 'object' && node.tag === 'aside');
+    expect(tocAside).toBeDefined();
+    
+    if (tocAside && typeof tocAside === 'object' && tocAside.children) {
+      const ul = tocAside.children[0];
+      expect(ul).toBeDefined();
+      
+      if (typeof ul === 'object' && ul.tag === 'ul' && ul.children) {
+        const listItems = ul.children;
+        expect(listItems).toHaveLength(2);
+        
+        // Test first ToC item: [Аналогии](./аналогии.md)
+        const firstItem = listItems[0];
+        if (typeof firstItem === 'object' && firstItem.children) {
+          const firstLink = firstItem.children[0];
+          if (typeof firstLink === 'object' && firstLink.tag === 'a') {
+            // Verify correct anchor
+            expect(firstLink.attrs?.href).toBe('#Аналогии');
+            
+            // CRITICAL: Verify children contains ONLY plain text (no nested links)
+            expect(firstLink.children).toHaveLength(1);
+            expect(firstLink.children[0]).toBe('Аналогии'); // Plain text only
+            expect(typeof firstLink.children[0]).toBe('string'); // Must be string, not object
+          }
+        }
+        
+        // Test second ToC item: [Домашнее задание](./задание.md) 
+        const secondItem = listItems[1];
+        if (typeof secondItem === 'object' && secondItem.children) {
+          const secondLink = secondItem.children[0];
+          if (typeof secondLink === 'object' && secondLink.tag === 'a') {
+            // Verify correct anchor
+            expect(secondLink.attrs?.href).toBe('#Домашнее-задание');
+            
+            // CRITICAL: Verify children contains ONLY plain text (no nested links)
+            expect(secondLink.children).toHaveLength(1);
+            expect(secondLink.children[0]).toBe('Домашнее задание'); // Plain text only
+            expect(typeof secondLink.children[0]).toBe('string'); // Must be string, not object
+          }
+        }
+      }
+    }
+  });
+
+  it('should handle mixed heading types correctly', () => {
+    const testMarkdown = `## Normal Heading
+
+Content here.
+
+## [Link Heading](./file.md)
+
+More content.
+
+## **Bold Heading**
+
+Final content.`;
+
+    const nodes = convertMarkdownToTelegraphNodes(testMarkdown, { generateToc: true });
+    
+    const tocAside = nodes.find(node => typeof node === 'object' && node.tag === 'aside');
+    expect(tocAside).toBeDefined();
+    
+    if (tocAside && typeof tocAside === 'object' && tocAside.children) {
+      const ul = tocAside.children[0];
+      if (typeof ul === 'object' && ul.tag === 'ul' && ul.children) {
+        const listItems = ul.children;
+        expect(listItems).toHaveLength(3);
+        
+        // Test normal heading
+        const normalItem = listItems[0];
+        if (typeof normalItem === 'object' && normalItem.children) {
+          const normalLink = normalItem.children[0];
+          if (typeof normalLink === 'object' && normalLink.children) {
+            expect(normalLink.children[0]).toBe('Normal Heading');
+            expect(typeof normalLink.children[0]).toBe('string');
+          }
+        }
+        
+        // Test link heading (the critical case)
+        const linkItem = listItems[1];
+        if (typeof linkItem === 'object' && linkItem.children) {
+          const linkLink = linkItem.children[0];
+          if (typeof linkLink === 'object' && linkLink.children) {
+            expect(linkLink.children[0]).toBe('Link Heading'); // Plain text extracted
+            expect(typeof linkLink.children[0]).toBe('string');
+          }
+        }
+        
+        // Test bold heading - should have proper formatting (strong tag)
+        const boldItem = listItems[2];
+        if (typeof boldItem === 'object' && boldItem.children) {
+          const boldLink = boldItem.children[0];
+          if (typeof boldLink === 'object' && boldLink.children) {
+            // Bold heading should be processed into proper strong tag
+            expect(boldLink.children).toHaveLength(1);
+            const strongTag = boldLink.children[0];
+            expect(typeof strongTag).toBe('object');
+            if (typeof strongTag === 'object' && strongTag !== null) {
+              expect(strongTag.tag).toBe('strong');
+              expect(strongTag.children).toEqual(['Bold Heading']);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('should prevent nested links for external URLs in headings', () => {
+    const testMarkdown = `## [External Link](https://example.com)
+
+Content here.
+
+## [Another External](https://test.com)
+
+More content.`;
+
+    const nodes = convertMarkdownToTelegraphNodes(testMarkdown, { generateToc: true });
+    
+    const tocAside = nodes.find(node => typeof node === 'object' && node.tag === 'aside');
+    expect(tocAside).toBeDefined();
+    
+    if (tocAside && typeof tocAside === 'object' && tocAside.children) {
+      const ul = tocAside.children[0];
+      if (typeof ul === 'object' && ul.tag === 'ul' && ul.children) {
+        const listItems = ul.children;
+        expect(listItems).toHaveLength(2);
+        
+        // Verify both items have plain text only
+        for (let i = 0; i < listItems.length; i++) {
+          const item = listItems[i];
+          if (typeof item === 'object' && item.children) {
+            const link = item.children[0];
+            if (typeof link === 'object' && link.children) {
+              // Must be plain text, no nested link objects
+              expect(link.children).toHaveLength(1);
+              expect(typeof link.children[0]).toBe('string');
+              
+              // Should not contain any nested objects (links)
+              const hasNestedObjects = link.children.some(child => typeof child === 'object');
+              expect(hasNestedObjects).toBe(false);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('should handle complex link headings with formatting', () => {
+    const testMarkdown = `## [**Bold Text** in Link](./file.md)
+
+Content.
+
+## [Text with *italic*](./other.md)
+
+More content.`;
+
+    const nodes = convertMarkdownToTelegraphNodes(testMarkdown, { generateToc: true });
+    
+    const tocAside = nodes.find(node => typeof node === 'object' && node.tag === 'aside');
+    expect(tocAside).toBeDefined();
+    
+    if (tocAside && typeof tocAside === 'object' && tocAside.children) {
+      const ul = tocAside.children[0];
+      if (typeof ul === 'object' && ul.tag === 'ul' && ul.children) {
+        const listItems = ul.children;
+        expect(listItems).toHaveLength(2);
+        
+        // Test bold text in link heading
+        const boldItem = listItems[0];
+        if (typeof boldItem === 'object' && boldItem.children) {
+          const boldLink = boldItem.children[0];
+          if (typeof boldLink === 'object' && boldLink.children) {
+            expect(boldLink.children[0]).toBe('**Bold Text** in Link');
+            expect(typeof boldLink.children[0]).toBe('string');
+          }
+        }
+        
+        // Test italic text in link heading
+        const italicItem = listItems[1];
+        if (typeof italicItem === 'object' && italicItem.children) {
+          const italicLink = italicItem.children[0];
+          if (typeof italicLink === 'object' && italicLink.children) {
+            expect(italicLink.children[0]).toBe('Text with *italic*');
+            expect(typeof italicLink.children[0]).toBe('string');
+          }
+        }
+      }
+    }
+  });
+
+  it('should work correctly when ToC is disabled', () => {
+    const testMarkdown = `## [Link Heading](./file.md)
+
+Content here.`;
+
+    const nodes = convertMarkdownToTelegraphNodes(testMarkdown, { generateToc: false });
+    
+    // Should not contain any aside elements
+    const tocAside = nodes.find(node => typeof node === 'object' && node.tag === 'aside');
+    expect(tocAside).toBeUndefined();
+    
+    // Should still contain the heading content
+    expect(nodes.length).toBeGreaterThan(0);
+  });
+
+  it('should reproduce exact user bug scenario', () => {
+    // Exact content from user's BUG/index.md
+    const userMarkdown = `## [Аналогии](./аналогии.md)
+
+- [Анализ аналогий из Шримад-Бхагаватам 1.1](./аналогии.md#Анализ-аналогий-из-Шримад-Бхагаватам-1.1)
+- [1. Аналогия «Дерево цивилизации» (из комментария к ШБ 1.1.4)](./аналогии.md#1.-Аналогия-«Дерево-цивилизации»-(из-комментария-к-ШБ-1.1.4))
+
+## [Домашнее задание](./задание.md)
+
+- [Практическое домашнее задание: Искусство задавать вопросы](./задание.md#Практическое-домашнее-задание:-Искусство-задавать-вопросы)`;
+
+    const nodes = convertMarkdownToTelegraphNodes(userMarkdown, { generateToc: true });
+    
+    // Find ToC
+    const tocAside = nodes.find(node => typeof node === 'object' && node.tag === 'aside');
+    expect(tocAside).toBeDefined();
+    
+    if (tocAside && typeof tocAside === 'object' && tocAside.children) {
+      const ul = tocAside.children[0];
+      if (typeof ul === 'object' && ul.tag === 'ul' && ul.children) {
+        const listItems = ul.children;
+        expect(listItems).toHaveLength(2);
+        
+        // Validate first item: Аналогии
+        const firstItem = listItems[0];
+        if (typeof firstItem === 'object' && firstItem.children) {
+          const firstLink = firstItem.children[0];
+          if (typeof firstLink === 'object') {
+            // This was the bug: nested link structure
+            expect(firstLink.attrs?.href).toBe('#Аналогии');
+            expect(firstLink.children).toHaveLength(1);
+            expect(firstLink.children[0]).toBe('Аналогии');
+            expect(typeof firstLink.children[0]).toBe('string');
+          }
+        }
+        
+        // Validate second item: Домашнее задание
+        const secondItem = listItems[1];
+        if (typeof secondItem === 'object' && secondItem.children) {
+          const secondLink = secondItem.children[0];
+          if (typeof secondLink === 'object') {
+            expect(secondLink.attrs?.href).toBe('#Домашнее-задание');
+            expect(secondLink.children).toHaveLength(1);
+            expect(secondLink.children[0]).toBe('Домашнее задание');
+            expect(typeof secondLink.children[0]).toBe('string');
+          }
+        }
+      }
+    }
+  });
+});
+```
+
 `src/markdownConverter.ts`
 
 ```ts
@@ -19364,6 +20253,23 @@ function parseTable(tableLines: string[]): TelegraphNode {
 }
 
 /**
+ * Creates children nodes for ToC links that handle formatting but prevent nested links
+ * @param heading The heading object with text and display information
+ * @returns Array of TelegraphNode children for the ToC link
+ */
+function createTocChildren(heading: { level: number; text: string; displayText: string; textForAnchor: string }): TelegraphNode[] {
+	// Check if this is a heading-link (e.g., "## [Link Text](./file.md)")
+	const linkInHeadingMatch = heading.text.match(/^\[(.*?)\]\((.*?)\)$/);
+	if (linkInHeadingMatch) {
+		// For heading-links, use only the plain text to avoid nested links
+		return [heading.textForAnchor];
+	}
+	
+	// For normal headings with formatting, process inline Markdown to preserve bold, italic, etc.
+	return processInlineMarkdown(heading.displayText);
+}
+
+/**
  * Generates a Table of Contents (ToC) as an aside element from Markdown content.
  * Only generates ToC if there are 2 or more headings in the document.
  * Uses the same heading processing logic as the main converter for consistency.
@@ -19399,19 +20305,19 @@ function generateTocAside(markdown: string): TelegraphNode | null {
 				case 4:
 					displayText = originalText;
 					break;
-				case 5:
-					displayText = `» ${originalText}`;
-					textForAnchor = linkInHeadingMatch ? `» ${linkInHeadingMatch[1]}` : `» ${originalText}`;
-					break;
-				case 6:
-					displayText = `»» ${originalText}`;
-					textForAnchor = linkInHeadingMatch ? `»» ${linkInHeadingMatch[1]}` : `»» ${originalText}`;
-					break;
-				default:
-					// Handle edge case: levels > 6
-					displayText = `»»» ${originalText}`;
-					textForAnchor = linkInHeadingMatch ? `»»» ${linkInHeadingMatch[1]}` : `»»» ${originalText}`;
-					break;
+							case 5:
+				displayText = `> ${originalText}`;
+				textForAnchor = linkInHeadingMatch ? `> ${linkInHeadingMatch[1]}` : `> ${originalText}`;
+				break;
+			case 6:
+				displayText = `>> ${originalText}`;
+				textForAnchor = linkInHeadingMatch ? `>> ${linkInHeadingMatch[1]}` : `>> ${originalText}`;
+				break;
+			default:
+				// Handle edge case: levels > 6
+				displayText = `>>> ${originalText}`;
+				textForAnchor = linkInHeadingMatch ? `>>> ${linkInHeadingMatch[1]}` : `>>> ${originalText}`;
+				break;
 			}
 
 			headings.push({ level, text: originalText, displayText, textForAnchor });
@@ -19430,16 +20336,13 @@ function generateTocAside(markdown: string): TelegraphNode | null {
 		// Based on empirical research: remove only < and > characters, replace spaces with hyphens
 		const anchor = heading.textForAnchor
 			.trim()
-			.replace(/[<>]/g, '') // 1. Remove < and > characters only
+			.replace(/[<]/g, '') // 1. Remove < characters only (preserve > for H5/H6 prefixes)
 			.replace(/ /g, '-');  // 2. Replace spaces with hyphens
 		
 		const linkNode: TelegraphNode = {
 			tag: 'a',
 			attrs: { href: `#${anchor}` },
-			children: [
-				// Use processInlineMarkdown to render formatting in ToC text for better readability
-				...processInlineMarkdown(heading.displayText)
-			]
+			children: createTocChildren(heading)
 		};
 		
 		listItems.push({
@@ -19660,17 +20563,17 @@ export function convertMarkdownToTelegraphNodes(
 				case 5:
 					// H5 → h4 with visual prefix to preserve hierarchy and enable anchors
 					tag = 'h4';
-					displayText = `» ${originalText}`;
+					displayText = `> ${originalText}`;
 					break;
 				case 6:
 					// H6 → h4 with double visual prefix to preserve hierarchy and enable anchors
 					tag = 'h4';
-					displayText = `»» ${originalText}`;
+					displayText = `>> ${originalText}`;
 					break;
 				default:
 					// Handle edge case: levels > 6 as h4 with triple visual prefix
 					tag = 'h4';
-					displayText = `»»» ${originalText}`;
+					displayText = `>>> ${originalText}`;
 					break;
 			}
 

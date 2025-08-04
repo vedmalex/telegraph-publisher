@@ -7,8 +7,12 @@ import type { BrokenLink, FileScanResult } from './types';
 
 export class AutoRepairer {
   private scanner = new LinkScanner();
-  private verifier = new LinkVerifier(PathResolver.getInstance());
+  private verifier: LinkVerifier;
   private resolver = new LinkResolver();
+
+  constructor(projectRoot?: string) {
+    this.verifier = new LinkVerifier(PathResolver.getInstance(), projectRoot || process.cwd());
+  }
 
   /**
    * Scans a file or directory, attempts to auto-repair high-confidence broken links,

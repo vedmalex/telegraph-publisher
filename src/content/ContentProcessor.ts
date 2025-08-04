@@ -1,4 +1,5 @@
 import { lstatSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { LinkResolver } from "../links/LinkResolver";
 import { MetadataManager } from "../metadata/MetadataManager";
 import type { FileMetadata, LocalLink, ProcessedContent } from "../types/metadata";
@@ -347,5 +348,22 @@ export class ContentProcessor {
     }
 
     return null;
+  }
+
+  /**
+   * Calculates SHA-256 hash of content for change detection.
+   * This method provides a centralized, robust approach for content hashing
+   * used by both the publisher and anchor cache systems.
+   * @param content The content to hash (should be without metadata for consistent results)
+   * @returns Hex-encoded SHA-256 hash, or empty string on error for fail-safe behavior
+   */
+  public static calculateContentHash(content: string): string {
+    try {
+      return createHash('sha256').update(content, 'utf8').digest('hex');
+    } catch (error) {
+      console.warn('Content hash calculation failed:', error);
+      // Return empty string to trigger re-parsing as a fail-safe
+      return '';
+    }
   }
 }

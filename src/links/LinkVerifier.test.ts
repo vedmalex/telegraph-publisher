@@ -914,7 +914,11 @@ describe('LinkVerifier', () => {
       const result = await verifier.verifyLinks(scanResult);
 
       expect(result.brokenLinks).toHaveLength(1);
-      expect(result.brokenLinks[0]?.suggestions).toHaveLength(0);
+      // New behavior includes available anchors list even when no close match exists
+      expect(result.brokenLinks[0]?.suggestions.length).toBeGreaterThanOrEqual(1);
+      // Should contain "Available anchors" message with actual anchors
+      const suggestions = result.brokenLinks[0]?.suggestions || [];
+      expect(suggestions.some(s => s.includes('Available anchors in target.md:'))).toBe(true);
     });
 
     test('should handle Cyrillic anchors in suggestions', async () => {
@@ -1001,7 +1005,10 @@ describe('LinkVerifier', () => {
       const result = await verifier.verifyLinks(scanResult);
 
       expect(result.brokenLinks).toHaveLength(1);
-      expect(result.brokenLinks[0]?.suggestions).toHaveLength(0);
+      // New behavior includes informative message even for files with no anchors
+      expect(result.brokenLinks[0]?.suggestions.length).toBeGreaterThanOrEqual(1);
+      const suggestions = result.brokenLinks[0]?.suggestions || [];
+      expect(suggestions.some(s => s.includes('No anchors found in target.md'))).toBe(true);
     });
   });
 
@@ -1211,15 +1218,15 @@ describe('LinkVerifier', () => {
 
       // Create target file with link in heading
       writeFileSync(targetFile, '### [Link Title](https://example.com)\n\nContent here');
-      // Updated: anchor should include brackets and parentheses as per Telegra.ph behavior
-      writeFileSync(sourceFile, '[Link to link heading](./target.md#[Link-Title](https://example.com))');
+      // Updated: new behavior extracts text from links in headings (correct TOC behavior)
+      writeFileSync(sourceFile, '[Link to link heading](./target.md#Link-Title)');
 
       const link: MarkdownLink = {
         text: 'Link to link heading',
-        href: './target.md#[Link-Title](https://example.com)',
+        href: './target.md#Link-Title',
         lineNumber: 1,
         columnStart: 0,
-        columnEnd: 71
+        columnEnd: 50
       };
 
       const scanResult: FileScanResult = {
@@ -1269,15 +1276,15 @@ describe('LinkVerifier', () => {
 
       // Create target file with complex nested formatting
       writeFileSync(targetFile, '##### **Bold _nested_ text** with `code`\n\nContent here');
-      // Updated: anchor should preserve all Markdown formatting including nested formatting
-      writeFileSync(sourceFile, '[Link to complex](./target.md#**Bold-_nested_-text**-with-`code`)');
+      // Updated: H5 heading gets prefix and preserves all Markdown formatting
+      writeFileSync(sourceFile, '[Link to complex](./target.md#>-**Bold-_nested_-text**-with-`code`)');
 
       const link: MarkdownLink = {
         text: 'Link to complex',
-        href: './target.md#**Bold-_nested_-text**-with-`code`',
+        href: './target.md#>-**Bold-_nested_-text**-with-`code`',
         lineNumber: 1,
         columnStart: 0,
-        columnEnd: 62
+        columnEnd: 64
       };
 
       const scanResult: FileScanResult = {
