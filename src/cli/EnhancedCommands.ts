@@ -23,6 +23,65 @@ import { ProgressIndicator } from "./ProgressIndicator";
 export class EnhancedCommands {
 
   /**
+   * CLI to configuration parameter mapping (Selective Parameter Mapping pattern)
+   */
+  private static readonly CLI_TO_CONFIG_MAPPING: Record<string, string> = {
+    'author': 'defaultUsername',
+    'tocTitle': 'customFields.tocTitle',
+    'withDependencies': 'autoPublishDependencies'
+  };
+
+  /**
+   * Extract configuration updates from CLI options
+   * @param options CLI options
+   * @returns Configuration updates to apply
+   */
+  private static extractConfigUpdatesFromCli(options: any): Partial<import('../types/metadata').MetadataConfig> {
+    const updates: any = {};
+    
+    for (const [cliKey, configPath] of Object.entries(EnhancedCommands.CLI_TO_CONFIG_MAPPING)) {
+      if (options[cliKey] !== undefined) {
+        if (configPath.includes('.')) {
+          // Handle nested properties like customFields.tocTitle
+          const pathParts = configPath.split('.');
+          const parent = pathParts[0];
+          const child = pathParts[1];
+          if (parent && child) {
+            if (!updates[parent]) updates[parent] = {};
+            updates[parent][child] = options[cliKey];
+          }
+        } else {
+          updates[configPath] = options[cliKey];
+        }
+      }
+    }
+    
+    return updates;
+  }
+
+  /**
+   * Notify user about configuration changes (Configuration Change Detection pattern)
+   * @param changedFields Fields that were changed
+   * @param configDirectory Directory where config was saved
+   */
+  private static notifyConfigurationUpdate(changedFields: Record<string, any>, configDirectory: string): void {
+    const changes = Object.entries(changedFields)
+      .map(([key, value]) => {
+        if (typeof value === 'object' && value !== null) {
+          // Handle nested objects like customFields
+          return Object.entries(value).map(([nestedKey, nestedValue]) => `  ${key}.${nestedKey}: ${nestedValue}`).join('\n');
+        }
+        return `  ${key}: ${value}`;
+      })
+      .join('\n');
+      
+    ProgressIndicator.showStatus(
+      `💾 Configuration auto-saved to .telegraph-publisher-config.json:\n${changes}`,
+      'success'
+    );
+  }
+
+  /**
    * Add unified publish command (combines pub and edit functionality)
    * @param program Commander program instance
    */
@@ -209,14 +268,36 @@ export class EnhancedCommands {
       ProgressIndicator.showStatus(`Created new file: ${resolve(options.file)}`, "success");
     }
 
-    const config = ConfigManager.getMetadataConfig(fileDirectory);
+    // STEP 1: Load existing configuration
+    const existingConfig = ConfigManager.getMetadataConfig(fileDirectory);
+    
+    // STEP 2: Extract configuration updates from CLI options  
+    const configUpdatesFromCli = EnhancedCommands.extractConfigUpdatesFromCli(options);
+    
+    // STEP 3: Merge configurations with CLI priority (Configuration Cascade pattern)
+    const finalConfig = {
+      ...existingConfig,
+      ...configUpdatesFromCli
+    };
+    
+    // STEP 4: Persist merged configuration immediately (Immediate Persistence pattern)
+    if (Object.keys(configUpdatesFromCli).length > 0) {
+      ConfigManager.updateMetadataConfig(fileDirectory, finalConfig);
+      EnhancedCommands.notifyConfigurationUpdate(configUpdatesFromCli, fileDirectory);
+    }
+    
+    // STEP 5: Handle access token with same persistence pattern
     const accessToken = options.token || ConfigManager.loadAccessToken(fileDirectory);
+
+    if (options.token) {
+      ConfigManager.saveAccessToken(fileDirectory, options.token);
+    }
 
     if (!accessToken) {
       throw new Error("Access token is required. Set it using --token or configure it with 'config' command");
     }
 
-    const workflowManager = new PublicationWorkflowManager(config, accessToken);
+    const workflowManager = new PublicationWorkflowManager(finalConfig, accessToken);
 
     // Handle debug mode: debug implies dry-run
     if (options.debug) {

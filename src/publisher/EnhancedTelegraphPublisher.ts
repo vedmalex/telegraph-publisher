@@ -59,6 +59,22 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   }
 
   /**
+   * Get cache manager instance (for cache validation)
+   * @returns Cache manager instance or undefined
+   */
+  getCacheManager(): PagesCacheManager | undefined {
+    return this.cacheManager;
+  }
+
+  /**
+   * Ensure cache manager is initialized (for proactive cache warming)
+   * @param filePath File path to use for initialization
+   */
+  ensureCacheInitialized(filePath: string): void {
+    this.initializeCacheManager(filePath);
+  }
+
+  /**
    * Set access token and initialize cache manager
    * @param token Access token
    */
@@ -84,14 +100,15 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   }
 
   /**
-   * Add page to cache after successful publication
+   * Add page to cache after successful publication (Method Signature Evolution pattern)
    * @param filePath Local file path
    * @param url Telegraph URL
    * @param path Telegraph path
    * @param title Page title
    * @param username Author username
+   * @param contentHash Content hash for change detection (optional for backward compatibility)
    */
-  private addToCache(filePath: string, url: string, path: string, title: string, username: string): void {
+  private addToCache(filePath: string, url: string, path: string, title: string, username: string, contentHash?: string): void {
     if (this.cacheManager) {
       const pageInfo: PublishedPageInfo = {
         telegraphUrl: url,
@@ -100,7 +117,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         title: title,
         authorName: username,
         publishedAt: new Date().toISOString(),
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
+        contentHash: contentHash // Content Hash Integration pattern
       };
 
       this.cacheManager.addPage(pageInfo);
@@ -278,8 +296,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const contentWithMetadata = ContentProcessor.injectMetadataIntoContent(processed, metadata);
       writeFileSync(filePath, contentWithMetadata, 'utf-8');
 
-      // Add to cache after successful publication
-      this.addToCache(filePath, page.url, page.path, metadataTitle, username);
+      // Add to cache after successful publication (Content Hash Integration pattern)
+      this.addToCache(filePath, page.url, page.path, metadataTitle, username, contentHash);
 
       return {
         success: true,
@@ -438,12 +456,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const contentWithMetadata = ContentProcessor.injectMetadataIntoContent(processed, updatedMetadata);
       writeFileSync(filePath, contentWithMetadata, 'utf-8');
 
-      // Update cache after successful edit
+      // Update cache after successful edit (Content Hash Integration pattern)
       if (this.cacheManager) {
         this.cacheManager.updatePage(page.url, {
           title: metadataTitle,
           authorName: username,
-          lastUpdated: new Date().toISOString()
+          lastUpdated: new Date().toISOString(),
+          contentHash: updatedContentHash
         });
       }
 
@@ -725,25 +744,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     }
   }
 
-  /**
-   * Calculates SHA-256 hash of content for change detection.
-   * Uses content excluding YAML front-matter for precise change detection.
-   * @param content The processed content without metadata
-   * @returns Hex-encoded SHA-256 hash
-   */
-  private calculateContentHash(content: string): string {
-    try {
-      return ContentProcessor.calculateContentHash(content);
-    } catch (error) {
-      console.warn('Content hash calculation failed:', error);
-      ProgressIndicator.showStatus(
-        `⚠️ Content hash calculation failed. Proceeding with publication.`, 
-        "warning"
-      );
-      // Return empty string to trigger publication (fail-safe behavior)
-      return '';
-    }
-  }
+
 
   /**
    * Initialize statistics tracking for dependency processing

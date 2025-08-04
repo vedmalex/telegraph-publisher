@@ -79,6 +79,8 @@ export interface PublishedPageInfo {
   lastUpdated: string;
   /** Page views count */
   views?: number;
+  /** Content hash for change detection (Evolutionary Interface Design pattern) */
+  contentHash?: string;
 }
 
 /**

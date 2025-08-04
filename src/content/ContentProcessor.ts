@@ -233,9 +233,12 @@ export class ContentProcessor {
 
     // Check for broken local links (only if not allowed)
     if (!options.allowBrokenLinks) {
-      const brokenLinks = processedContent.localLinks.filter(link =>
-        !LinkResolver.validateLinkTarget(link.resolvedPath)
-      );
+      const brokenLinks = processedContent.localLinks.filter(link => {
+        // Extract file path without anchor from resolvedPath for validation
+        const anchorIndex = link.resolvedPath.indexOf('#');
+        const filePathOnly = anchorIndex !== -1 ? link.resolvedPath.substring(0, anchorIndex) : link.resolvedPath;
+        return !LinkResolver.validateLinkTarget(filePathOnly);
+      });
 
       if (brokenLinks.length > 0) {
         issues.push(`Broken local links found: ${brokenLinks.map(l => l.originalPath).join(', ')}`);
