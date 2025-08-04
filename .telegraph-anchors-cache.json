@@ -1,0 +1,15 @@
+{
+  "version": "1.1.0",
+  "createdAt": "2025-08-04T20:27:59.948Z",
+  "anchors": {
+    "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-qa-target.md": {
+      "contentHash": "d2f734c34640be8ae964ff4df746d821d7720af9b442aa572577441bdb6cf773",
+      "anchors": [
+        "Target-Document",
+        "Overview",
+        "Installation",
+        "Usage"
+      ]
+    }
+  }
+}

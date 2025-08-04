@@ -141,7 +141,9 @@ export class PublicationWorkflowManager {
         forceRepublish: options.forceRepublish || options.force || false,
         dryRun: options.dryRun || false,
         debug: options.debug || false,
-        generateAside: options.aside !== false
+        generateAside: options.aside !== false,
+        tocTitle: options.tocTitle || '',
+        tocSeparators: options.tocSeparators !== false
       });
 
       if (result.success) {

@@ -141,10 +141,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       dryRun?: boolean;
       debug?: boolean;
       generateAside?: boolean;
+      tocTitle?: string;
+      tocSeparators?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, forceRepublish = false, dryRun = false, debug = false, generateAside = true } = options;
+      const { withDependencies = true, forceRepublish = false, dryRun = false, debug = false, generateAside = true, tocTitle = '', tocSeparators = true } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -189,12 +191,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           console.log(`✅ Metadata restored to ${filePath} from cache`);
         }
 
-        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug, generateAside, forceRepublish });
+        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug, generateAside, forceRepublish, tocTitle, tocSeparators });
       }
 
       // Process dependencies if requested
       if (withDependencies) {
-        const dependencyResult = await this.publishDependencies(filePath, username, dryRun, generateAside);
+        const dependencyResult = await this.publishDependencies(filePath, username, dryRun, generateAside, tocTitle, tocSeparators);
         if (!dependencyResult.success) {
           return {
             success: false,
@@ -212,11 +214,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         ? await this.replaceLinksWithTelegraphUrls(processed)
         : processed;
 
-      // Validate content with relaxed rules for depth 1
+      // Validate content with relaxed rules for depth 1 or when dependencies are disabled
       const isDepthOne = this.config.maxDependencyDepth === 1;
       const validation = ContentProcessor.validateContent(processedWithLinks, {
         allowBrokenLinks: isDepthOne,
-        allowUnpublishedDependencies: isDepthOne
+        allowUnpublishedDependencies: isDepthOne || !withDependencies
       });
       if (!validation.isValid) {
         return {
@@ -231,7 +233,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const title = ContentProcessor.extractTitle(processedWithLinks) || 'Untitled';
 
       // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside });
+      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, tocTitle, tocSeparators });
 
       // Save debug JSON if requested
       if (debug && dryRun) {
@@ -313,10 +315,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       debug?: boolean;
       forceRepublish?: boolean;
       generateAside?: boolean;
+      tocTitle?: string;
+      tocSeparators?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, dryRun = false, debug = false, generateAside = true, forceRepublish = false } = options;
+      const { withDependencies = true, dryRun = false, debug = false, generateAside = true, forceRepublish = false, tocTitle = '', tocSeparators = true } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -333,7 +337,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       // Process dependencies if requested
       if (withDependencies) {
-        const dependencyResult = await this.publishDependencies(filePath, username, dryRun, generateAside);
+        const dependencyResult = await this.publishDependencies(filePath, username, dryRun, generateAside, tocTitle, tocSeparators);
         if (!dependencyResult.success) {
           return {
             success: false,
@@ -371,11 +375,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         ? await this.replaceLinksWithTelegraphUrls(processed)
         : processed;
 
-      // Validate content with relaxed rules for depth 1
+      // Validate content with relaxed rules for depth 1 or when dependencies are disabled
       const isDepthOne = this.config.maxDependencyDepth === 1;
       const validation = ContentProcessor.validateContent(processedWithLinks, {
         allowBrokenLinks: isDepthOne,
-        allowUnpublishedDependencies: isDepthOne
+        allowUnpublishedDependencies: isDepthOne || !withDependencies
       });
       if (!validation.isValid) {
         return {
@@ -390,7 +394,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const title = ContentProcessor.extractTitle(processedWithLinks) || existingMetadata.title || 'Untitled';
 
       // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside });
+      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, tocTitle, tocSeparators });
 
       // Save debug JSON if requested
       if (debug && dryRun) {
@@ -472,7 +476,9 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     filePath: string,
     username: string,
     dryRun: boolean = false,
-    generateAside: boolean = true
+    generateAside: boolean = true,
+    tocTitle: string = '',
+    tocSeparators: boolean = true
   ): Promise<{ success: boolean; error?: string; publishedFiles?: string[] }> {
     try {
       // Build dependency tree
@@ -509,7 +515,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         if (fileToProcess === filePath) continue; // Skip root file
         
         try {
-          await this.processFileByStatus(fileToProcess, username, dryRun, publishedFiles, stats, generateAside);
+          await this.processFileByStatus(fileToProcess, username, dryRun, publishedFiles, stats, generateAside, tocTitle, tocSeparators);
           stats.processedFiles++;
         } catch (error) {
           // Clear cache on error
@@ -799,17 +805,19 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     dryRun: boolean,
     publishedFiles: string[],
     stats: any,
-    generateAside: boolean = true
+    generateAside: boolean = true,
+    tocTitle: string = '',
+    tocSeparators: boolean = true
   ): Promise<void> {
     const { status, metadata } = this.getCachedMetadata(fileToProcess);
     
     switch (status) {
       case PublicationStatus.NOT_PUBLISHED:
-        await this.handleUnpublishedFile(fileToProcess, username, dryRun, publishedFiles, stats, generateAside);
+        await this.handleUnpublishedFile(fileToProcess, username, dryRun, publishedFiles, stats, generateAside, tocTitle, tocSeparators);
         break;
         
       case PublicationStatus.PUBLISHED:
-        await this.handlePublishedFile(fileToProcess, username, dryRun, publishedFiles, stats, metadata, generateAside);
+        await this.handlePublishedFile(fileToProcess, username, dryRun, publishedFiles, stats, metadata, generateAside, tocTitle, tocSeparators);
         break;
         
       case PublicationStatus.METADATA_CORRUPTED:
@@ -837,7 +845,9 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     dryRun: boolean,
     publishedFiles: string[],
     stats: any,
-    generateAside: boolean = true
+    generateAside: boolean = true,
+    tocTitle: string = '',
+    tocSeparators: boolean = true
   ): Promise<void> {
     if (dryRun) {
       ProgressIndicator.showStatus(`🔍 DRY-RUN: Would publish '${basename(filePath)}'`, "info");
@@ -848,7 +858,9 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     const result = await this.publishWithMetadata(filePath, username, {
       withDependencies: false, // Avoid infinite recursion
       dryRun,
-      generateAside
+      generateAside,
+      tocTitle,
+      tocSeparators
     });
 
     if (result.success) {
@@ -876,7 +888,9 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     publishedFiles: string[],
     stats: any,
     metadata: FileMetadata | null,
-    generateAside: boolean = true
+    generateAside: boolean = true,
+    tocTitle: string = '',
+    tocSeparators: boolean = true
   ): Promise<void> {
     if (metadata && !metadata.contentHash) {
       // File is published but missing contentHash - backfill it
@@ -891,7 +905,9 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         withDependencies: false,
         dryRun,
         forceRepublish: true, // Use force to bypass the normal hash check
-        generateAside
+        generateAside,
+        tocTitle: '', // Use no title for dependency updates
+        tocSeparators: true
       });
 
       if (result.success) {

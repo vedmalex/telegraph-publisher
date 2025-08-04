@@ -44,6 +44,9 @@ export class EnhancedCommands {
       .option("--no-auto-repair", "Disable automatic link repair (publication will fail if broken links are found)")
       .option("--aside", "Automatically generate a Table of Contents (aside block) at the start of the article (default: true)")
       .option("--no-aside", "Disable automatic generation of the Table of Contents")
+      .option("--toc-title <title>", "Title for the Table of Contents section (default: 'Содержание')")
+      .option("--toc-separators", "Add horizontal separators (HR) before and after Table of Contents (default: true)")
+      .option("--no-toc-separators", "Disable horizontal separators around Table of Contents")
       .option("--force", "Bypass link verification and publish anyway (for debugging)")
       .option("--token <token>", "Access token (optional, will try to load from config)")
       .option("-v, --verbose", "Show detailed progress information")
@@ -214,6 +217,11 @@ export class EnhancedCommands {
     }
 
     const workflowManager = new PublicationWorkflowManager(config, accessToken);
+
+    // Handle debug mode: debug implies dry-run
+    if (options.debug) {
+      options.dryRun = true;
+    }
 
     try {
       await workflowManager.publish(targetPath, options);

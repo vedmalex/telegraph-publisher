@@ -300,13 +300,17 @@ Content here.`);
         withDependencies: false,
         dryRun: false,
         forceRepublish: true,
-        generateAside: true
+        generateAside: true,
+        tocTitle: '',
+        tocSeparators: true
       });
 
       expect(publishWithMetadataSpy).toHaveBeenCalledWith(unpublishedDep, 'test-user', {
         withDependencies: false,
         dryRun: false,
-        generateAside: true
+        generateAside: true,
+        tocTitle: '',
+        tocSeparators: true
       });
 
       // Should not call editWithMetadata for file that already has hash
@@ -345,7 +349,9 @@ Content here.`);
         withDependencies: false,
         dryRun: true,
         forceRepublish: true,
-        generateAside: true
+        generateAside: true,
+        tocTitle: '',
+        tocSeparators: true
       });
     });
 
@@ -405,14 +411,18 @@ contentHash: def456mixedhash
         withDependencies: false,
         dryRun: false,
         forceRepublish: true,
-        generateAside: true
+        generateAside: true,
+        tocTitle: '',
+        tocSeparators: true
       });
 
       expect(publishWithMetadataSpy).toHaveBeenCalledTimes(1);
       expect(publishWithMetadataSpy).toHaveBeenCalledWith(depUnpublished, 'test-user', {
         withDependencies: false,
         dryRun: false,
-        generateAside: true
+        generateAside: true,
+        tocTitle: '',
+        tocSeparators: true
       });
     });
 
@@ -449,7 +459,9 @@ originalFilename: dep-error.md
         withDependencies: false,
         dryRun: false,
         forceRepublish: true,
-        generateAside: true
+        generateAside: true,
+        tocTitle: '',
+        tocSeparators: true
       });
     });
 

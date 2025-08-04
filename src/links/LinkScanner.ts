@@ -138,9 +138,9 @@ export class LinkScanner {
       return false;
     }
 
-    // Fragment-only links (#section) are considered local but don't need file verification
+    // Fragment-only links (#section) are considered local and need anchor verification
     if (href.startsWith('#')) {
-      return false;
+      return true;
     }
 
     return true;

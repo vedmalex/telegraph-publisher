@@ -182,7 +182,7 @@ function createTocChildrenFromHeadingInfo(headingInfo: HeadingInfo): TelegraphNo
  * @param markdown The raw Markdown content to scan for headings.
  * @returns TelegraphNode for aside element with ToC, or null if insufficient headings.
  */
-function generateTocAside(markdown: string): TelegraphNode | null {
+function generateTocAside(markdown: string, tocTitle: string = ''): TelegraphNode | null {
 	const headings: { level: number; text: string; displayText: string; textForAnchor: string }[] = [];
 	const lines = markdown.split(/\r?\n/);
 
@@ -257,13 +257,26 @@ function generateTocAside(markdown: string): TelegraphNode | null {
 		});
 	}
 
-	// 5. Return aside element with unordered list
+	// 5. Return aside element with optional heading and unordered list
+	const children: any[] = [];
+	
+	// Add heading only if tocTitle is provided and not empty
+	if (tocTitle && tocTitle.trim()) {
+		children.push({
+			tag: 'h3',
+			children: [tocTitle]
+		});
+	}
+	
+	// Always add the list
+	children.push({
+		tag: 'ul',
+		children: listItems
+	});
+	
 	return {
 		tag: 'aside',
-		children: [{
-			tag: 'ul',
-			children: listItems
-		}]
+		children
 	};
 }
 
@@ -274,7 +287,7 @@ function generateTocAside(markdown: string): TelegraphNode | null {
  * @param markdown The raw Markdown content to scan for headings.
  * @returns TelegraphNode for aside element with ToC, or null if insufficient headings.
  */
-function generateTocAsideWithAnchorGenerator(markdown: string): TelegraphNode | null {
+function generateTocAsideWithAnchorGenerator(markdown: string, tocTitle: string = ''): TelegraphNode | null {
 	// Use AnchorGenerator to parse headings with unified logic
 	const headings = AnchorGenerator.parseHeadingsFromContent(markdown);
 	
@@ -301,13 +314,26 @@ function generateTocAsideWithAnchorGenerator(markdown: string): TelegraphNode | 
 		});
 	}
 
-	// Return aside element with unordered list
+	// Return aside element with optional heading and unordered list
+	const children: any[] = [];
+	
+	// Add heading only if tocTitle is provided and not empty
+	if (tocTitle && tocTitle.trim()) {
+		children.push({
+			tag: 'h3',
+			children: [tocTitle]
+		});
+	}
+	
+	// Always add the list
+	children.push({
+		tag: 'ul',
+		children: listItems
+	});
+	
 	return {
 		tag: 'aside',
-		children: [{
-			tag: 'ul',
-			children: listItems
-		}]
+		children
 	};
 }
 
@@ -320,7 +346,7 @@ function generateTocAsideWithAnchorGenerator(markdown: string): TelegraphNode | 
  */
 export function convertMarkdownToTelegraphNodes(
 	markdown: string,
-	options: { generateToc?: boolean } = { generateToc: true }
+	options: { generateToc?: boolean; tocTitle?: string; tocSeparators?: boolean } = { generateToc: true }
 ): TelegraphNode[] {
 	const nodes: TelegraphNode[] = [];
 	
@@ -331,11 +357,26 @@ export function convertMarkdownToTelegraphNodes(
 									process.env.NODE_ENV !== 'production';
 		
 		const tocAside = USE_UNIFIED_ANCHORS 
-			? generateTocAsideWithAnchorGenerator(markdown)
-			: generateTocAside(markdown);
+			? generateTocAsideWithAnchorGenerator(markdown, options.tocTitle)
+			: generateTocAside(markdown, options.tocTitle);
 			
 		if (tocAside) {
-			nodes.push(tocAside);
+			// Add HR before TOC (if separators enabled)
+			if (options.tocSeparators) {
+				nodes.push({ tag: 'hr' });
+			}
+			
+			// Extract TOC elements from aside and add them separately for better Telegram compatibility
+			if (tocAside.children) {
+				for (const child of tocAside.children) {
+					nodes.push(child);
+				}
+			}
+			
+			// Add HR after TOC (if separators enabled)
+			if (options.tocSeparators) {
+				nodes.push({ tag: 'hr' });
+			}
 		}
 	}
 	
