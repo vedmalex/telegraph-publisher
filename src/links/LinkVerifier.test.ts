@@ -448,7 +448,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Target Section',
-        href: './target.md#section-one',
+        href: './target.md#Section-One',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 30
@@ -531,7 +531,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Multiple Fragments',
-        href: './target.md#section1#section2',
+        href: './target.md#Section1#Section2',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 40
@@ -589,7 +589,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Занятие 4',
-        href: './class004.structured.md#занятие-4-глава-1-вопросы-мудрецов',
+        href: './class004.structured.md#Занятие-4-Глава-1-Вопросы-мудрецов',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 80
@@ -611,60 +611,85 @@ describe('LinkVerifier', () => {
   });
 
   describe('Anchor Validation', () => {
-    test('should validate links with existing anchors as VALID', async () => {
+    test('should validate simple heading anchors as VALID', async () => {
       const sourceFile = join(testDir, 'source.md');
       const targetFile = join(testDir, 'target-with-anchors.md');
 
       writeFileSync(sourceFile, '# Source');
-      writeFileSync(targetFile, `# Simple Heading
-## Heading With Spaces
-### Заголовок на кириллице
-#### HTML <em>Tags</em> Heading
-##### Special @#$% Characters!`);
+      writeFileSync(targetFile, '# Simple Heading');
 
-      const testCases = [
-        {
-          href: './target-with-anchors.md#simple-heading',
-          description: 'simple heading'
-        },
-        {
-          href: './target-with-anchors.md#heading-with-spaces',
-          description: 'heading with spaces'
-        },
-        {
-          href: './target-with-anchors.md#заголовок-на-кириллице',
-          description: 'Cyrillic heading'
-        },
-        {
-          href: './target-with-anchors.md#html-tags-heading',
-          description: 'heading with HTML tags'
-        },
-        {
-          href: './target-with-anchors.md#special-characters',
-          description: 'heading with special characters'
-        }
-      ];
+      const link: MarkdownLink = {
+        text: 'simple heading',
+        href: './target-with-anchors.md#Simple-Heading',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
 
-      for (const testCase of testCases) {
-        const link: MarkdownLink = {
-          text: testCase.description,
-          href: testCase.href,
-          lineNumber: 1,
-          columnStart: 0,
-          columnEnd: 30
-        };
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
 
-        const scanResult: FileScanResult = {
-          filePath: sourceFile,
-          allLinks: [link],
-          localLinks: [link],
-          brokenLinks: [],
-          processingTime: 0
-        };
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
 
-        const result = await verifier.verifyLinks(scanResult);
-        expect(result.brokenLinks).toHaveLength(0);
-      }
+    test('should validate heading with spaces anchors as VALID', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target-with-anchors.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '## Heading With Spaces');
+
+      const link: MarkdownLink = {
+        text: 'heading with spaces',
+        href: './target-with-anchors.md#Heading-With-Spaces',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should validate Cyrillic heading anchors as VALID', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target-with-anchors.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '### Заголовок на кириллице');
+
+      const link: MarkdownLink = {
+        text: 'Cyrillic heading',
+        href: './target-with-anchors.md#Заголовок-на-кириллице',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
     });
 
     test('should mark links with invalid anchors as BROKEN', async () => {
@@ -704,7 +729,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Encoded Cyrillic',
-        href: './target-with-anchors.md#%D0%B7%D0%B0%D0%BD%D1%8F%D1%82%D0%B8%D0%B5-4-%D0%B3%D0%BB%D0%B0%D0%B2%D0%B0-1-%D0%B2%D0%BE%D0%BF%D1%80%D0%BE%D1%81%D1%8B-%D0%BC%D1%83%D0%B4%D1%80%D0%B5%D1%86%D0%BE%D0%B2',
+        href: './target-with-anchors.md#%D0%97%D0%B0%D0%BD%D1%8F%D1%82%D0%B8%D0%B5-4-%D0%93%D0%BB%D0%B0%D0%B2%D0%B0-1-%D0%92%D0%BE%D0%BF%D1%80%D0%BE%D1%81%D1%8B-%D0%BC%D1%83%D0%B4%D1%80%D0%B5%D1%86%D0%BE%D0%B2',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 80
@@ -814,7 +839,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Multiple fragments',
-        href: './target.md#section1#section2',
+        href: './target.md#Section1#Section2',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 40
@@ -843,7 +868,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Invalid Section',
-        href: './target.md#invalid-sektion',
+        href: './target.md#Valid-Sektion',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 35
@@ -860,7 +885,7 @@ describe('LinkVerifier', () => {
       const result = await verifier.verifyLinks(scanResult);
 
       expect(result.brokenLinks).toHaveLength(1);
-      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#valid-section');
+      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#Valid-Section');
     });
 
     test('should not provide suggestions when no close match exists', async () => {
@@ -918,7 +943,7 @@ describe('LinkVerifier', () => {
       const result = await verifier.verifyLinks(scanResult);
 
       expect(result.brokenLinks).toHaveLength(1);
-      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#занятие-4-глава-1-вопросы-мудрецов');
+      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#Занятие-4-Глава-1-Вопросы-мудрецов');
     });
 
     test('should handle multiple potential matches and return best one', async () => {
@@ -947,7 +972,7 @@ describe('LinkVerifier', () => {
       const result = await verifier.verifyLinks(scanResult);
 
       expect(result.brokenLinks).toHaveLength(1);
-      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#section-one');
+      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#Section-One');
     });
 
     test('should handle empty target file gracefully', async () => {
@@ -1050,6 +1075,259 @@ describe('LinkVerifier', () => {
       const anchors = new Set(['занятие-1', 'занятие-2', 'заключение']);
       const closest = (verifier as any).findClosestAnchor('занятиe-1', anchors); // Latin 'e' instead of Cyrillic 'е'
       expect(closest).toBe('занятие-1');
+    });
+  });
+
+  describe('generateSlug - Anchor Specification Compliance', () => {
+    test('preserves case: "Section Title" → "Section-Title"', () => {
+      const result = (verifier as any).generateSlug('Section Title');
+      expect(result).toBe('Section-Title');
+    });
+
+    test('preserves special chars: "Пример №1" → "Пример-№1"', () => {
+      const result = (verifier as any).generateSlug('Пример №1');
+      expect(result).toBe('Пример-№1');
+    });
+
+    test('only replaces spaces: "Мой якорь" → "Мой-якорь"', () => {
+      const result = (verifier as any).generateSlug('Мой якорь');
+      expect(result).toBe('Мой-якорь');
+    });
+
+    test('handles Unicode correctly', () => {
+      const result = (verifier as any).generateSlug('Тест заголовка с символами!@#');
+      expect(result).toBe('Тест-заголовка-с-символами!@#');
+    });
+
+    test('backwards compatibility with common anchors', () => {
+      // Test that simple English text still works
+      const result = (verifier as any).generateSlug('simple test');
+      expect(result).toBe('simple-test');
+    });
+
+    test('handles multiple spaces correctly', () => {
+      const result = (verifier as any).generateSlug('Multiple   spaces   here');
+      expect(result).toBe('Multiple---spaces---here');
+    });
+
+    test('trims leading and trailing spaces', () => {
+      const result = (verifier as any).generateSlug('  Leading and trailing  ');
+      expect(result).toBe('Leading-and-trailing');
+    });
+
+    test('handles empty string', () => {
+      const result = (verifier as any).generateSlug('');
+      expect(result).toBe('');
+    });
+
+    test('handles string with only spaces', () => {
+      const result = (verifier as any).generateSlug('   ');
+      expect(result).toBe('');
+    });
+
+    test('preserves hyphens and other punctuation', () => {
+      const result = (verifier as any).generateSlug('Pre-existing hyphens & symbols!');
+      expect(result).toBe('Pre-existing-hyphens-&-symbols!');
+    });
+  });
+
+  describe('anchor generation with Markdown formatting', () => {
+    test('should clean bold formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with bold heading
+      writeFileSync(targetFile, '# **Bold Title**\n\nContent here');
+      writeFileSync(sourceFile, '[Link to bold](./target.md#Bold-Title)');
+
+      const link: MarkdownLink = {
+        text: 'Link to bold',
+        href: './target.md#Bold-Title',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 35
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should clean italic formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with italic heading
+      writeFileSync(targetFile, '## *Italic Title*\n\nContent here');
+      writeFileSync(sourceFile, '[Link to italic](./target.md#Italic-Title)');
+
+      const link: MarkdownLink = {
+        text: 'Link to italic',
+        href: './target.md#Italic-Title',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 38
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should clean link formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with link in heading
+      writeFileSync(targetFile, '### [Link Title](https://example.com)\n\nContent here');
+      writeFileSync(sourceFile, '[Link to link heading](./target.md#Link-Title)');
+
+      const link: MarkdownLink = {
+        text: 'Link to link heading',
+        href: './target.md#Link-Title',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 48
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should clean mixed formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with mixed formatting
+      writeFileSync(targetFile, '#### **Bold** and *Italic* Text\n\nContent here');
+      writeFileSync(sourceFile, '[Link to mixed](./target.md#Bold-and-Italic-Text)');
+
+      const link: MarkdownLink = {
+        text: 'Link to mixed',
+        href: './target.md#Bold-and-Italic-Text',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 43
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should clean complex nested formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with complex nested formatting
+      writeFileSync(targetFile, '##### **Bold _nested_ text** with `code`\n\nContent here');
+      writeFileSync(sourceFile, '[Link to complex](./target.md#Bold-nested-text-with-code)');
+
+      const link: MarkdownLink = {
+        text: 'Link to complex',
+        href: './target.md#Bold-nested-text-with-code',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 50
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should still detect broken links with cleaned anchors', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with bold heading
+      writeFileSync(targetFile, '# **Bold Title**\n\nContent here');
+      // Link to wrong anchor (with typo)
+      writeFileSync(sourceFile, '[Link with typo](./target.md#Bold-Titel)');
+
+      const link: MarkdownLink = {
+        text: 'Link with typo',
+        href: './target.md#Bold-Titel',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 38
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(1);
+      expect(result.brokenLinks[0].link.href).toBe('./target.md#Bold-Titel');
+    });
+
+    test('should work with cyrillic headings with formatting', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with cyrillic bold heading
+      writeFileSync(targetFile, '# **Тема 1: Введение: Практические наставления и сиддханта**\n\nСодержимое');
+      writeFileSync(sourceFile, '[Ссылка](./target.md#Тема-1:-Введение:-Практические-наставления-и-сиддханта)');
+
+      const link: MarkdownLink = {
+        text: 'Ссылка',
+        href: './target.md#Тема-1:-Введение:-Практические-наставления-и-сиддханта',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 82
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
     });
   });
 });

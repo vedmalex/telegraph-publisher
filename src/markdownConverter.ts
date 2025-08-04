@@ -141,6 +141,83 @@ function parseTable(tableLines: string[]): TelegraphNode {
 }
 
 /**
+ * Generates a Table of Contents (ToC) as an aside element from Markdown content.
+ * Only generates ToC if there are 2 or more headings in the document.
+ * Uses the same heading processing logic as the main converter for consistency.
+ * @param markdown The raw Markdown content to scan for headings.
+ * @returns TelegraphNode for aside element with ToC, or null if insufficient headings.
+ */
+function generateTocAside(markdown: string): TelegraphNode | null {
+	const headings: { level: number; text: string; displayText: string }[] = [];
+	const lines = markdown.split(/\r?\n/);
+
+	// 1. Scan for all headings using the same regex as main converter
+	for (const line of lines) {
+		const headingMatch = line.match(/^(#+)\s+(.*)/);
+		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
+			const level = headingMatch[1].length;
+			const originalText = headingMatch[2].trim();
+			let displayText = originalText;
+
+			// 2. Apply the same heading strategy logic as main converter
+			switch (level) {
+				case 1:
+				case 2:
+				case 3:
+				case 4:
+					displayText = originalText;
+					break;
+				case 5:
+					displayText = `» ${originalText}`;
+					break;
+				case 6:
+					displayText = `»» ${originalText}`;
+					break;
+				default:
+					// Handle edge case: levels > 6
+					displayText = `»»» ${originalText}`;
+					break;
+			}
+
+			headings.push({ level, text: originalText, displayText });
+		}
+	}
+
+	// 3. Check if ToC should be generated (2+ headings required)
+	if (headings.length < 2) {
+		return null;
+	}
+
+	// 4. Build ToC structure as list items
+	const listItems: TelegraphNode[] = [];
+	for (const heading of headings) {
+		// Use the same anchor generation logic as LinkVerifier
+		// IMPORTANT: Generate anchor from displayText to match what LinkVerifier will find
+		const anchor = heading.displayText.trim().replace(/ /g, '-');
+		
+		const linkNode: TelegraphNode = {
+			tag: 'a',
+			attrs: { href: `#${anchor}` },
+			children: [heading.displayText] // Use display text with prefixes
+		};
+		
+		listItems.push({
+			tag: 'li',
+			children: [linkNode],
+		});
+	}
+
+	// 5. Return aside element with unordered list
+	return {
+		tag: 'aside',
+		children: [{
+			tag: 'ul',
+			children: listItems
+		}]
+	};
+}
+
+/**
  * Converts Markdown content directly into an array of TelegraphNode objects.
  * This function replaces the need for an intermediate HTML conversion step and 'mrkdwny' library.
  * It directly parses Markdown elements into the structure expected by the Telegra.ph API.
@@ -151,6 +228,13 @@ export function convertMarkdownToTelegraphNodes(
 	markdown: string,
 ): TelegraphNode[] {
 	const nodes: TelegraphNode[] = [];
+	
+	// Generate and add Table of Contents if there are 2+ headings
+	const tocAside = generateTocAside(markdown);
+	if (tocAside) {
+		nodes.push(tocAside);
+	}
+	
 	const lines = markdown.split(/\r?\n/);
 
 	let inCodeBlock = false;
@@ -310,41 +394,44 @@ export function convertMarkdownToTelegraphNodes(
 				blockquoteContent = [];
 			}
 			const level = headingMatch[1].length;
-			const text = headingMatch[2] || "";
-			const processedChildren = processInlineMarkdown(text);
+			const originalText = headingMatch[2] || "";
+			let displayText = originalText;
+			let tag: 'h3' | 'h4' = 'h3';
 
-			// Map headings to Telegraph API compatible tags
+			// Map headings to Telegraph API compatible tags with visual hierarchy preservation
 			// Telegraph API only supports h3 and h4 tags for headings
 			switch (level) {
 				case 1:
 				case 2:
 				case 3:
 					// H1, H2, H3 → h3 (highest available level in Telegraph API)
-					nodes.push({ tag: 'h3', children: processedChildren });
+					tag = 'h3';
+					displayText = originalText;
 					break;
 				case 4:
 					// H4 → h4 (direct mapping, supported by Telegraph API)
-					nodes.push({ tag: 'h4', children: processedChildren });
+					tag = 'h4';
+					displayText = originalText;
 					break;
 				case 5:
-					// H5 → p with strong (emulate heading with bold text)
-					nodes.push({
-						tag: 'p',
-						children: [{ tag: 'strong', children: processedChildren }]
-					});
+					// H5 → h4 with visual prefix to preserve hierarchy and enable anchors
+					tag = 'h4';
+					displayText = `» ${originalText}`;
 					break;
 				case 6:
-					// H6 → p with strong + em (emulate heading with bold italic)
-					nodes.push({
-						tag: 'p',
-						children: [{ tag: 'strong', children: [{ tag: 'em', children: processedChildren }] }]
-					});
+					// H6 → h4 with double visual prefix to preserve hierarchy and enable anchors
+					tag = 'h4';
+					displayText = `»» ${originalText}`;
 					break;
 				default:
-					// Handle edge case: levels > 6 as h4
-					nodes.push({ tag: 'h4', children: processedChildren });
+					// Handle edge case: levels > 6 as h4 with triple visual prefix
+					tag = 'h4';
+					displayText = `»»» ${originalText}`;
 					break;
 			}
+
+			const processedChildren = processInlineMarkdown(displayText);
+			nodes.push({ tag, children: processedChildren });
 			continue;
 		}
 

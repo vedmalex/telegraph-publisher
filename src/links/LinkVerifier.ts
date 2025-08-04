@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { PathResolver } from '../utils/PathResolver';
+import { cleanMarkdownString } from '../clean_mr';
 import {
   type BrokenLink,
   type FileScanResult,
@@ -53,8 +54,9 @@ export class LinkVerifier {
           // 2. NEW: Verify anchor existence if a fragment is present
           if (fragment) {
             const targetAnchors = this.getAnchorsForFile(resolvedPath);
-            // Decode URI component for non-latin characters and slugify it for comparison
-            const requestedAnchor = this.generateSlug(decodeURIComponent(fragment));
+            // Decode URI component for non-latin characters but only slugify if it changed
+            const decodedFragment = decodeURIComponent(fragment);
+            const requestedAnchor = decodedFragment === fragment ? fragment : this.generateSlug(decodedFragment);
 
             if (!targetAnchors.has(requestedAnchor)) {
               // NEW: Find closest match for intelligent suggestions
@@ -245,18 +247,13 @@ export class LinkVerifier {
   }
 
   /**
-   * Generates a URL-friendly slug from a heading text.
-   * This mimics the behavior of most Markdown parsers.
+   * Generates a URL-friendly anchor from a heading text according to Telegra.ph rules.
+   * Per anchors.md spec: only replace spaces with hyphens. Keep case and all other characters.
    * @param text The heading text.
-   * @returns A lower-case, hyphenated slug.
+   * @returns An anchor string with spaces replaced by hyphens.
    */
   private generateSlug(text: string): string {
-    return text
-      .toLowerCase()                           // 1. Normalize case
-      .trim()                                  // 2. Remove leading/trailing whitespace
-      .replace(/<[^>]+>/g, '')                 // 3. Remove HTML tags
-      .replace(/[^\w\u00C0-\u024F\u1E00-\u1EFF\u0400-\u04FF\s-]/g, '') // 4. Keep letters, numbers, spaces, hyphens (including Unicode)
-      .replace(/\s+/g, '-');                   // 5. Replace spaces with hyphens
+    return text.trim().replace(/ /g, '-');
   }
 
   /**
@@ -279,7 +276,9 @@ export class LinkVerifier {
       while ((match = headingRegex.exec(content)) !== null) {
         const headingText = match[2]?.trim();
         if (headingText) {
-          anchors.add(this.generateSlug(headingText));
+          // Clean Markdown formatting from heading text before generating anchor
+          const cleanedText = cleanMarkdownString(headingText);
+          anchors.add(this.generateSlug(cleanedText));
         }
       }
 

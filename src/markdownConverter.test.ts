@@ -18,11 +18,238 @@ test("should convert headings to Telegraph API compatible nodes", () => {
 	const result = convertMarkdownToTelegraphNodes(markdown);
 
 	expect(result).toEqual([
+		// ToC should be generated first (4 headings = 2+ requirement met)
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Heading-1" }, children: ["Heading 1"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Heading-2" }, children: ["Heading 2"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Heading-3" }, children: ["Heading 3"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Heading-4" }, children: ["Heading 4"] }] }
+				]
+			}]
+		},
 		{ tag: "h3", children: ["Heading 1"] }, // H1 → h3
 		{ tag: "h3", children: ["Heading 2"] }, // H2 → h3
 		{ tag: "h3", children: ["Heading 3"] }, // H3 → h3
 		{ tag: "h4", children: ["Heading 4"] }, // H4 → h4
 	]);
+});
+
+test("should convert H5/H6 headings to h4 with visual prefixes for anchor support", () => {
+	const markdown = "##### Heading 5\n###### Heading 6";
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	expect(result).toEqual([
+		// ToC should be generated first (2 headings = 2+ requirement met)
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Heading-5" }, children: ["» Heading 5"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Heading-6" }, children: ["»» Heading 6"] }] }
+				]
+			}]
+		},
+		{ tag: "h4", children: ["» Heading 5"] }, // H5 → h4 with » prefix
+		{ tag: "h4", children: ["»» Heading 6"] }, // H6 → h4 with »» prefix
+	]);
+});
+
+test("should handle all heading levels comprehensively", () => {
+	const markdown = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n####### H7+";
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	expect(result).toEqual([
+		// ToC should be generated first (7 headings = 2+ requirement met)
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H1" }, children: ["H1"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H2" }, children: ["H2"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H3" }, children: ["H3"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H4" }, children: ["H4"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-H5" }, children: ["» H5"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-H6" }, children: ["»» H6"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»»-H7+" }, children: ["»»» H7+"] }] }
+				]
+			}]
+		},
+		{ tag: "h3", children: ["H1"] },
+		{ tag: "h3", children: ["H2"] },
+		{ tag: "h3", children: ["H3"] },
+		{ tag: "h4", children: ["H4"] },
+		{ tag: "h4", children: ["» H5"] },
+		{ tag: "h4", children: ["»» H6"] },
+		{ tag: "h4", children: ["»»» H7+"] }, // Edge case: H7+ → h4 with »»» prefix
+	]);
+});
+
+test("should preserve inline formatting in H5/H6 with prefixes", () => {
+	const markdown = "##### **Bold** H5 with *italic*\n###### Link [text](url) in H6";
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	expect(result).toEqual([
+		// ToC should be generated first (2 headings = 2+ requirement met)
+		// Note: ToC uses raw markdown text for anchor generation, not processed formatting
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-**Bold**-H5-with-*italic*" }, children: ["» **Bold** H5 with *italic*"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Link-[text](url)-in-H6" }, children: ["»» Link [text](url) in H6"] }] }
+				]
+			}]
+		},
+		{
+			tag: "h4",
+			children: [
+				"» ",
+				{ tag: "strong", children: ["Bold"] },
+				" H5 with ",
+				{ tag: "em", children: ["italic"] }
+			]
+		},
+		{
+			tag: "h4",
+			children: [
+				"»» Link ",
+				{ tag: "a", attrs: { href: "url" }, children: ["text"] },
+				" in H6"
+			]
+		}
+	]);
+});
+
+test("should generate proper anchors for H5/H6 headings - integration test", () => {
+	// This test verifies that H5/H6 headings with prefixes generate correct anchors
+	// using the updated generateSlug function from LinkVerifier
+	
+	const markdown = `# Regular Heading
+##### Important Section
+###### Sub Important Section
+##### Мой раздел
+###### Section with @#$% Special Characters!`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	// Should include ToC as first element since there are 5 headings (2+ requirement met)
+	expect(result).toEqual([
+		// ToC aside element should be first
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Regular-Heading" }, children: ["Regular Heading"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Important-Section" }, children: ["» Important Section"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Sub-Important-Section" }, children: ["»» Sub Important Section"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Мой-раздел" }, children: ["» Мой раздел"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Section-with-@#$%-Special-Characters!" }, children: ["»» Section with @#$% Special Characters!"] }] }
+				]
+			}]
+		},
+		// Then the actual headings
+		{ tag: "h3", children: ["Regular Heading"] }, // Should generate anchor: "Regular-Heading"
+		{ tag: "h4", children: ["» Important Section"] }, // Should generate anchor: "»-Important-Section"
+		{ tag: "h4", children: ["»» Sub Important Section"] }, // Should generate anchor: "»»-Sub-Important-Section"
+		{ tag: "h4", children: ["» Мой раздел"] }, // Should generate anchor: "»-Мой-раздел"
+		{ tag: "h4", children: ["»» Section with @#$% Special Characters!"] }, // Should generate anchor: "»»-Section-with-@#$%-Special-Characters!"
+	]);
+});
+
+test("should generate Table of Contents for documents with 2+ headings", () => {
+	const markdown = `# Main Title
+## Section One
+### Subsection
+#### Details`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	// First element should be ToC aside
+	expect(result[0]).toEqual({
+		tag: "aside",
+		children: [{
+			tag: "ul",
+			children: [
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Main-Title" }, children: ["Main Title"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Section-One" }, children: ["Section One"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Subsection" }, children: ["Subsection"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Details" }, children: ["Details"] }] }
+			]
+		}]
+	});
+
+	// Should have 5 total elements: 1 ToC + 4 headings
+	expect(result).toHaveLength(5);
+});
+
+test("should NOT generate ToC for documents with fewer than 2 headings", () => {
+	const markdownOne = `# Single Heading
+Some content here.`;
+
+	const markdownNone = `Just regular content.
+No headings at all.`;
+
+	const resultOne = convertMarkdownToTelegraphNodes(markdownOne);
+	const resultNone = convertMarkdownToTelegraphNodes(markdownNone);
+
+	// Should not include ToC (no aside element)
+	expect(resultOne).toEqual([
+		{ tag: "h3", children: ["Single Heading"] },
+		{ tag: "p", children: ["Some content here."] }
+	]);
+
+	expect(resultNone).toEqual([
+		{ tag: "p", children: ["Just regular content."] },
+		{ tag: "p", children: ["No headings at all."] }
+	]);
+});
+
+test("should handle ToC with H5/H6 prefixed headings correctly", () => {
+	const markdown = `## Introduction
+##### Important Note
+###### Warning`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	// Should generate ToC with prefixed headings
+	expect(result[0]).toEqual({
+		tag: "aside",
+		children: [{
+			tag: "ul",
+			children: [
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Introduction" }, children: ["Introduction"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Important-Note" }, children: ["» Important Note"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Warning" }, children: ["»» Warning"] }] }
+			]
+		}]
+	});
+});
+
+test("should handle ToC with Unicode and special characters", () => {
+	const markdown = `# Тест заголовок
+## Special @#$% Characters!`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	// Should preserve Unicode and special characters in ToC anchors
+	expect(result[0]).toEqual({
+		tag: "aside",
+		children: [{
+			tag: "ul",
+			children: [
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Тест-заголовок" }, children: ["Тест заголовок"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Special-@#$%-Characters!" }, children: ["Special @#$% Characters!"] }] }
+			]
+		}]
+	});
 });
 
 test("should convert bold text to strong nodes", () => {

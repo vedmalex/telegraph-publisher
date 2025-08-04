@@ -23,6 +23,7 @@
     │   │   ├── DependencyManager.test.ts
     │   │   └── DependencyManager.ts
     │   ├── doc/
+    │   │   ├── anchors.md
     │   │   └── api.md
     │   ├── links/
     │   │   ├── AutoRepairer.test.ts
@@ -4262,6 +4263,61 @@ export class DependencyManager {
 }
 ```
 
+`src/doc/anchors.md`
+
+```md
+Ниже представлена спецификация функции для извлечения якоря (anchor) из заголовка в формате, используемом в telegra.ph. Спецификация основана на правилах формирования якорных ссылок, обсуждённых ранее.
+
+## Спецификация функции `extractAnchorFromHeader`
+
+### Назначение
+Функция принимает строку с заголовком статьи (например, текст из тега `` или ``) и возвращает корректный якорь (anchor), который используется для навигации внутри страницы в формате telegra.ph.
+
+### Входные параметры
+
+- `headerText` — строка (string), текст заголовка.
+
+### Выходные данные
+
+- Строка (string), представляющая собой якорь, который можно использовать как часть ссылки после символа `#`.
+
+### Описание логики преобразования
+
+1. Якорь строится из исходного текста заголовка.
+2. Все пробелы (`U+0020`) заменяются на дефисы `-`.
+3. Регистр букв сохраняется (заглавные и строчные буквы не меняются).
+4. Никакие другие символы, кроме пробелов, **не изменяются** (например, знаки препинания, цифры, символы кириллицы).
+5. Входной текст считается уникальным на странице, поэтому функция не проверяет дублирование.
+6. Не добавлять никакие префиксы или суффиксы — только преобразованный текст заголовка.
+
+### Псевдокод
+
+```python
+def extractAnchorFromHeader(headerText: str) -> str:
+    # Заменить все пробелы на дефисы
+    anchor = headerText.replace(" ", "-")
+    
+    # Возвратить результат без изменений регистра и других символов
+    return anchor
+```
+
+### Пример использования
+
+| Входной заголовок         | Выходной якорь          | Полная ссылка                                    |
+|--------------------------|-------------------------|-------------------------------------------------|
+| "Мой якорь"              | "Мой-якорь"             | https://telegra.ph/имя-статьи#Мой-якорь         |
+| "Как сделать якорь"      | "Как-сделать-якорь"     | https://telegra.ph/имя-статьи#Как-сделать-якорь |
+| "Пример заголовка №1"    | "Пример-заголовка-№1"   | https://telegra.ph/имя-статьи#Пример-заголовка-№1 |
+
+### Дополнительные замечания
+
+- Функция не должна изменять регистр, удалять или кодировать спецсимволы.
+- Рекомендуется перед вызовом функции убеждаться, что заголовок уникален в пределах одной страницы.
+- При использовании результата в URL необходимо дополнительно, если требуется, кодировать ссылку в соответствии с правилами URL-энкодинга (et. пробелы уже заменены, но могут быть другие символы).
+
+Если нужно, могу также подготовить пример кода на конкретном языке программирования.
+```
+
 `src/doc/api.md`
 
 ```md
@@ -8435,7 +8491,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Target Section',
-        href: './target.md#section-one',
+        href: './target.md#Section-One',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 30
@@ -8518,7 +8574,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Multiple Fragments',
-        href: './target.md#section1#section2',
+        href: './target.md#Section1#Section2',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 40
@@ -8576,7 +8632,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Занятие 4',
-        href: './class004.structured.md#занятие-4-глава-1-вопросы-мудрецов',
+        href: './class004.structured.md#Занятие-4-Глава-1-Вопросы-мудрецов',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 80
@@ -8598,60 +8654,85 @@ describe('LinkVerifier', () => {
   });
 
   describe('Anchor Validation', () => {
-    test('should validate links with existing anchors as VALID', async () => {
+    test('should validate simple heading anchors as VALID', async () => {
       const sourceFile = join(testDir, 'source.md');
       const targetFile = join(testDir, 'target-with-anchors.md');
 
       writeFileSync(sourceFile, '# Source');
-      writeFileSync(targetFile, `# Simple Heading
-## Heading With Spaces
-### Заголовок на кириллице
-#### HTML <em>Tags</em> Heading
-##### Special @#$% Characters!`);
+      writeFileSync(targetFile, '# Simple Heading');
 
-      const testCases = [
-        {
-          href: './target-with-anchors.md#simple-heading',
-          description: 'simple heading'
-        },
-        {
-          href: './target-with-anchors.md#heading-with-spaces',
-          description: 'heading with spaces'
-        },
-        {
-          href: './target-with-anchors.md#заголовок-на-кириллице',
-          description: 'Cyrillic heading'
-        },
-        {
-          href: './target-with-anchors.md#html-tags-heading',
-          description: 'heading with HTML tags'
-        },
-        {
-          href: './target-with-anchors.md#special-characters',
-          description: 'heading with special characters'
-        }
-      ];
+      const link: MarkdownLink = {
+        text: 'simple heading',
+        href: './target-with-anchors.md#Simple-Heading',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
 
-      for (const testCase of testCases) {
-        const link: MarkdownLink = {
-          text: testCase.description,
-          href: testCase.href,
-          lineNumber: 1,
-          columnStart: 0,
-          columnEnd: 30
-        };
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
 
-        const scanResult: FileScanResult = {
-          filePath: sourceFile,
-          allLinks: [link],
-          localLinks: [link],
-          brokenLinks: [],
-          processingTime: 0
-        };
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
 
-        const result = await verifier.verifyLinks(scanResult);
-        expect(result.brokenLinks).toHaveLength(0);
-      }
+    test('should validate heading with spaces anchors as VALID', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target-with-anchors.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '## Heading With Spaces');
+
+      const link: MarkdownLink = {
+        text: 'heading with spaces',
+        href: './target-with-anchors.md#Heading-With-Spaces',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should validate Cyrillic heading anchors as VALID', async () => {
+      const sourceFile = join(testDir, 'source.md');
+      const targetFile = join(testDir, 'target-with-anchors.md');
+
+      writeFileSync(sourceFile, '# Source');
+      writeFileSync(targetFile, '### Заголовок на кириллице');
+
+      const link: MarkdownLink = {
+        text: 'Cyrillic heading',
+        href: './target-with-anchors.md#Заголовок-на-кириллице',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 30
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        processingTime: 0
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
     });
 
     test('should mark links with invalid anchors as BROKEN', async () => {
@@ -8691,7 +8772,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Encoded Cyrillic',
-        href: './target-with-anchors.md#%D0%B7%D0%B0%D0%BD%D1%8F%D1%82%D0%B8%D0%B5-4-%D0%B3%D0%BB%D0%B0%D0%B2%D0%B0-1-%D0%B2%D0%BE%D0%BF%D1%80%D0%BE%D1%81%D1%8B-%D0%BC%D1%83%D0%B4%D1%80%D0%B5%D1%86%D0%BE%D0%B2',
+        href: './target-with-anchors.md#%D0%97%D0%B0%D0%BD%D1%8F%D1%82%D0%B8%D0%B5-4-%D0%93%D0%BB%D0%B0%D0%B2%D0%B0-1-%D0%92%D0%BE%D0%BF%D1%80%D0%BE%D1%81%D1%8B-%D0%BC%D1%83%D0%B4%D1%80%D0%B5%D1%86%D0%BE%D0%B2',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 80
@@ -8801,7 +8882,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Multiple fragments',
-        href: './target.md#section1#section2',
+        href: './target.md#Section1#Section2',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 40
@@ -8830,7 +8911,7 @@ describe('LinkVerifier', () => {
 
       const link: MarkdownLink = {
         text: 'Invalid Section',
-        href: './target.md#invalid-sektion',
+        href: './target.md#Valid-Sektion',
         lineNumber: 1,
         columnStart: 0,
         columnEnd: 35
@@ -8847,7 +8928,7 @@ describe('LinkVerifier', () => {
       const result = await verifier.verifyLinks(scanResult);
 
       expect(result.brokenLinks).toHaveLength(1);
-      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#valid-section');
+      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#Valid-Section');
     });
 
     test('should not provide suggestions when no close match exists', async () => {
@@ -8905,7 +8986,7 @@ describe('LinkVerifier', () => {
       const result = await verifier.verifyLinks(scanResult);
 
       expect(result.brokenLinks).toHaveLength(1);
-      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#занятие-4-глава-1-вопросы-мудрецов');
+      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#Занятие-4-Глава-1-Вопросы-мудрецов');
     });
 
     test('should handle multiple potential matches and return best one', async () => {
@@ -8934,7 +9015,7 @@ describe('LinkVerifier', () => {
       const result = await verifier.verifyLinks(scanResult);
 
       expect(result.brokenLinks).toHaveLength(1);
-      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#section-one');
+      expect(result.brokenLinks[0]?.suggestions).toContain('./target.md#Section-One');
     });
 
     test('should handle empty target file gracefully', async () => {
@@ -9039,6 +9120,259 @@ describe('LinkVerifier', () => {
       expect(closest).toBe('занятие-1');
     });
   });
+
+  describe('generateSlug - Anchor Specification Compliance', () => {
+    test('preserves case: "Section Title" → "Section-Title"', () => {
+      const result = (verifier as any).generateSlug('Section Title');
+      expect(result).toBe('Section-Title');
+    });
+
+    test('preserves special chars: "Пример №1" → "Пример-№1"', () => {
+      const result = (verifier as any).generateSlug('Пример №1');
+      expect(result).toBe('Пример-№1');
+    });
+
+    test('only replaces spaces: "Мой якорь" → "Мой-якорь"', () => {
+      const result = (verifier as any).generateSlug('Мой якорь');
+      expect(result).toBe('Мой-якорь');
+    });
+
+    test('handles Unicode correctly', () => {
+      const result = (verifier as any).generateSlug('Тест заголовка с символами!@#');
+      expect(result).toBe('Тест-заголовка-с-символами!@#');
+    });
+
+    test('backwards compatibility with common anchors', () => {
+      // Test that simple English text still works
+      const result = (verifier as any).generateSlug('simple test');
+      expect(result).toBe('simple-test');
+    });
+
+    test('handles multiple spaces correctly', () => {
+      const result = (verifier as any).generateSlug('Multiple   spaces   here');
+      expect(result).toBe('Multiple---spaces---here');
+    });
+
+    test('trims leading and trailing spaces', () => {
+      const result = (verifier as any).generateSlug('  Leading and trailing  ');
+      expect(result).toBe('Leading-and-trailing');
+    });
+
+    test('handles empty string', () => {
+      const result = (verifier as any).generateSlug('');
+      expect(result).toBe('');
+    });
+
+    test('handles string with only spaces', () => {
+      const result = (verifier as any).generateSlug('   ');
+      expect(result).toBe('');
+    });
+
+    test('preserves hyphens and other punctuation', () => {
+      const result = (verifier as any).generateSlug('Pre-existing hyphens & symbols!');
+      expect(result).toBe('Pre-existing-hyphens-&-symbols!');
+    });
+  });
+
+  describe('anchor generation with Markdown formatting', () => {
+    test('should clean bold formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with bold heading
+      writeFileSync(targetFile, '# **Bold Title**\n\nContent here');
+      writeFileSync(sourceFile, '[Link to bold](./target.md#Bold-Title)');
+
+      const link: MarkdownLink = {
+        text: 'Link to bold',
+        href: './target.md#Bold-Title',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 35
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should clean italic formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with italic heading
+      writeFileSync(targetFile, '## *Italic Title*\n\nContent here');
+      writeFileSync(sourceFile, '[Link to italic](./target.md#Italic-Title)');
+
+      const link: MarkdownLink = {
+        text: 'Link to italic',
+        href: './target.md#Italic-Title',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 38
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should clean link formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with link in heading
+      writeFileSync(targetFile, '### [Link Title](https://example.com)\n\nContent here');
+      writeFileSync(sourceFile, '[Link to link heading](./target.md#Link-Title)');
+
+      const link: MarkdownLink = {
+        text: 'Link to link heading',
+        href: './target.md#Link-Title',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 48
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should clean mixed formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with mixed formatting
+      writeFileSync(targetFile, '#### **Bold** and *Italic* Text\n\nContent here');
+      writeFileSync(sourceFile, '[Link to mixed](./target.md#Bold-and-Italic-Text)');
+
+      const link: MarkdownLink = {
+        text: 'Link to mixed',
+        href: './target.md#Bold-and-Italic-Text',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 43
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should clean complex nested formatting from headings', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with complex nested formatting
+      writeFileSync(targetFile, '##### **Bold _nested_ text** with `code`\n\nContent here');
+      writeFileSync(sourceFile, '[Link to complex](./target.md#Bold-nested-text-with-code)');
+
+      const link: MarkdownLink = {
+        text: 'Link to complex',
+        href: './target.md#Bold-nested-text-with-code',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 50
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+
+    test('should still detect broken links with cleaned anchors', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with bold heading
+      writeFileSync(targetFile, '# **Bold Title**\n\nContent here');
+      // Link to wrong anchor (with typo)
+      writeFileSync(sourceFile, '[Link with typo](./target.md#Bold-Titel)');
+
+      const link: MarkdownLink = {
+        text: 'Link with typo',
+        href: './target.md#Bold-Titel',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 38
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(1);
+      expect(result.brokenLinks[0].link.href).toBe('./target.md#Bold-Titel');
+    });
+
+    test('should work with cyrillic headings with formatting', async () => {
+      const targetFile = join(testDir, 'target.md');
+      const sourceFile = join(testDir, 'source.md');
+
+      // Create target file with cyrillic bold heading
+      writeFileSync(targetFile, '# **Тема 1: Введение: Практические наставления и сиддханта**\n\nСодержимое');
+      writeFileSync(sourceFile, '[Ссылка](./target.md#Тема-1:-Введение:-Практические-наставления-и-сиддханта)');
+
+      const link: MarkdownLink = {
+        text: 'Ссылка',
+        href: './target.md#Тема-1:-Введение:-Практические-наставления-и-сиддханта',
+        lineNumber: 1,
+        columnStart: 0,
+        columnEnd: 82
+      };
+
+      const scanResult: FileScanResult = {
+        filePath: sourceFile,
+        allLinks: [link],
+        localLinks: [link],
+        brokenLinks: [],
+        headings: []
+      };
+
+      const result = await verifier.verifyLinks(scanResult);
+      expect(result.brokenLinks).toHaveLength(0);
+    });
+  });
 });
 ```
 
@@ -9048,6 +9382,7 @@ describe('LinkVerifier', () => {
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { PathResolver } from '../utils/PathResolver';
+import { cleanMarkdownString } from '../clean_mr';
 import {
   type BrokenLink,
   type FileScanResult,
@@ -9100,8 +9435,9 @@ export class LinkVerifier {
           // 2. NEW: Verify anchor existence if a fragment is present
           if (fragment) {
             const targetAnchors = this.getAnchorsForFile(resolvedPath);
-            // Decode URI component for non-latin characters and slugify it for comparison
-            const requestedAnchor = this.generateSlug(decodeURIComponent(fragment));
+            // Decode URI component for non-latin characters but only slugify if it changed
+            const decodedFragment = decodeURIComponent(fragment);
+            const requestedAnchor = decodedFragment === fragment ? fragment : this.generateSlug(decodedFragment);
 
             if (!targetAnchors.has(requestedAnchor)) {
               // NEW: Find closest match for intelligent suggestions
@@ -9292,18 +9628,13 @@ export class LinkVerifier {
   }
 
   /**
-   * Generates a URL-friendly slug from a heading text.
-   * This mimics the behavior of most Markdown parsers.
+   * Generates a URL-friendly anchor from a heading text according to Telegra.ph rules.
+   * Per anchors.md spec: only replace spaces with hyphens. Keep case and all other characters.
    * @param text The heading text.
-   * @returns A lower-case, hyphenated slug.
+   * @returns An anchor string with spaces replaced by hyphens.
    */
   private generateSlug(text: string): string {
-    return text
-      .toLowerCase()                           // 1. Normalize case
-      .trim()                                  // 2. Remove leading/trailing whitespace
-      .replace(/<[^>]+>/g, '')                 // 3. Remove HTML tags
-      .replace(/[^\w\u00C0-\u024F\u1E00-\u1EFF\u0400-\u04FF\s-]/g, '') // 4. Keep letters, numbers, spaces, hyphens (including Unicode)
-      .replace(/\s+/g, '-');                   // 5. Replace spaces with hyphens
+    return text.trim().replace(/ /g, '-');
   }
 
   /**
@@ -9326,7 +9657,9 @@ export class LinkVerifier {
       while ((match = headingRegex.exec(content)) !== null) {
         const headingText = match[2]?.trim();
         if (headingText) {
-          anchors.add(this.generateSlug(headingText));
+          // Clean Markdown formatting from heading text before generating anchor
+          const cleanedText = cleanMarkdownString(headingText);
+          anchors.add(this.generateSlug(cleanedText));
         }
       }
 
@@ -15555,11 +15888,238 @@ test("should convert headings to Telegraph API compatible nodes", () => {
 	const result = convertMarkdownToTelegraphNodes(markdown);
 
 	expect(result).toEqual([
+		// ToC should be generated first (4 headings = 2+ requirement met)
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Heading-1" }, children: ["Heading 1"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Heading-2" }, children: ["Heading 2"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Heading-3" }, children: ["Heading 3"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Heading-4" }, children: ["Heading 4"] }] }
+				]
+			}]
+		},
 		{ tag: "h3", children: ["Heading 1"] }, // H1 → h3
 		{ tag: "h3", children: ["Heading 2"] }, // H2 → h3
 		{ tag: "h3", children: ["Heading 3"] }, // H3 → h3
 		{ tag: "h4", children: ["Heading 4"] }, // H4 → h4
 	]);
+});
+
+test("should convert H5/H6 headings to h4 with visual prefixes for anchor support", () => {
+	const markdown = "##### Heading 5\n###### Heading 6";
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	expect(result).toEqual([
+		// ToC should be generated first (2 headings = 2+ requirement met)
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Heading-5" }, children: ["» Heading 5"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Heading-6" }, children: ["»» Heading 6"] }] }
+				]
+			}]
+		},
+		{ tag: "h4", children: ["» Heading 5"] }, // H5 → h4 with » prefix
+		{ tag: "h4", children: ["»» Heading 6"] }, // H6 → h4 with »» prefix
+	]);
+});
+
+test("should handle all heading levels comprehensively", () => {
+	const markdown = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n####### H7+";
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	expect(result).toEqual([
+		// ToC should be generated first (7 headings = 2+ requirement met)
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H1" }, children: ["H1"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H2" }, children: ["H2"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H3" }, children: ["H3"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#H4" }, children: ["H4"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-H5" }, children: ["» H5"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-H6" }, children: ["»» H6"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»»-H7+" }, children: ["»»» H7+"] }] }
+				]
+			}]
+		},
+		{ tag: "h3", children: ["H1"] },
+		{ tag: "h3", children: ["H2"] },
+		{ tag: "h3", children: ["H3"] },
+		{ tag: "h4", children: ["H4"] },
+		{ tag: "h4", children: ["» H5"] },
+		{ tag: "h4", children: ["»» H6"] },
+		{ tag: "h4", children: ["»»» H7+"] }, // Edge case: H7+ → h4 with »»» prefix
+	]);
+});
+
+test("should preserve inline formatting in H5/H6 with prefixes", () => {
+	const markdown = "##### **Bold** H5 with *italic*\n###### Link [text](url) in H6";
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	expect(result).toEqual([
+		// ToC should be generated first (2 headings = 2+ requirement met)
+		// Note: ToC uses raw markdown text for anchor generation, not processed formatting
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-**Bold**-H5-with-*italic*" }, children: ["» **Bold** H5 with *italic*"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Link-[text](url)-in-H6" }, children: ["»» Link [text](url) in H6"] }] }
+				]
+			}]
+		},
+		{
+			tag: "h4",
+			children: [
+				"» ",
+				{ tag: "strong", children: ["Bold"] },
+				" H5 with ",
+				{ tag: "em", children: ["italic"] }
+			]
+		},
+		{
+			tag: "h4",
+			children: [
+				"»» Link ",
+				{ tag: "a", attrs: { href: "url" }, children: ["text"] },
+				" in H6"
+			]
+		}
+	]);
+});
+
+test("should generate proper anchors for H5/H6 headings - integration test", () => {
+	// This test verifies that H5/H6 headings with prefixes generate correct anchors
+	// using the updated generateSlug function from LinkVerifier
+	
+	const markdown = `# Regular Heading
+##### Important Section
+###### Sub Important Section
+##### Мой раздел
+###### Section with @#$% Special Characters!`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	// Should include ToC as first element since there are 5 headings (2+ requirement met)
+	expect(result).toEqual([
+		// ToC aside element should be first
+		{
+			tag: "aside",
+			children: [{
+				tag: "ul",
+				children: [
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#Regular-Heading" }, children: ["Regular Heading"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Important-Section" }, children: ["» Important Section"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Sub-Important-Section" }, children: ["»» Sub Important Section"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Мой-раздел" }, children: ["» Мой раздел"] }] },
+					{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Section-with-@#$%-Special-Characters!" }, children: ["»» Section with @#$% Special Characters!"] }] }
+				]
+			}]
+		},
+		// Then the actual headings
+		{ tag: "h3", children: ["Regular Heading"] }, // Should generate anchor: "Regular-Heading"
+		{ tag: "h4", children: ["» Important Section"] }, // Should generate anchor: "»-Important-Section"
+		{ tag: "h4", children: ["»» Sub Important Section"] }, // Should generate anchor: "»»-Sub-Important-Section"
+		{ tag: "h4", children: ["» Мой раздел"] }, // Should generate anchor: "»-Мой-раздел"
+		{ tag: "h4", children: ["»» Section with @#$% Special Characters!"] }, // Should generate anchor: "»»-Section-with-@#$%-Special-Characters!"
+	]);
+});
+
+test("should generate Table of Contents for documents with 2+ headings", () => {
+	const markdown = `# Main Title
+## Section One
+### Subsection
+#### Details`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	// First element should be ToC aside
+	expect(result[0]).toEqual({
+		tag: "aside",
+		children: [{
+			tag: "ul",
+			children: [
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Main-Title" }, children: ["Main Title"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Section-One" }, children: ["Section One"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Subsection" }, children: ["Subsection"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Details" }, children: ["Details"] }] }
+			]
+		}]
+	});
+
+	// Should have 5 total elements: 1 ToC + 4 headings
+	expect(result).toHaveLength(5);
+});
+
+test("should NOT generate ToC for documents with fewer than 2 headings", () => {
+	const markdownOne = `# Single Heading
+Some content here.`;
+
+	const markdownNone = `Just regular content.
+No headings at all.`;
+
+	const resultOne = convertMarkdownToTelegraphNodes(markdownOne);
+	const resultNone = convertMarkdownToTelegraphNodes(markdownNone);
+
+	// Should not include ToC (no aside element)
+	expect(resultOne).toEqual([
+		{ tag: "h3", children: ["Single Heading"] },
+		{ tag: "p", children: ["Some content here."] }
+	]);
+
+	expect(resultNone).toEqual([
+		{ tag: "p", children: ["Just regular content."] },
+		{ tag: "p", children: ["No headings at all."] }
+	]);
+});
+
+test("should handle ToC with H5/H6 prefixed headings correctly", () => {
+	const markdown = `## Introduction
+##### Important Note
+###### Warning`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	// Should generate ToC with prefixed headings
+	expect(result[0]).toEqual({
+		tag: "aside",
+		children: [{
+			tag: "ul",
+			children: [
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Introduction" }, children: ["Introduction"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#»-Important-Note" }, children: ["» Important Note"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#»»-Warning" }, children: ["»» Warning"] }] }
+			]
+		}]
+	});
+});
+
+test("should handle ToC with Unicode and special characters", () => {
+	const markdown = `# Тест заголовок
+## Special @#$% Characters!`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown);
+
+	// Should preserve Unicode and special characters in ToC anchors
+	expect(result[0]).toEqual({
+		tag: "aside",
+		children: [{
+			tag: "ul",
+			children: [
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Тест-заголовок" }, children: ["Тест заголовок"] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Special-@#$%-Characters!" }, children: ["Special @#$% Characters!"] }] }
+			]
+		}]
+	});
 });
 
 test("should convert bold text to strong nodes", () => {
@@ -16068,6 +16628,83 @@ function parseTable(tableLines: string[]): TelegraphNode {
 }
 
 /**
+ * Generates a Table of Contents (ToC) as an aside element from Markdown content.
+ * Only generates ToC if there are 2 or more headings in the document.
+ * Uses the same heading processing logic as the main converter for consistency.
+ * @param markdown The raw Markdown content to scan for headings.
+ * @returns TelegraphNode for aside element with ToC, or null if insufficient headings.
+ */
+function generateTocAside(markdown: string): TelegraphNode | null {
+	const headings: { level: number; text: string; displayText: string }[] = [];
+	const lines = markdown.split(/\r?\n/);
+
+	// 1. Scan for all headings using the same regex as main converter
+	for (const line of lines) {
+		const headingMatch = line.match(/^(#+)\s+(.*)/);
+		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
+			const level = headingMatch[1].length;
+			const originalText = headingMatch[2].trim();
+			let displayText = originalText;
+
+			// 2. Apply the same heading strategy logic as main converter
+			switch (level) {
+				case 1:
+				case 2:
+				case 3:
+				case 4:
+					displayText = originalText;
+					break;
+				case 5:
+					displayText = `» ${originalText}`;
+					break;
+				case 6:
+					displayText = `»» ${originalText}`;
+					break;
+				default:
+					// Handle edge case: levels > 6
+					displayText = `»»» ${originalText}`;
+					break;
+			}
+
+			headings.push({ level, text: originalText, displayText });
+		}
+	}
+
+	// 3. Check if ToC should be generated (2+ headings required)
+	if (headings.length < 2) {
+		return null;
+	}
+
+	// 4. Build ToC structure as list items
+	const listItems: TelegraphNode[] = [];
+	for (const heading of headings) {
+		// Use the same anchor generation logic as LinkVerifier
+		// IMPORTANT: Generate anchor from displayText to match what LinkVerifier will find
+		const anchor = heading.displayText.trim().replace(/ /g, '-');
+		
+		const linkNode: TelegraphNode = {
+			tag: 'a',
+			attrs: { href: `#${anchor}` },
+			children: [heading.displayText] // Use display text with prefixes
+		};
+		
+		listItems.push({
+			tag: 'li',
+			children: [linkNode],
+		});
+	}
+
+	// 5. Return aside element with unordered list
+	return {
+		tag: 'aside',
+		children: [{
+			tag: 'ul',
+			children: listItems
+		}]
+	};
+}
+
+/**
  * Converts Markdown content directly into an array of TelegraphNode objects.
  * This function replaces the need for an intermediate HTML conversion step and 'mrkdwny' library.
  * It directly parses Markdown elements into the structure expected by the Telegra.ph API.
@@ -16078,6 +16715,13 @@ export function convertMarkdownToTelegraphNodes(
 	markdown: string,
 ): TelegraphNode[] {
 	const nodes: TelegraphNode[] = [];
+	
+	// Generate and add Table of Contents if there are 2+ headings
+	const tocAside = generateTocAside(markdown);
+	if (tocAside) {
+		nodes.push(tocAside);
+	}
+	
 	const lines = markdown.split(/\r?\n/);
 
 	let inCodeBlock = false;
@@ -16237,41 +16881,44 @@ export function convertMarkdownToTelegraphNodes(
 				blockquoteContent = [];
 			}
 			const level = headingMatch[1].length;
-			const text = headingMatch[2] || "";
-			const processedChildren = processInlineMarkdown(text);
+			const originalText = headingMatch[2] || "";
+			let displayText = originalText;
+			let tag: 'h3' | 'h4' = 'h3';
 
-			// Map headings to Telegraph API compatible tags
+			// Map headings to Telegraph API compatible tags with visual hierarchy preservation
 			// Telegraph API only supports h3 and h4 tags for headings
 			switch (level) {
 				case 1:
 				case 2:
 				case 3:
 					// H1, H2, H3 → h3 (highest available level in Telegraph API)
-					nodes.push({ tag: 'h3', children: processedChildren });
+					tag = 'h3';
+					displayText = originalText;
 					break;
 				case 4:
 					// H4 → h4 (direct mapping, supported by Telegraph API)
-					nodes.push({ tag: 'h4', children: processedChildren });
+					tag = 'h4';
+					displayText = originalText;
 					break;
 				case 5:
-					// H5 → p with strong (emulate heading with bold text)
-					nodes.push({
-						tag: 'p',
-						children: [{ tag: 'strong', children: processedChildren }]
-					});
+					// H5 → h4 with visual prefix to preserve hierarchy and enable anchors
+					tag = 'h4';
+					displayText = `» ${originalText}`;
 					break;
 				case 6:
-					// H6 → p with strong + em (emulate heading with bold italic)
-					nodes.push({
-						tag: 'p',
-						children: [{ tag: 'strong', children: [{ tag: 'em', children: processedChildren }] }]
-					});
+					// H6 → h4 with double visual prefix to preserve hierarchy and enable anchors
+					tag = 'h4';
+					displayText = `»» ${originalText}`;
 					break;
 				default:
-					// Handle edge case: levels > 6 as h4
-					nodes.push({ tag: 'h4', children: processedChildren });
+					// Handle edge case: levels > 6 as h4 with triple visual prefix
+					tag = 'h4';
+					displayText = `»»» ${originalText}`;
 					break;
 			}
+
+			const processedChildren = processInlineMarkdown(displayText);
+			nodes.push({ tag, children: processedChildren });
 			continue;
 		}
 

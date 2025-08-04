@@ -2,6 +2,19 @@
 
 ## Active Tasks
 
+### 🎯 **TASK-021** (2025-08-04) - Comprehensive Anchors, Headings & ToC System
+- **Status**: 🟡 ACTIVE (IMPLEMENT Phase)
+- **Type**: Complex Feature Implementation
+- **Priority**: 🔴 High
+- **Summary**: Комплексное решение трех взаимосвязанных критически важных проблем в системе обработки якорей, заголовков и автоматической генерации оглавления
+- **Technical Specifications**:
+  - FEAT-ANCHOR-REFACTOR-001: Корректная генерация якорей по спецификации anchors.md
+  - FEAT-HEADING-STRATEGY-001: Улучшенная стратегия конвертации заголовков H5/H6
+  - FEAT-ASIDE-TOC-GENERATION-001: Автоматическая генерация оглавления <aside>
+- **Files to Modify**: `src/links/LinkVerifier.ts`, `src/markdownConverter.ts`
+- **Complexity**: High - Sequential implementation of three interconnected specifications
+- **Progress**: VAN ✅ → PLAN ✅ → CREATIVE ✅ → IMPLEMENT (3 sub-phases) 🟡 → QA 🔴
+
 ### 🎯 **TASK-019** (2025-08-03) - Enhanced Anchor Validation and Reporting
 - **Status**: ✅ READY FOR ARCHIVE (QA Complete)
 - **Type**: Feature Enhancement
@@ -16,7 +29,7 @@
 - **Complexity**: Medium - New algorithms building on existing verification infrastructure
 
 ### 🎯 **TASK-020** (2025-08-03) - Content Hashing for Change Detection
-- **Status**: 🟡 ACTIVE (IMPLEMENT Phase)
+- **Status**: ✅ ARCHIVED (Complete)
 - **Type**: Performance Enhancement
 - **Priority**: 🔴 High
 - **Summary**: Implement content hashing mechanism to prevent re-publication of unchanged files, optimizing API usage and improving publication efficiency
