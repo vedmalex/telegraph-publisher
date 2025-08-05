@@ -12,6 +12,7 @@ import { EnhancedTelegraphPublisher } from '../publisher/EnhancedTelegraphPublis
 import type { MetadataConfig } from '../types/metadata';
 import type { BrokenLink, FileScanResult } from '../links/types';
 import { PathResolver } from '../utils/PathResolver';
+import { LayerIntegrationPattern } from '../patterns/OptionsPropagation';
 
 /**
  * Orchestrates the publication workflow, including link verification and auto-repair.
@@ -286,15 +287,11 @@ export class PublicationWorkflowManager {
     // Шаг 5: Публикация.
     for (const file of filesToProcess) {
       ProgressIndicator.showStatus(`⚙️ Publishing: ${file}`, "info");
-      const result = await this.publisher.publishWithMetadata(file, this.config.defaultUsername || 'Anonymous', {
-        withDependencies: options.withDependencies !== false,
-        forceRepublish: options.forceRepublish || options.force || false,
-        dryRun: options.dryRun || false,
-        debug: options.debug || false,
-        generateAside: options.aside !== false,
-        tocTitle: options.tocTitle || '',
-        tocSeparators: options.tocSeparators !== false
-      });
+      
+      // Use clean layer integration patterns for options transformation
+      const { workflowOptions, publisherOptions } = LayerIntegrationPattern.cliToWorkflow(options);
+      
+      const result = await this.publisher.publishWithMetadata(file, this.config.defaultUsername || 'Anonymous', workflowOptions);
 
       if (result.success) {
         ProgressIndicator.showStatus(`${result.isNewPublication ? "Published" : "Updated"} successfully!`, "success");

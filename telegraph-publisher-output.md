@@ -1823,6 +1823,65 @@ import { ProgressIndicator } from "./ProgressIndicator";
 export class EnhancedCommands {
 
   /**
+   * CLI to configuration parameter mapping (Selective Parameter Mapping pattern)
+   */
+  private static readonly CLI_TO_CONFIG_MAPPING: Record<string, string> = {
+    'author': 'defaultUsername',
+    'tocTitle': 'customFields.tocTitle',
+    'withDependencies': 'autoPublishDependencies'
+  };
+
+  /**
+   * Extract configuration updates from CLI options
+   * @param options CLI options
+   * @returns Configuration updates to apply
+   */
+  private static extractConfigUpdatesFromCli(options: any): Partial<import('../types/metadata').MetadataConfig> {
+    const updates: any = {};
+    
+    for (const [cliKey, configPath] of Object.entries(EnhancedCommands.CLI_TO_CONFIG_MAPPING)) {
+      if (options[cliKey] !== undefined) {
+        if (configPath.includes('.')) {
+          // Handle nested properties like customFields.tocTitle
+          const pathParts = configPath.split('.');
+          const parent = pathParts[0];
+          const child = pathParts[1];
+          if (parent && child) {
+            if (!updates[parent]) updates[parent] = {};
+            updates[parent][child] = options[cliKey];
+          }
+        } else {
+          updates[configPath] = options[cliKey];
+        }
+      }
+    }
+    
+    return updates;
+  }
+
+  /**
+   * Notify user about configuration changes (Configuration Change Detection pattern)
+   * @param changedFields Fields that were changed
+   * @param configDirectory Directory where config was saved
+   */
+  private static notifyConfigurationUpdate(changedFields: Record<string, any>, configDirectory: string): void {
+    const changes = Object.entries(changedFields)
+      .map(([key, value]) => {
+        if (typeof value === 'object' && value !== null) {
+          // Handle nested objects like customFields
+          return Object.entries(value).map(([nestedKey, nestedValue]) => `  ${key}.${nestedKey}: ${nestedValue}`).join('\n');
+        }
+        return `  ${key}: ${value}`;
+      })
+      .join('\n');
+      
+    ProgressIndicator.showStatus(
+      `💾 Configuration auto-saved to .telegraph-publisher-config.json:\n${changes}`,
+      'success'
+    );
+  }
+
+  /**
    * Add unified publish command (combines pub and edit functionality)
    * @param program Commander program instance
    */
@@ -2009,14 +2068,36 @@ export class EnhancedCommands {
       ProgressIndicator.showStatus(`Created new file: ${resolve(options.file)}`, "success");
     }
 
-    const config = ConfigManager.getMetadataConfig(fileDirectory);
+    // STEP 1: Load existing configuration
+    const existingConfig = ConfigManager.getMetadataConfig(fileDirectory);
+    
+    // STEP 2: Extract configuration updates from CLI options  
+    const configUpdatesFromCli = EnhancedCommands.extractConfigUpdatesFromCli(options);
+    
+    // STEP 3: Merge configurations with CLI priority (Configuration Cascade pattern)
+    const finalConfig = {
+      ...existingConfig,
+      ...configUpdatesFromCli
+    };
+    
+    // STEP 4: Persist merged configuration immediately (Immediate Persistence pattern)
+    if (Object.keys(configUpdatesFromCli).length > 0) {
+      ConfigManager.updateMetadataConfig(fileDirectory, finalConfig);
+      EnhancedCommands.notifyConfigurationUpdate(configUpdatesFromCli, fileDirectory);
+    }
+    
+    // STEP 5: Handle access token with same persistence pattern
     const accessToken = options.token || ConfigManager.loadAccessToken(fileDirectory);
+
+    if (options.token) {
+      ConfigManager.saveAccessToken(fileDirectory, options.token);
+    }
 
     if (!accessToken) {
       throw new Error("Access token is required. Set it using --token or configure it with 'config' command");
     }
 
-    const workflowManager = new PublicationWorkflowManager(config, accessToken);
+    const workflowManager = new PublicationWorkflowManager(finalConfig, accessToken);
 
     // Handle debug mode: debug implies dry-run
     if (options.debug) {
@@ -3830,9 +3911,12 @@ export class ContentProcessor {
 
     // Check for broken local links (only if not allowed)
     if (!options.allowBrokenLinks) {
-      const brokenLinks = processedContent.localLinks.filter(link =>
-        !LinkResolver.validateLinkTarget(link.resolvedPath)
-      );
+      const brokenLinks = processedContent.localLinks.filter(link => {
+        // Extract file path without anchor from resolvedPath for validation
+        const anchorIndex = link.resolvedPath.indexOf('#');
+        const filePathOnly = anchorIndex !== -1 ? link.resolvedPath.substring(0, anchorIndex) : link.resolvedPath;
+        return !LinkResolver.validateLinkTarget(filePathOnly);
+      });
 
       if (brokenLinks.length > 0) {
         issues.push(`Broken local links found: ${brokenLinks.map(l => l.originalPath).join(', ')}`);
@@ -14716,6 +14800,22 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   }
 
   /**
+   * Get cache manager instance (for cache validation)
+   * @returns Cache manager instance or undefined
+   */
+  getCacheManager(): PagesCacheManager | undefined {
+    return this.cacheManager;
+  }
+
+  /**
+   * Ensure cache manager is initialized (for proactive cache warming)
+   * @param filePath File path to use for initialization
+   */
+  ensureCacheInitialized(filePath: string): void {
+    this.initializeCacheManager(filePath);
+  }
+
+  /**
    * Set access token and initialize cache manager
    * @param token Access token
    */
@@ -14741,14 +14841,15 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   }
 
   /**
-   * Add page to cache after successful publication
+   * Add page to cache after successful publication (Method Signature Evolution pattern)
    * @param filePath Local file path
    * @param url Telegraph URL
    * @param path Telegraph path
    * @param title Page title
    * @param username Author username
+   * @param contentHash Content hash for change detection (optional for backward compatibility)
    */
-  private addToCache(filePath: string, url: string, path: string, title: string, username: string): void {
+  private addToCache(filePath: string, url: string, path: string, title: string, username: string, contentHash?: string): void {
     if (this.cacheManager) {
       const pageInfo: PublishedPageInfo = {
         telegraphUrl: url,
@@ -14757,7 +14858,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         title: title,
         authorName: username,
         publishedAt: new Date().toISOString(),
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
+        contentHash: contentHash // Content Hash Integration pattern
       };
 
       this.cacheManager.addPage(pageInfo);
@@ -14935,8 +15037,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const contentWithMetadata = ContentProcessor.injectMetadataIntoContent(processed, metadata);
       writeFileSync(filePath, contentWithMetadata, 'utf-8');
 
-      // Add to cache after successful publication
-      this.addToCache(filePath, page.url, page.path, metadataTitle, username);
+      // Add to cache after successful publication (Content Hash Integration pattern)
+      this.addToCache(filePath, page.url, page.path, metadataTitle, username, contentHash);
 
       return {
         success: true,
@@ -15095,12 +15197,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const contentWithMetadata = ContentProcessor.injectMetadataIntoContent(processed, updatedMetadata);
       writeFileSync(filePath, contentWithMetadata, 'utf-8');
 
-      // Update cache after successful edit
+      // Update cache after successful edit (Content Hash Integration pattern)
       if (this.cacheManager) {
         this.cacheManager.updatePage(page.url, {
           title: metadataTitle,
           authorName: username,
-          lastUpdated: new Date().toISOString()
+          lastUpdated: new Date().toISOString(),
+          contentHash: updatedContentHash
         });
       }
 
@@ -15382,25 +15485,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     }
   }
 
-  /**
-   * Calculates SHA-256 hash of content for change detection.
-   * Uses content excluding YAML front-matter for precise change detection.
-   * @param content The processed content without metadata
-   * @returns Hex-encoded SHA-256 hash
-   */
-  private calculateContentHash(content: string): string {
-    try {
-      return ContentProcessor.calculateContentHash(content);
-    } catch (error) {
-      console.warn('Content hash calculation failed:', error);
-      ProgressIndicator.showStatus(
-        `⚠️ Content hash calculation failed. Proceeding with publication.`, 
-        "warning"
-      );
-      // Return empty string to trigger publication (fail-safe behavior)
-      return '';
-    }
-  }
+
 
   /**
    * Initialize statistics tracking for dependency processing
@@ -17402,6 +17487,8 @@ export interface PublishedPageInfo {
   lastUpdated: string;
   /** Page views count */
   views?: number;
+  /** Content hash for change detection (Evolutionary Interface Design pattern) */
+  contentHash?: string;
 }
 
 /**
@@ -20127,15 +20214,19 @@ describe('PublicationWorkflowManager', () => {
 `src/workflow/PublicationWorkflowManager.ts`
 
 ```ts
-import { lstatSync } from 'node:fs';
+import { lstatSync, readFileSync, existsSync } from 'node:fs';
+import { basename } from 'node:path';
 import { ProgressIndicator } from '../cli/ProgressIndicator';
 import { ConfigManager } from '../config/ConfigManager';
+import { ContentProcessor } from '../content/ContentProcessor';
+import { MetadataManager } from '../metadata/MetadataManager';
 import { AutoRepairer } from '../links/AutoRepairer';
 import { LinkResolver } from '../links/LinkResolver';
 import { LinkScanner } from '../links/LinkScanner';
 import { LinkVerifier } from '../links/LinkVerifier';
 import { EnhancedTelegraphPublisher } from '../publisher/EnhancedTelegraphPublisher';
-import type { BrokenLink, FileScanResult, MetadataConfig } from '../types/metadata';
+import type { MetadataConfig } from '../types/metadata';
+import type { BrokenLink, FileScanResult } from '../links/types';
 import { PathResolver } from '../utils/PathResolver';
 
 /**
@@ -20162,6 +20253,149 @@ export class PublicationWorkflowManager {
     this.autoRepairer = new AutoRepairer();
     this.publisher = new EnhancedTelegraphPublisher(this.config);
     this.publisher.setAccessToken(this.accessToken);
+  }
+
+  /**
+   * Initialize and validate caches for all files to process (Pre-warming Cache Strategy pattern)
+   * @param filesToProcess Array of file paths to process
+   */
+  private async initializeAndValidateCaches(filesToProcess: string[]): Promise<void> {
+    try {
+      ProgressIndicator.showStatus("🔎 Initializing and validating caches...", "info");
+
+      // Note: LinkVerifier and AutoRepairer are already initialized in publish() method
+      // We just use the existing instances for cache pre-warming
+      
+      // Initialize publisher cache manager for the base directory
+      // Use the directory where files are located, not project root
+      const fileDirectory = filesToProcess.length > 0 ? 
+        require('path').dirname(filesToProcess[0]) : 
+        process.cwd();
+      this.publisher.setBaseCacheDirectory(fileDirectory);
+      
+      // Proactively initialize pages cache manager (Pre-warming Cache Strategy)
+      // This ensures .telegraph-pages-cache.json is created even in dry-run mode
+      if (filesToProcess.length > 0) {
+        // Initialize cache by calling initializeCacheManager with first file
+        // This mimics what publishWithMetadata does but without actual publication
+                try {
+          const firstFile = filesToProcess[0];
+          if (!firstFile) return; // Safety check
+          
+          // Initialize pages cache manager if not already done
+          const existingCache = this.publisher.getCacheManager();
+          if (!existingCache) {
+            this.publisher.ensureCacheInitialized(firstFile);
+          }
+          
+          // Populate cache with existing page data (Proactive Cache Validation pattern)
+          const cacheManager = this.publisher.getCacheManager();
+          if (cacheManager) {
+            // For now, just populate with the main files
+            // TODO: Add dependency collection for comprehensive coverage
+            this.populateCacheWithExistingData(filesToProcess, cacheManager);
+          }
+        } catch (error) {
+          // Graceful degradation - continue even if cache initialization fails
+          ProgressIndicator.showStatus(`⚠️ Could not initialize pages cache: ${error instanceof Error ? error.message : String(error)}`, "warning");
+        }
+      }
+
+      for (const filePath of filesToProcess) {
+        try {
+          const content = readFileSync(filePath, 'utf-8');
+          const contentWithoutMetadata = MetadataManager.removeMetadata(content);
+          const currentHash = ContentProcessor.calculateContentHash(contentWithoutMetadata);
+
+          // 1. Anchor cache validation (Non-Blocking Cache Operations pattern)
+          // Use public API to trigger anchor cache warming through link verification
+          const scanResult = await this.linkScanner.scanFile(filePath);
+          await this.linkVerifier.verifyLinks(scanResult);
+
+          // 2. Page cache validation for change detection  
+          // Note: Page cache validation will be handled in the publisher during actual publication
+          // This pre-warming step prepares the anchor cache for optimal performance
+
+        } catch (error) {
+          // Graceful Degradation pattern - continue processing other files
+          ProgressIndicator.showStatus(`⚠️ Could not process cache for ${basename(filePath)}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+        }
+      }
+
+      ProgressIndicator.showStatus("✅ Cache initialization completed.", "success");
+      
+    } catch (error) {
+      // Non-Blocking Cache Operations pattern - don't fail the entire workflow
+      ProgressIndicator.showStatus(`⚠️ Cache initialization failed, continuing: ${error instanceof Error ? error.message : String(error)}`, "warning");
+    }
+  }
+
+  
+
+  /**
+   * Populate cache with existing page data from file metadata (Proactive Cache Validation pattern)
+   * @param filesToProcess List of files to process
+   * @param cacheManager Cache manager instance
+   */
+  private populateCacheWithExistingData(filesToProcess: string[], cacheManager: any): void {
+    try {
+      ProgressIndicator.showStatus("🔄 Populating cache with existing page data...", "info");
+      let pagesProcessed = 0;
+      let pagesUpdated = 0;
+
+      for (const filePath of filesToProcess) {
+        try {
+          const content = readFileSync(filePath, 'utf-8');
+          const metadata = MetadataManager.parseMetadata(content);
+          
+          if (metadata && metadata.telegraphUrl && metadata.editPath) {
+            const contentWithoutMetadata = MetadataManager.removeMetadata(content);
+            const currentHash = ContentProcessor.calculateContentHash(contentWithoutMetadata);
+            
+            // Check if page exists in cache
+            const existingPage = cacheManager.getPageByLocalPath(filePath);
+            
+            if (existingPage) {
+              // Update existing page if content hash changed
+              if (existingPage.contentHash !== currentHash) {
+                cacheManager.updatePage(metadata.telegraphUrl, {
+                  title: metadata.title || basename(filePath, '.md'),
+                  authorName: metadata.username || 'Anonymous',
+                  lastUpdated: new Date().toISOString(),
+                  contentHash: currentHash,
+                  localFilePath: filePath
+                });
+                pagesUpdated++;
+                ProgressIndicator.showStatus(`📝 Updated cache for: ${basename(filePath)}`, "info");
+              }
+            } else {
+              // Add new page to cache
+              const pageInfo = {
+                telegraphUrl: metadata.telegraphUrl,
+                editPath: metadata.editPath,
+                localFilePath: filePath,
+                title: metadata.title || basename(filePath, '.md'),
+                authorName: metadata.username || 'Anonymous',
+                publishedAt: metadata.publishedAt || new Date().toISOString(),
+                lastUpdated: new Date().toISOString(),
+                contentHash: currentHash
+              };
+              cacheManager.addPage(pageInfo);
+              pagesUpdated++;
+              ProgressIndicator.showStatus(`📄 Added to cache: ${basename(filePath)}`, "info");
+            }
+            pagesProcessed++;
+          }
+        } catch (error) {
+          // Skip files with errors but continue processing others
+          ProgressIndicator.showStatus(`⚠️ Could not process ${basename(filePath)}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+        }
+      }
+      
+      ProgressIndicator.showStatus(`✅ Cache populated: ${pagesProcessed} files processed, ${pagesUpdated} entries updated`, "success");
+    } catch (error) {
+      ProgressIndicator.showStatus(`⚠️ Cache population failed: ${error instanceof Error ? error.message : String(error)}`, "warning");
+    }
   }
 
   /**
@@ -20207,6 +20441,9 @@ export class PublicationWorkflowManager {
       ProgressIndicator.showStatus("No markdown files found to publish.", "info");
       return;
     }
+
+    // PROACTIVE CACHE INITIALIZATION (Pre-warming Cache Strategy pattern)
+    await this.initializeAndValidateCaches(filesToProcess);
 
     let allBrokenLinks: BrokenLink[] = [];
 
@@ -20265,7 +20502,7 @@ export class PublicationWorkflowManager {
     // Шаг 5: Публикация.
     for (const file of filesToProcess) {
       ProgressIndicator.showStatus(`⚙️ Publishing: ${file}`, "info");
-      const result = await this.publisher.publishWithMetadata(file, this.config.defaultUsername, {
+      const result = await this.publisher.publishWithMetadata(file, this.config.defaultUsername || 'Anonymous', {
         withDependencies: options.withDependencies !== false,
         forceRepublish: options.forceRepublish || options.force || false,
         dryRun: options.dryRun || false,

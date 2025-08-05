@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EnhancedTelegraphPublisher } from './EnhancedTelegraphPublisher';
 import { writeFileSync, unlinkSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -287,7 +287,7 @@ Content here.`);
         .mockResolvedValue({ success: true, url: 'test-url-publish', path: 'test-path-publish', isNewPublication: true });
 
       // Execute publishDependencies
-      const result = await publisher.publishDependencies(rootFile, 'test-user', false);
+      const result = await publisher.publishDependencies(rootFile, 'test-user', { dryRun: false });
 
       // Verify results
       expect(result.success).toBe(true);
@@ -338,7 +338,7 @@ Content here.`);
         .mockResolvedValue({ success: true, url: 'test-url', path: 'test-path', isNewPublication: false });
 
       // Execute dry-run
-      const result = await publisher.publishDependencies(rootFile, 'test-user', true);
+      const result = await publisher.publishDependencies(rootFile, 'test-user', { dryRun: true });
 
       // Verify results
       expect(result.success).toBe(true);
@@ -396,7 +396,7 @@ contentHash: def456mixedhash
         .mockResolvedValue({ success: true, url: 'publish-url', path: 'publish-path', isNewPublication: true });
 
       // Execute
-      const result = await publisher.publishDependencies(rootFile, 'test-user', false);
+      const result = await publisher.publishDependencies(rootFile, 'test-user', { dryRun: false });
 
       // Verify comprehensive results
       expect(result.success).toBe(true);
@@ -446,7 +446,7 @@ originalFilename: dep-error.md
         .mockResolvedValue({ success: false, error: 'Network error during backfill', isNewPublication: false });
 
       // Execute
-      const result = await publisher.publishDependencies(rootFile, 'test-user', false);
+      const result = await publisher.publishDependencies(rootFile, 'test-user', { dryRun: false });
 
       // Verify error handling
       expect(result.success).toBe(false);
@@ -475,7 +475,7 @@ originalFilename: dep-error.md
       writeFileSync(rootFile, `# Corrupted Test\nNo dependencies to avoid complexity.`);
 
       // Test that empty dependency list is handled correctly
-      const result = await publisher.publishDependencies(rootFile, 'test-user', false);
+      const result = await publisher.publishDependencies(rootFile, 'test-user', { dryRun: false });
       
       expect(result.success).toBe(true);
       expect(result.publishedFiles).toEqual([]);

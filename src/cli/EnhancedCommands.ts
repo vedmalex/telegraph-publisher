@@ -16,6 +16,7 @@ import { type FileMetadata, PublicationStatus, type TelegraphLink } from "../typ
 import { PathResolver } from "../utils/PathResolver";
 import { PublicationWorkflowManager } from "../workflow";
 import { ProgressIndicator } from "./ProgressIndicator";
+import { DeprecatedFlagError, UserFriendlyErrorReporter } from "../errors/DeprecatedFlagError";
 
 /**
  * Enhanced CLI commands with metadata management
@@ -96,7 +97,6 @@ export class EnhancedCommands {
       .option("--author-url <url>", "Author's URL (optional)")
       .option("--with-dependencies", "Automatically publish linked local files (default: true)")
       .option("--no-with-dependencies", "Skip automatic dependency publishing")
-      .option("--force-republish", "Force republish even if file is already published")
       .option("--dry-run", "Preview operations without making changes")
       .option("--debug", "Save the generated Telegraph JSON to a file (implies --dry-run)")
       .option("--no-verify", "Skip mandatory local link verification before publishing")
@@ -106,13 +106,19 @@ export class EnhancedCommands {
       .option("--toc-title <title>", "Title for the Table of Contents section (default: 'Содержание')")
       .option("--toc-separators", "Add horizontal separators (HR) before and after Table of Contents (default: true)")
       .option("--no-toc-separators", "Disable horizontal separators around Table of Contents")
-      .option("--force", "Bypass link verification and publish anyway (for debugging)")
+      .option("--force", "Bypass link verification and force republish of unchanged files (for debugging)")
       .option("--token <token>", "Access token (optional, will try to load from config)")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
         try {
+          // Check for deprecated flags before processing
+          EnhancedCommands.validateDeprecatedFlags(process.argv);
           await EnhancedCommands.handleUnifiedPublishCommand(options);
         } catch (error) {
+          if (error instanceof DeprecatedFlagError) {
+            console.error(error.getHelpMessage());
+            process.exit(1);
+          }
           ProgressIndicator.showStatus(
             `Operation failed: ${error instanceof Error ? error.message : String(error)}`,
             "error"
@@ -763,6 +769,20 @@ export class EnhancedCommands {
     } catch (error) {
       reportGenerator.showError(error instanceof Error ? error.message : String(error));
       throw error;
+    }
+  }
+
+  /**
+   * Validate against deprecated flags in argv
+   * @param argv Command line arguments
+   */
+  private static validateDeprecatedFlags(argv: string[]): void {
+    const deprecatedFlags = ['--force-republish'];
+    
+    for (const flag of deprecatedFlags) {
+      if (argv.includes(flag)) {
+        throw new DeprecatedFlagError(flag, '--force');
+      }
     }
   }
 }

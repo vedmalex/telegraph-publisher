@@ -20,6 +20,9 @@ import type {
 } from "../types/metadata";
 import { PublicationStatus } from "../types/metadata";
 import { PathResolver } from '../utils/PathResolver';
+import type { PublishDependenciesOptions, ValidatedPublishDependenciesOptions } from "../types/publisher";
+import { PublishOptionsValidator } from "../types/publisher";
+import { OptionsPropagationChain } from "../patterns/OptionsPropagation";
 
 /**
  * Enhanced Telegraph publisher with metadata management and dependency resolution
@@ -214,7 +217,18 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       // Process dependencies if requested
       if (withDependencies) {
-        const dependencyResult = await this.publishDependencies(filePath, username, dryRun, generateAside, tocTitle, tocSeparators);
+        // Use OptionsPropagationChain for clean recursive options
+        const recursiveOptions = OptionsPropagationChain.forRecursiveCall(
+          PublishOptionsValidator.validate({ 
+            dryRun, 
+            debug, 
+            force: forceRepublish, 
+            generateAside, 
+            tocTitle, 
+            tocSeparators 
+          })
+        );
+        const dependencyResult = await this.publishDependencies(filePath, username, recursiveOptions);
         if (!dependencyResult.success) {
           return {
             success: false,
@@ -355,7 +369,18 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       // Process dependencies if requested
       if (withDependencies) {
-        const dependencyResult = await this.publishDependencies(filePath, username, dryRun, generateAside, tocTitle, tocSeparators);
+        // Use OptionsPropagationChain for clean recursive options
+        const recursiveOptions = OptionsPropagationChain.forRecursiveCall(
+          PublishOptionsValidator.validate({ 
+            dryRun, 
+            debug, 
+            force: forceRepublish, 
+            generateAside, 
+            tocTitle, 
+            tocSeparators 
+          })
+        );
+        const dependencyResult = await this.publishDependencies(filePath, username, recursiveOptions);
         if (!dependencyResult.success) {
           return {
             success: false,
@@ -488,18 +513,19 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
    * Publish file dependencies recursively
    * @param filePath Root file path
    * @param username Author username
-   * @param dryRun Whether to perform dry run
+   * @param options Publishing options
    * @returns Success status and any errors
    */
   async publishDependencies(
     filePath: string,
     username: string,
-    dryRun: boolean = false,
-    generateAside: boolean = true,
-    tocTitle: string = '',
-    tocSeparators: boolean = true
+    options: PublishDependenciesOptions = {}
   ): Promise<{ success: boolean; error?: string; publishedFiles?: string[] }> {
     try {
+      // Validate and normalize options with defaults
+      const validatedOptions = PublishOptionsValidator.validate(options);
+      const { dryRun, debug, force, generateAside, tocTitle, tocSeparators } = validatedOptions;
+      
       // Build dependency tree
       const dependencyTree = this.dependencyManager.buildDependencyTree(filePath);
 
@@ -534,7 +560,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         if (fileToProcess === filePath) continue; // Skip root file
         
         try {
-          await this.processFileByStatus(fileToProcess, username, dryRun, publishedFiles, stats, generateAside, tocTitle, tocSeparators);
+          await this.processFileByStatus(fileToProcess, username, publishedFiles, stats, validatedOptions);
           stats.processedFiles++;
         } catch (error) {
           // Clear cache on error
@@ -803,22 +829,19 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   private async processFileByStatus(
     fileToProcess: string,
     username: string,
-    dryRun: boolean,
     publishedFiles: string[],
     stats: any,
-    generateAside: boolean = true,
-    tocTitle: string = '',
-    tocSeparators: boolean = true
+    options: ValidatedPublishDependenciesOptions
   ): Promise<void> {
     const { status, metadata } = this.getCachedMetadata(fileToProcess);
     
     switch (status) {
       case PublicationStatus.NOT_PUBLISHED:
-        await this.handleUnpublishedFile(fileToProcess, username, dryRun, publishedFiles, stats, generateAside, tocTitle, tocSeparators);
+        await this.handleUnpublishedFile(fileToProcess, username, publishedFiles, stats, options);
         break;
         
       case PublicationStatus.PUBLISHED:
-        await this.handlePublishedFile(fileToProcess, username, dryRun, publishedFiles, stats, metadata, generateAside, tocTitle, tocSeparators);
+        await this.handlePublishedFile(fileToProcess, username, publishedFiles, stats, metadata, options);
         break;
         
       case PublicationStatus.METADATA_CORRUPTED:
@@ -843,25 +866,31 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   private async handleUnpublishedFile(
     filePath: string,
     username: string,
-    dryRun: boolean,
     publishedFiles: string[],
     stats: any,
-    generateAside: boolean = true,
-    tocTitle: string = '',
-    tocSeparators: boolean = true
+    options: ValidatedPublishDependenciesOptions
   ): Promise<void> {
+    const { dryRun, debug, force, generateAside, tocTitle, tocSeparators } = options;
+    
     if (dryRun) {
       ProgressIndicator.showStatus(`🔍 DRY-RUN: Would publish '${basename(filePath)}'`, "info");
     } else {
       ProgressIndicator.showStatus(`📄 Publishing '${basename(filePath)}'...`, "info");
     }
 
+    // Use OptionsPropagationChain for clean recursive options
+    const recursiveOptions = OptionsPropagationChain.forRecursiveCall(options, {
+      // Override for recursion: disable dependencies to avoid infinite recursion
+    });
+    
     const result = await this.publishWithMetadata(filePath, username, {
       withDependencies: false, // Avoid infinite recursion
-      dryRun,
-      generateAside,
-      tocTitle,
-      tocSeparators
+      dryRun: recursiveOptions.dryRun,
+      debug: recursiveOptions.debug,
+      forceRepublish: recursiveOptions.force,
+      generateAside: recursiveOptions.generateAside,
+      tocTitle: recursiveOptions.tocTitle,
+      tocSeparators: recursiveOptions.tocSeparators
     });
 
     if (result.success) {
@@ -885,14 +914,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   private async handlePublishedFile(
     filePath: string,
     username: string,
-    dryRun: boolean,
     publishedFiles: string[],
     stats: any,
     metadata: FileMetadata | null,
-    generateAside: boolean = true,
-    tocTitle: string = '',
-    tocSeparators: boolean = true
+    options: ValidatedPublishDependenciesOptions
   ): Promise<void> {
+    const { dryRun, debug, force, generateAside, tocTitle, tocSeparators } = options;
+    
     if (metadata && !metadata.contentHash) {
       // File is published but missing contentHash - backfill it
       if (dryRun) {
@@ -901,12 +929,20 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         ProgressIndicator.showStatus(`📝 Updating '${basename(filePath)}' to add content hash...`, "info");
       }
       
+      // Use OptionsPropagationChain for clean recursive options
+      const recursiveOptions = OptionsPropagationChain.forRecursiveCall(options, {
+        // Override for backfill operation: empty title and force enable
+        tocTitle: '', // Use no title for dependency updates
+        tocSeparators: true
+      });
+      
       // Force an edit operation to backfill the content hash
       const result = await this.editWithMetadata(filePath, username, {
         withDependencies: false,
-        dryRun,
+        dryRun: recursiveOptions.dryRun,
+        debug: recursiveOptions.debug,
         forceRepublish: true, // Use force to bypass the normal hash check
-        generateAside,
+        generateAside: recursiveOptions.generateAside,
         tocTitle: '', // Use no title for dependency updates
         tocSeparators: true
       });
