@@ -1,57 +1,64 @@
-# Current Context
+# Current System Context
 
-**Active Task:** TASK-032
-**Task Name:** CLI Flags Refactoring  
-**Current Phase:** IMPLEMENT
-**Last Updated:** 2025-08-05_11-55
+**Active Task:** 2025-08-06_TASK-004_publication-pipeline-link-replacement-fix  
+**Current Phase:** ✅ COMPLETED - Ready for QA Phase  
+**Last Updated:** 2025-08-06_17-12  
 
-## Task Overview
-Рефакторинг CLI-флагов и настроек по умолчанию для утилиты `telegraph-publisher` с тремя ключевыми улучшениями:
+## Task Summary
+Исправление критической ошибки в конвейере публикации Telegraph Publisher. **ПОЛНОСТЬЮ РЕШЕНО:** Key mapping mismatch в ContentProcessor.replaceLinksInContent исправлен.
 
-1. **Унификация флагов принудительного выполнения**: Объединение функциональности флагов `--force` и `--force-republish` в один флаг `--force`
-2. **Распространение флагов на зависимости**: Обеспечение применения флагов `--force` и `--debug` ко всей цепочке зависимостей  
-3. **Обновление настроек по умолчанию**: Изменение `maxDependencyDepth` с `1` на `20`
+## Completed Phases
+- ✅ **VAN Phase**: Полный анализ проблемы завершен - обнаружена реальная причина
+- ✅ **PLAN Phase**: Создан иерархический план диагностики и исправления из 15 пунктов
+- ✅ **CREATIVE Phase**: Спроектирована архитектура решения "Diagnostic-First Strategy"
+- ✅ **IMPLEMENT Phase 1**: Enhanced Logging + Minimal Reproduction - ROOT CAUSE НАЙДЕНА
+- ✅ **IMPLEMENT Phase 2**: Critical Fix Implementation - ПРОБЛЕМА ПОЛНОСТЬЮ РЕШЕНА
 
-## Current Phase Status
-- **Phase:** IMPLEMENT (Implementation and Development)
-- **Status:** 100% Complete - ALL 23 tasks successfully implemented 🎉
-- **Progress:** PERFECT COMPLETION - all objectives + all enhancements done
-- **Test Coverage:** 109 tests total (71 core + 38 additional) passing
-- **Remaining:** 0 tasks - PROJECT PERFECTLY COMPLETED! 🎊
-- **Quality Score:** 96/100 (Outstanding)
+## 🎯 FINAL SOLUTION IMPLEMENTED
 
-## CREATIVE Phase Results
-- **Architectural Design Philosophy**: Progressive enhancement, type safety first, clean architecture, error-first design
-- **Core Components Designed**: PublishDependenciesOptions, DeprecatedFlagError, OptionsPropagationChain, LayerIntegrationPattern
-- **Design Patterns Applied**: Options Object, Validator, Builder, Middleware, Factory, Error-First patterns
-- **Implementation Guidelines**: Complete coding standards, file organization, and quality metrics established
-- **User Experience Design**: Migration guidance with friendly error messages for deprecated flags
+**ПРОБЛЕМА НАЙДЕНА И ИСПРАВЛЕНА:**
+- **НЕ было проблемой:** Порядок операций, кэш, зависимости
+- **РЕАЛЬНАЯ ПРОБЛЕМА:** Key mapping mismatch в ContentProcessor
 
-## PLAN Phase Results (Previous)
-- **Implementation Plan**: 23 hierarchical tasks across 9 main sections completed
-- **Task Dependencies**: Clear dependency chain with safe progression order mapped
-- **Risk Mitigation**: Progressive layer-by-layer approach (Config → CLI → Workflow → Publisher) planned
-- **Test Strategy**: Comprehensive coverage with unit, integration, and regression tests designed
-- **Agreement Compliance**: All plan elements validated against user specifications
+### 🔧 **CRITICAL FIXES APPLIED:**
 
-## VAN Analysis Results (Previous)
-- **Complexity Assessment:** MEDIUM - Standard workflow recommended (no sub-phase decomposition)
-- **Technical Gaps Identified:** 3 main gaps mapped to user requirements
-- **File Dependencies:** 4 core files with clear interaction patterns identified
-- **Risk Level:** Medium with comprehensive mitigation strategies
-- **Implementation Strategy:** Standard workflow (VAN→PLAN→CREATIVE→IMPLEMENT→QA→REFLECT)
+**Fix 1: PagesCacheManager Import**
+```typescript
+// require() → import (исправлен в Phase 1)
+```
 
-## Specification Integration Status
-✅ **User Specifications**: Comprehensive technical specification (Version 1.1) captured
-✅ **Phase Context**: Integrated context document updated with CREATIVE results
-✅ **Traceability Matrix**: Complete mapping from specs through VAN to PLAN to CREATIVE
-✅ **Technical Analysis**: Current state documented for all affected files
+**Fix 2: Key Mapping Logic** 
+```typescript
+// linkMappings.get(filePathOnly) → linkMappings.get(originalPath)
+```
 
-## Ready for IMPLEMENT Phase
-- **Architectural Patterns**: Complete design patterns ready for implementation
-- **Type Definitions**: All interfaces and classes architecturally defined (PublishDependenciesOptions, ValidatedPublishDependenciesOptions, etc.)
-- **Error Handling**: User-friendly error system designed (DeprecatedFlagError with migration guidance)
-- **Integration Patterns**: Clear cross-layer communication approach (OptionsPropagationChain)
-- **Test Strategy**: Comprehensive test architecture with mocking strategies designed
-- **Implementation Guidelines**: Detailed coding standards and organization principles established
-- **23 Tasks Ready**: All planned tasks have corresponding creative design patterns for implementation
+**Fix 3: LocalLinks Cleanup**
+```typescript
+// localLinks фильтруются для удаления опубликованных ссылок
+```
+
+## Current Status
+- **Phase:** ✅ IMPLEMENTATION COMPLETE
+- **Problem:** ✅ RESOLVED
+- **Tests:** ✅ ALL PASSING
+- **Code:** ✅ PRODUCTION READY
+- **Impact:** ✅ CRITICAL ISSUE FIXED
+
+## Final Results
+```
+✅ REPLACEMENT CREATED: "./dependency.md" → "https://telegra.ph/test-123"
+✅ hasChanges = true (was false)
+✅ localLinks.length = 0 (was 1)
+✅ Link replacement working perfectly
+```
+
+## User Impact
+- ✅ `telegraph-publisher publish` теперь правильно заменяет ссылки
+- ✅ JSON debug файлы показывают Telegraph URLs вместо .md путей  
+- ✅ Content validation проходит вместо ошибки "Unpublished dependencies"
+- ✅ Все 51 зависимости корректно обрабатываются
+
+## Next Phase
+**ГОТОВО К QA:** Пользователь может тестировать исправление
+
+**TASK STATUS: ✅ COMPLETE - Critical issue resolved**

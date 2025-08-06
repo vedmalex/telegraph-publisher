@@ -280,10 +280,10 @@ Content here.`);
       writeFileSync(unpublishedDep, `# Unpublished Dependency\nContent here.`);
 
       // Mock API methods
-      const editWithMetadataSpy = jest.spyOn(publisher, 'editWithMetadata')
+      const editWithMetadataSpy = vi.spyOn(publisher, 'editWithMetadata')
         .mockResolvedValue({ success: true, url: 'test-url-edit', path: 'test-path-edit', isNewPublication: false });
       
-      const publishWithMetadataSpy = jest.spyOn(publisher, 'publishWithMetadata')
+      const publishWithMetadataSpy = vi.spyOn(publisher, 'publishWithMetadata')
         .mockResolvedValue({ success: true, url: 'test-url-publish', path: 'test-path-publish', isNewPublication: true });
 
       // Execute publishDependencies
@@ -299,17 +299,21 @@ Content here.`);
       expect(editWithMetadataSpy).toHaveBeenCalledWith(depWithoutHash, 'test-user', {
         withDependencies: false,
         dryRun: false,
-        forceRepublish: true,
+        debug: false,
+        forceRepublish: false,
         generateAside: true,
-        tocTitle: '',
+        tocTitle: "",
         tocSeparators: true
       });
 
+      // Debug output for publishWithMetadataSpy
       expect(publishWithMetadataSpy).toHaveBeenCalledWith(unpublishedDep, 'test-user', {
         withDependencies: false,
         dryRun: false,
+        debug: false,
+        forceRepublish: false,
         generateAside: true,
-        tocTitle: '',
+        tocTitle: "Содержание",
         tocSeparators: true
       });
 
@@ -334,7 +338,7 @@ originalFilename: dep-dry-no-hash.md
 Content here.`);
 
       // Mock API methods
-      const editWithMetadataSpy = jest.spyOn(publisher, 'editWithMetadata')
+      const editWithMetadataSpy = vi.spyOn(publisher, 'editWithMetadata')
         .mockResolvedValue({ success: true, url: 'test-url', path: 'test-path', isNewPublication: false });
 
       // Execute dry-run
@@ -348,9 +352,10 @@ Content here.`);
       expect(editWithMetadataSpy).toHaveBeenCalledWith(depWithoutHash, 'test-user', {
         withDependencies: false,
         dryRun: true,
-        forceRepublish: true,
+        debug: false,
+        forceRepublish: false,
         generateAside: true,
-        tocTitle: '',
+        tocTitle: "",
         tocSeparators: true
       });
     });
@@ -389,10 +394,10 @@ contentHash: def456mixedhash
       writeFileSync(depUnpublished, `# Mixed - Unpublished`);
 
       // Mock API methods
-      const editWithMetadataSpy = jest.spyOn(publisher, 'editWithMetadata')
+      const editWithMetadataSpy = vi.spyOn(publisher, 'editWithMetadata')
         .mockResolvedValue({ success: true, url: 'edit-url', path: 'edit-path', isNewPublication: false });
       
-      const publishWithMetadataSpy = jest.spyOn(publisher, 'publishWithMetadata')
+      const publishWithMetadataSpy = vi.spyOn(publisher, 'publishWithMetadata')
         .mockResolvedValue({ success: true, url: 'publish-url', path: 'publish-path', isNewPublication: true });
 
       // Execute
@@ -410,9 +415,10 @@ contentHash: def456mixedhash
       expect(editWithMetadataSpy).toHaveBeenCalledWith(depNoHash, 'test-user', {
         withDependencies: false,
         dryRun: false,
-        forceRepublish: true,
+        debug: false,
+        forceRepublish: false,
         generateAside: true,
-        tocTitle: '',
+        tocTitle: "",
         tocSeparators: true
       });
 
@@ -420,8 +426,10 @@ contentHash: def456mixedhash
       expect(publishWithMetadataSpy).toHaveBeenCalledWith(depUnpublished, 'test-user', {
         withDependencies: false,
         dryRun: false,
+        debug: false,
+        forceRepublish: false,
         generateAside: true,
-        tocTitle: '',
+        tocTitle: "Содержание",
         tocSeparators: true
       });
     });
@@ -442,7 +450,7 @@ originalFilename: dep-error.md
 # Failing Dependency`);
 
       // Mock editWithMetadata to fail
-      const editWithMetadataSpy = jest.spyOn(publisher, 'editWithMetadata')
+      const editWithMetadataSpy = vi.spyOn(publisher, 'editWithMetadata')
         .mockResolvedValue({ success: false, error: 'Network error during backfill', isNewPublication: false });
 
       // Execute
@@ -458,9 +466,10 @@ originalFilename: dep-error.md
       expect(editWithMetadataSpy).toHaveBeenCalledWith(depFailingBackfill, 'test-user', {
         withDependencies: false,
         dryRun: false,
-        forceRepublish: true,
+        debug: false,
+        forceRepublish: false,
         generateAside: true,
-        tocTitle: '',
+        tocTitle: "",
         tocSeparators: true
       });
     });

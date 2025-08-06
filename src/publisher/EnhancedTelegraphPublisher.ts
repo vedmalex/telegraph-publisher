@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, resolve } from "node:path";
 import type { PagesCacheManager } from "../cache/PagesCacheManager";
+import { PagesCacheManager as PagesCacheManagerClass } from "../cache/PagesCacheManager";
 import { ProgressIndicator } from "../cli/ProgressIndicator";
 import { ContentProcessor } from "../content/ContentProcessor";
 import { DependencyManager } from "../dependencies/DependencyManager";
@@ -97,8 +98,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Use base cache directory if set (for bulk operations),
       // otherwise use file's directory (for single file operations)
       const directory = this.baseCacheDirectory || dirname(filePath);
-      const { PagesCacheManager } = require("../cache/PagesCacheManager");
-      this.cacheManager = new PagesCacheManager(directory, this.currentAccessToken);
+      this.cacheManager = new PagesCacheManagerClass(directory, this.currentAccessToken);
     }
   }
 
@@ -241,10 +241,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Process the main file
       const processed = ContentProcessor.processFile(filePath);
 
-      // Replace local links with Telegraph URLs if dependencies were published
-      const processedWithLinks = withDependencies
-        ? await this.replaceLinksWithTelegraphUrls(processed)
-        : processed;
+      // Replace local links with Telegraph URLs if configured and if there are links to replace
+      // Unified Pipeline: This is no longer dependent on the `withDependencies` recursion flag
+      let processedWithLinks = processed;
+      if (this.config.replaceLinksinContent && processed.localLinks.length > 0) {
+        processedWithLinks = await this.replaceLinksWithTelegraphUrls(processed, this.cacheManager);
+      }
 
       // Validate content with relaxed rules for depth 1 or when dependencies are disabled
       const isDepthOne = this.config.maxDependencyDepth === 1;
@@ -393,30 +395,89 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Process the main file
       const processed = ContentProcessor.processFile(filePath);
 
-      // NEW: Content change detection (skip when debug mode is enabled)
+      // Enhanced Change Detection: Timestamp-first with conditional hash calculation
       if (!forceRepublish && !debug) {
-        const currentHash = this.calculateContentHash(processed.contentWithoutMetadata);
-        
-        if (existingMetadata.contentHash && existingMetadata.contentHash === currentHash) {
+        try {
+          // STAGE 1: Fast timestamp check (primary validation)
+          const { statSync } = require("node:fs");
+          const currentMtime = statSync(filePath).mtime.toISOString();
+          const lastPublishedTime = existingMetadata.publishedAt; // Use publishedAt as reference timestamp
+          
+          if (currentMtime <= lastPublishedTime) {
+            // Timestamps are the same or older, no need to check hash
+            ProgressIndicator.showStatus(
+              `⚡ Content unchanged (timestamp check). Skipping publication of ${basename(filePath)}.`, 
+              "info"
+            );
+            return {
+              success: true,
+              url: existingMetadata.telegraphUrl,
+              path: existingMetadata.editPath,
+              isNewPublication: false,
+              metadata: existingMetadata
+            };
+          }
+          
+          // STAGE 2: Hash check (only if timestamp is newer)
+          const currentHash = this.calculateContentHash(processed.contentWithoutMetadata);
+          if (existingMetadata.contentHash && existingMetadata.contentHash === currentHash) {
+            ProgressIndicator.showStatus(
+              `📝 Content timestamp changed, but hash is identical. Skipping publication of ${basename(filePath)}.`, 
+              "info"
+            );
+            // Optional: Update the timestamp in metadata to prevent re-checking next time
+            // For now, we will skip this to keep it simple
+            return {
+              success: true,
+              url: existingMetadata.telegraphUrl,
+              path: existingMetadata.editPath,
+              isNewPublication: false,
+              metadata: existingMetadata
+            };
+          }
+          
+          // Content has actually changed, proceed with publication
           ProgressIndicator.showStatus(
-            `📄 Content unchanged. Skipping publication of ${basename(filePath)}.`, 
+            `🔄 Content changed (hash verification). Proceeding with publication of ${basename(filePath)}.`, 
             "info"
           );
           
-          return {
-            success: true,
-            url: existingMetadata.telegraphUrl,
-            path: existingMetadata.editPath,
-            isNewPublication: false,
-            metadata: existingMetadata
-          };
+        } catch (timestampError) {
+          // Fallback to hash-only validation if timestamp read fails
+          ProgressIndicator.showStatus(
+            `⚠️ Cannot read file timestamp, falling back to hash validation for ${basename(filePath)}.`, 
+            "warning"
+          );
+          
+          const currentHash = this.calculateContentHash(processed.contentWithoutMetadata);
+          if (existingMetadata.contentHash && existingMetadata.contentHash === currentHash) {
+            ProgressIndicator.showStatus(
+              `📄 Content unchanged (hash fallback). Skipping publication of ${basename(filePath)}.`, 
+              "info"
+            );
+            return {
+              success: true,
+              url: existingMetadata.telegraphUrl,
+              path: existingMetadata.editPath,
+              isNewPublication: false,
+              metadata: existingMetadata
+            };
+          }
         }
+      } else if (forceRepublish) {
+        // This branch is taken when forceRepublish is true
+        ProgressIndicator.showStatus(
+          `⚙️ --force flag detected. Forcing republication of ${basename(filePath)}.`, 
+          "info"
+        );
       }
 
-      // Replace local links with Telegraph URLs if dependencies were published
-      const processedWithLinks = withDependencies
-        ? await this.replaceLinksWithTelegraphUrls(processed)
-        : processed;
+      // Replace local links with Telegraph URLs if configured and if there are links to replace
+      // Unified Pipeline: Apply the same logic as in publishWithMetadata for consistency
+      let processedWithLinks = processed;
+      if (this.config.replaceLinksinContent && processed.localLinks.length > 0) {
+        processedWithLinks = await this.replaceLinksWithTelegraphUrls(processed, this.cacheManager);
+      }
 
       // Validate content with relaxed rules for depth 1 or when dependencies are disabled
       const isDepthOne = this.config.maxDependencyDepth === 1;
@@ -555,13 +616,38 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         return { success: true, publishedFiles: [] };
       }
 
-      // Process all files with status-based handling
+      // Process all files with explicit force flag handling
       for (const fileToProcess of analysis.publishOrder) {
         if (fileToProcess === filePath) continue; // Skip root file
         
         try {
-          await this.processFileByStatus(fileToProcess, username, publishedFiles, stats, validatedOptions);
-          stats.processedFiles++;
+          // FORCE FLAG PROPAGATION: Handle force explicitly for each dependency
+          if (validatedOptions.force) {
+            // If force is enabled, always force republish dependencies
+            ProgressIndicator.showStatus(
+              `🔄 FORCE: Processing dependency '${basename(fileToProcess)}' (force propagated)`, 
+              "info"
+            );
+            
+            const result = await this.publishWithMetadata(fileToProcess, username, { 
+              ...validatedOptions, 
+              forceRepublish: true, 
+              withDependencies: false 
+            });
+            
+            if (!result.success) {
+              throw new Error(`Failed to force republish dependency ${fileToProcess}: ${result.error}`);
+            }
+            
+            publishedFiles.push(fileToProcess);
+            stats.processedFiles++;
+            
+          } else {
+            // Standard mode: let publishWithMetadata/editWithMetadata handle change detection
+            await this.processFileByStatus(fileToProcess, username, publishedFiles, stats, validatedOptions);
+            stats.processedFiles++;
+          }
+          
         } catch (error) {
           // Clear cache on error
           this.clearMetadataCache();
@@ -594,25 +680,30 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   }
 
   /**
-   * Replace local links in processed content with Telegraph URLs
+   * Replace local links with Telegraph URLs using cache
    * @param processed Processed content
-   * @param basePath Base file path for resolving links
+   * @param cacheManager Optional cache manager for global URL lookup
    * @returns Content with replaced links
    */
   private async replaceLinksWithTelegraphUrls(
     processed: ProcessedContent,
+    cacheManager?: PagesCacheManager,
   ): Promise<ProcessedContent> {
+    // Early return if no cache manager is available
+    if (!cacheManager) {
+      return processed;
+    }
+
     const linkMappings = new Map<string, string>();
 
-    // Get unique file paths from local links
-    const markdownLinks = LinkResolver.filterMarkdownLinks(processed.localLinks);
-    const uniquePaths = LinkResolver.getUniqueFilePaths(markdownLinks);
-
-    // Get Telegraph URLs for published files
-    for (const filePath of uniquePaths) {
-      const metadata = MetadataManager.getPublicationInfo(filePath);
-      if (metadata) {
-        linkMappings.set(filePath, metadata.telegraphUrl);
+    // Use global cache to find mappings for all local links
+    for (const link of processed.localLinks) {
+      // Use the resolved absolute path as the key for cache lookup
+      const telegraphUrl = cacheManager.getTelegraphUrl(link.resolvedPath);
+      
+      if (telegraphUrl) {
+        // Use the original relative path as the key for replacement
+        linkMappings.set(link.originalPath, telegraphUrl);
       }
     }
 
@@ -941,7 +1032,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         withDependencies: false,
         dryRun: recursiveOptions.dryRun,
         debug: recursiveOptions.debug,
-        forceRepublish: true, // Use force to bypass the normal hash check
+        forceRepublish: recursiveOptions.force, // Use actual force flag from user options
         generateAside: recursiveOptions.generateAside,
         tocTitle: '', // Use no title for dependency updates
         tocSeparators: true

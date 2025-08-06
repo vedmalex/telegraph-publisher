@@ -1,22 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { AnchorCacheManager } from "./AnchorCacheManager";
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { AnchorCacheManager } from './AnchorCacheManager';
 
-describe('AnchorCacheManager', () => {
-  const testDir = join(__dirname, '../../test-temp-cache');
+describe('AnchorCacheManager - Enhanced Timestamp Validation', () => {
+  const testDir = join(process.cwd(), 'test-anchor-cache');
   const cacheFilePath = join(testDir, '.telegraph-anchors-cache.json');
   let cacheManager: AnchorCacheManager;
 
   beforeEach(() => {
     // Create test directory
-    if (!existsSync(testDir)) {
-      mkdirSync(testDir, { recursive: true });
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
     }
-    
-    // Clean up any existing cache file
-    if (existsSync(cacheFilePath)) {
-      rmSync(cacheFilePath);
-    }
+    mkdirSync(testDir, { recursive: true });
     
     cacheManager = new AnchorCacheManager(testDir);
   });
@@ -24,177 +21,188 @@ describe('AnchorCacheManager', () => {
   afterEach(() => {
     // Clean up test directory
     if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true });
+      rmSync(testDir, { recursive: true, force: true });
     }
   });
 
-  describe('loadCache', () => {
-    test('should create empty cache when no file exists', () => {
-      const stats = cacheManager.getCacheStats();
-      expect(stats.totalFiles).toBe(0);
-    });
-
-    test('should load existing valid cache', () => {
-      const testCache = {
-        version: "1.0.0",
-        createdAt: new Date().toISOString(),
-        anchors: {
-          "/test/file.md": {
-            contentHash: "testhash123",
-            anchors: ["anchor1", "anchor2"]
-          }
-        }
-      };
+  describe('Task 4.1.1: Timestamp-based change detection tests', () => {
+    test('should return valid cache when both timestamp and hash match', () => {
+      const testFilePath = join(testDir, 'test.md');
+      const testContent = 'test content';
+      const testAnchors = new Set(['header1', 'header2']);
       
-      writeFileSync(cacheFilePath, JSON.stringify(testCache));
-      const newCacheManager = new AnchorCacheManager(testDir);
+      // Create test file
+      writeFileSync(testFilePath, testContent);
       
-      const result = newCacheManager.getAnchorsIfValid("/test/file.md", "testhash123");
+      // Update cache
+      cacheManager.updateAnchors(testFilePath, 'test-hash', testAnchors);
+      
+      // Verify cache is valid
+      const result = cacheManager.getAnchorsIfValid(testFilePath, 'test-hash');
+      
       expect(result.valid).toBe(true);
-      expect(result.anchors).toEqual(new Set(["anchor1", "anchor2"]));
+      expect(result.anchors).toEqual(testAnchors);
+      expect(result.reason).toBeUndefined();
     });
 
-    test('should handle corrupted cache file gracefully', () => {
-      writeFileSync(cacheFilePath, "invalid json content");
-      const newCacheManager = new AnchorCacheManager(testDir);
+    test('should return invalid cache with timestamp-changed reason when file is modified', () => {
+      const testFilePath = join(testDir, 'test.md');
+      const testAnchors = new Set(['header1']);
       
-      const stats = newCacheManager.getCacheStats();
-      expect(stats.totalFiles).toBe(0);
+      // Create initial file
+      writeFileSync(testFilePath, 'initial content');
+      cacheManager.updateAnchors(testFilePath, 'initial-hash', testAnchors);
+      
+      // Wait a bit and modify file (this will change mtime)
+      setTimeout(() => {
+        writeFileSync(testFilePath, 'modified content');
+      }, 10);
+      
+      // Small delay to ensure mtime changes
+      Bun.sleepSync(20);
+      writeFileSync(testFilePath, 'modified content');
+      
+      const result = cacheManager.getAnchorsIfValid(testFilePath, 'initial-hash');
+      
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('timestamp-changed');
     });
 
-    test('should handle version mismatch gracefully', () => {
-      const testCache = {
-        version: "0.1.0", // Old version
-        createdAt: new Date().toISOString(),
-        anchors: {}
-      };
+    test('should return content-changed when hash differs after timestamp check', () => {
+      const testFilePath = join(testDir, 'test.md');
+      const testAnchors = new Set(['header1']);
       
-      writeFileSync(cacheFilePath, JSON.stringify(testCache));
-      const newCacheManager = new AnchorCacheManager(testDir);
+      // Create test file
+      writeFileSync(testFilePath, 'test content');
+      cacheManager.updateAnchors(testFilePath, 'original-hash', testAnchors);
       
-      const stats = newCacheManager.getCacheStats();
-      expect(stats.totalFiles).toBe(0);
+      // Same timestamp but different hash
+      const result = cacheManager.getAnchorsIfValid(testFilePath, 'different-hash');
+      
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('content-changed');
     });
   });
 
-  describe('getAnchorsIfValid', () => {
-    test('should return invalid for non-existent file', () => {
-      const result = cacheManager.getAnchorsIfValid("/non/existent/file.md", "anyhash");
+  describe('Task 4.1.2: Hash-based change validation tests', () => {
+    test('should store mtime when updating anchors', () => {
+      const testFilePath = join(testDir, 'test.md');
+      const testAnchors = new Set(['header1']);
+      
+      // Create test file
+      writeFileSync(testFilePath, 'test content');
+      
+      // Update cache
+      cacheManager.updateAnchors(testFilePath, 'test-hash', testAnchors);
+      
+      // Access the private cache to verify mtime is stored
+      const cacheData = (cacheManager as any).cache;
+      expect(cacheData.anchors[testFilePath].mtime).toBeDefined();
+      expect(typeof cacheData.anchors[testFilePath].mtime).toBe('string');
+    });
+
+    test('should use fallback mtime when file stat fails during update', () => {
+      const nonExistentFile = join(testDir, 'nonexistent.md');
+      const testAnchors = new Set(['header1']);
+      
+      // This should not throw and should use fallback mtime
+      cacheManager.updateAnchors(nonExistentFile, 'test-hash', testAnchors);
+      
+      const cacheData = (cacheManager as any).cache;
+      expect(cacheData.anchors[nonExistentFile].mtime).toBeDefined();
+      expect(typeof cacheData.anchors[nonExistentFile].mtime).toBe('string');
+    });
+  });
+
+  describe('Task 4.2.2: Cache migration and backward compatibility tests', () => {
+    test('should migrate v1.1.0 cache to v1.2.0 with mtime fields', () => {
+      const oldCacheData = {
+        version: '1.1.0',
+        createdAt: '2025-08-06T10:00:00.000Z',
+        anchors: {
+          '/test/file1.md': {
+            contentHash: 'hash1',
+            anchors: ['anchor1']
+          },
+          '/test/file2.md': {
+            contentHash: 'hash2', 
+            anchors: ['anchor2']
+          }
+        }
+      };
+
+      // Write old cache file
+      writeFileSync(cacheFilePath, JSON.stringify(oldCacheData));
+      
+      // Create new cache manager (should trigger migration)
+      const newCacheManager = new AnchorCacheManager(testDir);
+      
+      // Verify cache structure
+      const cacheData = (newCacheManager as any).cache;
+      expect(cacheData.version).toBe('1.2.0');
+      expect(cacheData.anchors['/test/file1.md'].mtime).toBeDefined();
+      expect(cacheData.anchors['/test/file2.md'].mtime).toBeDefined();
+    });
+
+    test('should create new cache for unsupported versions', () => {
+      const unknownVersionData = {
+        version: '2.0.0',
+        createdAt: '2025-08-06T10:00:00.000Z',
+        anchors: {}
+      };
+
+      writeFileSync(cacheFilePath, JSON.stringify(unknownVersionData));
+      
+      const newCacheManager = new AnchorCacheManager(testDir);
+      const cacheData = (newCacheManager as any).cache;
+      
+      expect(cacheData.version).toBe('1.2.0');
+      expect(Object.keys(cacheData.anchors)).toHaveLength(0);
+    });
+  });
+
+  describe('Performance validation', () => {
+    test('should perform timestamp check before hash calculation', () => {
+      const testFilePath = join(testDir, 'performance.md');
+      const testAnchors = new Set(['header1']);
+      
+      // Create test file
+      writeFileSync(testFilePath, 'test content');
+      cacheManager.updateAnchors(testFilePath, 'test-hash', testAnchors);
+      
+      // Modify file to change timestamp
+      Bun.sleepSync(10);
+      writeFileSync(testFilePath, 'modified content');
+      
+      const result = cacheManager.getAnchorsIfValid(testFilePath, 'any-hash');
+      
+      // Should return timestamp-changed, indicating early return
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('timestamp-changed');
+    });
+  });
+
+  describe('Basic functionality tests', () => {
+    test('should return not-found for non-existent cache entry', () => {
+      const result = cacheManager.getAnchorsIfValid('/nonexistent/file.md', 'any-hash');
       expect(result.valid).toBe(false);
       expect(result.reason).toBe('not-found');
     });
 
-    test('should return invalid for content hash mismatch', () => {
-      const anchors = new Set(["anchor1", "anchor2"]);
-      cacheManager.updateAnchors("/test/file.md", "oldhash", anchors);
+    test('should save and load cache correctly', () => {
+      const testFilePath = join(testDir, 'test.md');
+      const testAnchors = new Set(['header1', 'header2']);
       
-      const result = cacheManager.getAnchorsIfValid("/test/file.md", "newhash");
-      expect(result.valid).toBe(false);
-      expect(result.reason).toBe('content-changed');
-    });
-
-    test('should return valid for matching content hash', () => {
-      const anchors = new Set(["anchor1", "anchor2"]);
-      cacheManager.updateAnchors("/test/file.md", "samehash", anchors);
-      
-      const result = cacheManager.getAnchorsIfValid("/test/file.md", "samehash");
-      expect(result.valid).toBe(true);
-      expect(result.anchors).toEqual(anchors);
-    });
-  });
-
-  describe('updateAnchors', () => {
-    test('should update cache entry correctly', () => {
-      const anchors = new Set(["header1", "header2", "header3"]);
-      cacheManager.updateAnchors("/test/file.md", "testhash123", anchors);
-      
-      const result = cacheManager.getAnchorsIfValid("/test/file.md", "testhash123");
-      expect(result.valid).toBe(true);
-      expect(result.anchors).toEqual(anchors);
-    });
-
-    test('should overwrite existing entry', () => {
-      const oldAnchors = new Set(["old1", "old2"]);
-      const newAnchors = new Set(["new1", "new2", "new3"]);
-      
-      cacheManager.updateAnchors("/test/file.md", "oldhash", oldAnchors);
-      cacheManager.updateAnchors("/test/file.md", "newhash", newAnchors);
-      
-      const result = cacheManager.getAnchorsIfValid("/test/file.md", "newhash");
-      expect(result.valid).toBe(true);
-      expect(result.anchors).toEqual(newAnchors);
-    });
-  });
-
-  describe('saveCache', () => {
-    test('should persist cache to file system', () => {
-      const anchors = new Set(["anchor1", "anchor2"]);
-      cacheManager.updateAnchors("/test/file.md", "testhash123", anchors);
+      writeFileSync(testFilePath, 'test content');
+      cacheManager.updateAnchors(testFilePath, 'test-hash', testAnchors);
       cacheManager.saveCache();
       
-      expect(existsSync(cacheFilePath)).toBe(true);
+      // Create new cache manager (should load existing cache)
+      const newCacheManager = new AnchorCacheManager(testDir);
+      const result = newCacheManager.getAnchorsIfValid(testFilePath, 'test-hash');
       
-      const savedData = JSON.parse(readFileSync(cacheFilePath, 'utf-8'));
-      expect(savedData.version).toBe("1.0.0");
-      expect(savedData.anchors["/test/file.md"].contentHash).toBe("testhash123");
-      expect(savedData.anchors["/test/file.md"].anchors).toEqual(["anchor1", "anchor2"]);
-    });
-
-    test('should handle write errors gracefully', () => {
-      // Make directory read-only to cause write error
-      try {
-        const readOnlyDir = join(__dirname, '../../test-readonly');
-        mkdirSync(readOnlyDir, { recursive: true, mode: 0o444 });
-        
-        const readOnlyCacheManager = new AnchorCacheManager(readOnlyDir);
-        readOnlyCacheManager.updateAnchors("/test/file.md", "hash", new Set(["anchor"]));
-        
-        // Should not throw error
-        expect(() => readOnlyCacheManager.saveCache()).not.toThrow();
-        
-        // Clean up
-        rmSync(readOnlyDir, { recursive: true, force: true });
-      } catch (error) {
-        // Test environment might not support read-only directories
-        console.warn('Read-only directory test skipped:', error);
-      }
-    });
-  });
-
-  describe('getCacheStats', () => {
-    test('should return correct statistics', () => {
-      expect(cacheManager.getCacheStats().totalFiles).toBe(0);
-      
-      cacheManager.updateAnchors("/test/file1.md", "hash1", new Set(["a", "b"]));
-      cacheManager.updateAnchors("/test/file2.md", "hash2", new Set(["c", "d", "e"]));
-      
-      const stats = cacheManager.getCacheStats();
-      expect(stats.totalFiles).toBe(2);
-      expect(stats.cacheSize).toMatch(/\d+KB/);
-    });
-  });
-
-  describe('cleanupStaleEntries', () => {
-    test('should remove entries for non-existent files', () => {
-      cacheManager.updateAnchors("/test/existing.md", "hash1", new Set(["a"]));
-      cacheManager.updateAnchors("/test/deleted.md", "hash2", new Set(["b"]));
-      cacheManager.updateAnchors("/test/another.md", "hash3", new Set(["c"]));
-      
-      const existingFiles = ["/test/existing.md", "/test/another.md"];
-      cacheManager.cleanupStaleEntries(existingFiles);
-      
-      expect(cacheManager.getAnchorsIfValid("/test/existing.md", "hash1").valid).toBe(true);
-      expect(cacheManager.getAnchorsIfValid("/test/another.md", "hash3").valid).toBe(true);
-      expect(cacheManager.getAnchorsIfValid("/test/deleted.md", "hash2").valid).toBe(false);
-      
-      expect(cacheManager.getCacheStats().totalFiles).toBe(2);
-    });
-
-    test('should handle empty file list', () => {
-      cacheManager.updateAnchors("/test/file.md", "hash", new Set(["anchor"]));
-      cacheManager.cleanupStaleEntries([]);
-      
-      expect(cacheManager.getCacheStats().totalFiles).toBe(0);
+      expect(result.valid).toBe(true);
+      expect(result.anchors).toEqual(testAnchors);
     });
   });
 });

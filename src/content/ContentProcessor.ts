@@ -155,11 +155,10 @@ export class ContentProcessor {
     const replacementMap = new Map<string, string>();
 
     for (const link of processedContent.localLinks) {
-      // Extract file path without anchor from resolvedPath for lookup in linkMappings
-      const anchorIndex = link.resolvedPath.indexOf('#');
-      const filePathOnly = anchorIndex !== -1 ? link.resolvedPath.substring(0, anchorIndex) : link.resolvedPath;
-
-      const telegraphUrl = linkMappings.get(filePathOnly);
+      // FIXED: Use originalPath directly as it matches the key in linkMappings
+      // The linkMappings uses link.originalPath as key, not the resolved absolute path
+      const telegraphUrl = linkMappings.get(link.originalPath);
+      
       if (telegraphUrl) {
         // Check for and preserve the URL fragment (anchor) from original path
         const originalAnchorIndex = link.originalPath.indexOf('#');
@@ -187,6 +186,8 @@ export class ContentProcessor {
     return {
       ...processedContent,
       contentWithReplacedLinks,
+      // Remove published links from localLinks array
+      localLinks: processedContent.localLinks.filter(link => !link.isPublished),
       hasChanges: replacementMap.size > 0
     };
   }
