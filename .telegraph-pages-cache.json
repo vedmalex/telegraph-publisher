@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2025-08-07T14:26:07.427Z",
+  "accessTokenHash": "4c5dc9b7708905f7",
+  "pages": {
+    "https://telegra.ph/test-page-01-01": {
+      "telegraphUrl": "https://telegra.ph/test-page-01-01",
+      "editPath": "test-page-01-01",
+      "localFilePath": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-metadata-preservation.md",
+      "title": "Test Page",
+      "authorName": "testuser",
+      "publishedAt": "2025-08-07T13:12:14.624Z",
+      "lastUpdated": "2025-08-07T14:26:07.427Z",
+      "contentHash": "eb3ea244fc201b681f033362a20efb9f55ff3127f96e6f6c508d59553b8ce2cd",
+      "accessToken": "test-token"
+    }
+  },
+  "localToTelegraph": {
+    "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-metadata-preservation.md": "https://telegra.ph/test-page-01-01"
+  },
+  "telegraphToLocal": {
+    "https://telegra.ph/test-page-01-01": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-metadata-preservation.md"
+  }
+}

@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -79,6 +79,7 @@ EnhancedCommands.addConfigCommand(program);
 EnhancedCommands.addStatusCommand(program);
 EnhancedCommands.addResetCommand(program);
 EnhancedCommands.addCheckLinksCommand(program);
+EnhancedCommands.addCacheValidateCommand(program);
 
 // Keep original publish command as legacy support with enhanced workflow
 program

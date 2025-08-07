@@ -56,16 +56,39 @@ export class MetadataManager {
   private static parseYamlMetadata(yamlContent: string): FileMetadata | null {
     const metadata: Partial<FileMetadata> = {};
     const lines = yamlContent.split(/\r?\n/);
+    let currentKey: string | null = null;
+    let currentObject: Record<string, string> | null = null;
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? '';
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) continue;
+
+      // Handle indented object properties for publishedDependencies
+      if (currentKey === 'publishedDependencies' && currentObject && line.startsWith('  ')) {
+        const colonIndex = trimmed.indexOf(':');
+        if (colonIndex !== -1) {
+          const objKey = trimmed.substring(0, colonIndex).trim();
+          const objValue = trimmed.substring(colonIndex + 1).trim().replace(/^["']|["']$/g, '');
+          currentObject[objKey] = objValue;
+        }
+        continue;
+      }
 
       const colonIndex = trimmed.indexOf(':');
       if (colonIndex === -1) continue;
 
       const key = trimmed.substring(0, colonIndex).trim();
       const value = trimmed.substring(colonIndex + 1).trim().replace(/^["']|["']$/g, '');
+
+      // Reset object parsing state for new top-level keys
+      if (currentKey && currentKey !== key) {
+        if (currentKey === 'publishedDependencies' && currentObject) {
+          metadata.publishedDependencies = currentObject;
+        }
+        currentKey = null;
+        currentObject = null;
+      }
 
       switch (key) {
         case 'telegraphUrl':
@@ -92,7 +115,35 @@ export class MetadataManager {
         case 'contentHash':
           metadata.contentHash = value;
           break;
+        case 'accessToken':
+          metadata.accessToken = value;
+          break;
+        case 'tokenSource':
+          metadata.tokenSource = value as 'metadata' | 'cache' | 'config' | 'session' | 'backfilled';
+          break;
+        case 'tokenUpdatedAt':
+          metadata.tokenUpdatedAt = value;
+          break;
+        case 'publishedDependencies':
+          // Initialize object parsing for publishedDependencies
+          currentKey = 'publishedDependencies';
+          currentObject = {};
+          // If there's a value on the same line (shouldn't happen but handle gracefully)
+          if (value && value !== '') {
+            try {
+              metadata.publishedDependencies = JSON.parse(value);
+            } catch {
+              // If not valid JSON, treat as empty object and parse following lines
+              currentObject = {};
+            }
+          }
+          break;
       }
+    }
+
+    // Handle final object if parsing ended while in object mode
+    if (currentKey === 'publishedDependencies' && currentObject) {
+      metadata.publishedDependencies = currentObject;
     }
 
     // Return metadata if any fields were found
@@ -315,15 +366,16 @@ export class MetadataManager {
   }
 
   /**
-   * Create metadata object from publication result
-   * @param url Telegraph URL
-   * @param path Telegraph path
-   * @param username Author username
-   * @param filePath Original file path
-   * @param contentHash Content hash for change detection
+   * Create metadata object from page info with optional accessToken
+   * @param url Telegraph page URL
+   * @param path Telegraph edit path
+   * @param username Username
+   * @param filePath Local file path
+   * @param contentHash Content hash
    * @param title Optional title
    * @param description Optional description
-   * @returns Complete metadata object
+   * @param accessToken Optional access token
+   * @returns FileMetadata object
    */
   static createMetadata(
     url: string,
@@ -332,7 +384,9 @@ export class MetadataManager {
     filePath: string,
     contentHash: string,
     title?: string,
-    description?: string
+    description?: string,
+    accessToken?: string,
+    publishedDependencies?: Record<string, string>
   ): FileMetadata {
     return {
       telegraphUrl: url,
@@ -342,7 +396,50 @@ export class MetadataManager {
       originalFilename: basename(filePath),
       title,
       description,
-      contentHash
+      contentHash,
+      accessToken,
+      publishedDependencies
+    };
+  }
+
+  /**
+   * Create enhanced metadata with token source tracking (Creative Enhancement)
+   * @param url Telegraph page URL
+   * @param path Telegraph edit path
+   * @param username Username
+   * @param filePath Local file path
+   * @param contentHash Content hash
+   * @param accessToken Access token used
+   * @param tokenSource Source of the access token
+   * @param title Optional title
+   * @param description Optional description
+   * @returns FileMetadata object with enhanced diagnostics
+   */
+  static createEnhancedMetadata(
+    url: string,
+    path: string,
+    username: string,
+    filePath: string,
+    contentHash: string,
+    accessToken: string,
+    tokenSource: 'metadata' | 'cache' | 'config' | 'session' | 'backfilled',
+    title?: string,
+    description?: string,
+    publishedDependencies?: Record<string, string>
+  ): FileMetadata {
+    return {
+      telegraphUrl: url,
+      editPath: path,
+      username,
+      publishedAt: new Date().toISOString(),
+      originalFilename: basename(filePath),
+      title,
+      description,
+      contentHash,
+      accessToken,
+      tokenSource,
+      tokenUpdatedAt: new Date().toISOString(),
+      publishedDependencies
     };
   }
 
@@ -370,6 +467,32 @@ export class MetadataManager {
 
     if (metadata.contentHash) {
       lines.push(`contentHash: "${metadata.contentHash}"`);
+    }
+
+    if (metadata.accessToken) {
+      lines.push(`accessToken: "${metadata.accessToken}"`);
+    }
+
+    // Creative Enhancement: Token diagnostic metadata
+    if (metadata.tokenSource) {
+      lines.push(`tokenSource: "${metadata.tokenSource}"`);
+    }
+
+    if (metadata.tokenUpdatedAt) {
+      lines.push(`tokenUpdatedAt: "${metadata.tokenUpdatedAt}"`);
+    }
+
+    // Enhanced Addition: Published Dependencies object serialization
+    if (metadata.publishedDependencies && Object.keys(metadata.publishedDependencies).length > 0) {
+      lines.push('publishedDependencies:');
+      // Sort keys for consistent output
+      const sortedKeys = Object.keys(metadata.publishedDependencies).sort();
+      for (const key of sortedKeys) {
+        const value = metadata.publishedDependencies[key];
+        if (value) {
+          lines.push(`  ${key}: "${value}"`);
+        }
+      }
     }
 
     return lines.join('\n');

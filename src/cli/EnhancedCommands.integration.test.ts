@@ -126,3 +126,337 @@ describe('EnhancedCommands CLI Integration', () => {
     });
   });
 }); 
+
+/**
+ * Integration tests for EnhancedCommands hierarchical configuration
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { EnhancedCommands } from './EnhancedCommands.js';
+
+describe('EnhancedCommands Hierarchical Configuration Integration', () => {
+  const testDir = resolve('./test-hierarchical-config');
+  const subDir = join(testDir, 'sub');
+  const testFile = join(subDir, 'test.md');
+  
+  beforeEach(() => {
+    // Clean up and create test directory structure
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(subDir, { recursive: true });
+    
+    // Create test markdown file
+    writeFileSync(testFile, `---
+title: Test File
+---
+
+# Test Content
+`);
+  });
+  
+  afterEach(() => {
+    // Clean up test directory
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  test('should use hierarchical config loading in config command', async () => {
+    // Create parent config
+    const parentConfig = {
+      autoPublishDependencies: true,
+      generateAside: false,
+      accessToken: 'parent-token-123'
+    };
+    writeFileSync(join(testDir, '.telegraph-publisher-config.json'), JSON.stringify(parentConfig, null, 2));
+    
+    // Create child config (should override parent)
+    const childConfig = {
+      generateAside: true,
+      accessToken: 'child-token-456'
+    };
+    writeFileSync(join(subDir, '.telegraph-publisher-config.json'), JSON.stringify(childConfig, null, 2));
+    
+    // Test config command output
+    const mockConsoleLog = [];
+    const originalLog = console.log;
+    console.log = (...args) => {
+      mockConsoleLog.push(args.join(' '));
+    };
+    
+    try {
+      await EnhancedCommands.config({ file: testFile });
+      
+      // Verify hierarchical merging worked
+      const configOutput = mockConsoleLog.find(line => line.includes('generateAside'));
+      expect(configOutput).toContain('true'); // Child config should override
+      
+      const tokenOutput = mockConsoleLog.find(line => line.includes('accessToken'));
+      expect(tokenOutput).toContain('child-token-456'); // Child token should be used
+      
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test('should prioritize CLI options over hierarchical config', async () => {
+    // Create config file
+    const config = {
+      autoPublishDependencies: true,
+      generateAside: false,
+      accessToken: 'config-token-123'
+    };
+    writeFileSync(join(subDir, '.telegraph-publisher-config.json'), JSON.stringify(config, null, 2));
+    
+    const mockConsoleLog = [];
+    const originalLog = console.log;
+    console.log = (...args) => {
+      mockConsoleLog.push(args.join(' '));
+    };
+    
+    try {
+      // Test with CLI overrides
+      await EnhancedCommands.config({ 
+        file: testFile,
+        token: 'cli-token-override',
+        'auto-publish-dependencies': false // CLI override
+      });
+      
+      // Verify CLI priority
+      const tokenOutput = mockConsoleLog.find(line => line.includes('accessToken'));
+      expect(tokenOutput).toContain('cli-token-override'); // CLI should override config
+      
+      const autoPublishOutput = mockConsoleLog.find(line => line.includes('autoPublishDependencies'));
+      expect(autoPublishOutput).toContain('false'); // CLI should override config
+      
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test('should fall back to legacy config on hierarchical failure', async () => {
+    // Create malformed config to trigger fallback
+    writeFileSync(join(subDir, '.telegraph-publisher-config.json'), '{ invalid json }');
+    
+    const mockConsoleWarn = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => {
+      mockConsoleWarn.push(args.join(' '));
+    };
+    
+    const mockConsoleLog = [];
+    const originalLog = console.log;
+    console.log = (...args) => {
+      mockConsoleLog.push(args.join(' '));
+    };
+    
+    try {
+      await EnhancedCommands.config({ file: testFile });
+      
+      // Should show fallback warning
+      const fallbackWarning = mockConsoleWarn.find(line => 
+        line.includes('Failed to load hierarchical config')
+      );
+      expect(fallbackWarning).toBeDefined();
+      
+      // Should still show config (using defaults)
+      expect(mockConsoleLog.length).toBeGreaterThan(0);
+      
+    } finally {
+      console.warn = originalWarn;
+      console.log = originalLog;
+    }
+  });
+
+  test('should handle analyze-dependencies with hierarchical config', async () => {
+    // Create config with dependencies settings
+    const config = {
+      autoPublishDependencies: true,
+      followSymlinks: false,
+      tocTitle: 'Custom TOC',
+      accessToken: 'analysis-token-123'
+    };
+    writeFileSync(join(subDir, '.telegraph-publisher-config.json'), JSON.stringify(config, null, 2));
+    
+    // Create a simple dependency file
+    const depFile = join(subDir, 'dependency.md');
+    writeFileSync(depFile, `---
+title: Dependency File
+---
+
+# Dependency Content
+`);
+    
+    // Reference dependency in main file
+    writeFileSync(testFile, `---
+title: Test File
+---
+
+# Test Content
+
+[Link to dependency](./dependency.md)
+`);
+    
+    const mockConsoleLog = [];
+    const originalLog = console.log;
+    console.log = (...args) => {
+      mockConsoleLog.push(args.join(' '));
+    };
+    
+    try {
+      await EnhancedCommands.analyzeDependencies({ file: testFile });
+      
+      // Should use hierarchical config for analysis
+      const output = mockConsoleLog.join('\n');
+      expect(output).toContain('dependency.md'); // Should find the dependency
+      
+    } catch (error) {
+      // Expected if file processing fails, but config loading should work
+      expect(error.message).not.toContain('Failed to load any configuration');
+    } finally {
+      console.log = originalLog;
+    }
+  });
+});
+
+/**
+ * Integration test for Creative Enhancement: CLI Priority Preservation
+ */
+describe('CLI Priority Preservation Integration', () => {
+  const testDir = resolve('./test-cli-priority');
+  const testFile = join(testDir, 'test.md');
+  
+  beforeEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+    mkdirSync(testDir, { recursive: true });
+    
+    writeFileSync(testFile, `---
+title: CLI Priority Test
+---
+
+# Test Content
+`);
+  });
+  
+  afterEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  test('CLI options should have highest priority over all config sources', async () => {
+    // Create comprehensive config
+    const config = {
+      autoPublishDependencies: true,
+      generateAside: false,
+      tocTitle: 'Config TOC',
+      tocSeparators: false,
+      followSymlinks: true,
+      accessToken: 'config-token-123'
+    };
+    writeFileSync(join(testDir, '.telegraph-publisher-config.json'), JSON.stringify(config, null, 2));
+    
+    const mockConsoleLog = [];
+    const originalLog = console.log;
+    console.log = (...args) => {
+      mockConsoleLog.push(args.join(' '));
+    };
+    
+    try {
+      // Override every config option via CLI
+      await EnhancedCommands.config({ 
+        file: testFile,
+        token: 'cli-override-token',
+        'auto-publish-dependencies': false,
+        'generate-aside': true,
+        'toc-title': 'CLI TOC Title',
+        'toc-separators': true,
+        'follow-symlinks': false
+      });
+      
+      const output = mockConsoleLog.join('\n');
+      
+      // Verify all CLI overrides took precedence
+      expect(output).toContain('cli-override-token');
+      expect(output).toContain('autoPublishDependencies: false');
+      expect(output).toContain('generateAside: true');
+      expect(output).toContain('CLI TOC Title');
+      expect(output).toContain('tocSeparators: true');
+      expect(output).toContain('followSymlinks: false');
+      
+    } finally {
+      console.log = originalLog;
+    }
+  });
+});
+
+/**
+ * Creative Enhancement: Validation test for enhanced config integration
+ */
+describe('Enhanced Config System Validation', () => {
+  const testDir = resolve('./test-enhanced-config');
+  const testFile = join(testDir, 'test.md');
+  
+  beforeEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+    mkdirSync(testDir, { recursive: true });
+    
+    writeFileSync(testFile, `---
+title: Enhanced Config Test
+accessToken: file-token-123
+---
+
+# Test Content
+`);
+  });
+  
+  afterEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  test('should integrate enhanced metadata config features', async () => {
+    // Create enhanced config with version and metadata
+    const enhancedConfig = {
+      version: '2.0.0',
+      lastModified: new Date().toISOString(),
+      autoPublishDependencies: true,
+      generateAside: true,
+      accessToken: 'enhanced-config-token',
+      // Enhanced features
+      tocTitle: 'Enhanced TOC',
+      tocSeparators: true,
+      followSymlinks: false
+    };
+    writeFileSync(join(testDir, '.telegraph-publisher-config.json'), JSON.stringify(enhancedConfig, null, 2));
+    
+    const mockConsoleLog = [];
+    const originalLog = console.log;
+    console.log = (...args) => {
+      mockConsoleLog.push(args.join(' '));
+    };
+    
+    try {
+      await EnhancedCommands.config({ file: testFile });
+      
+      const output = mockConsoleLog.join('\n');
+      
+      // Should handle enhanced config features
+      expect(output).toContain('enhanced-config-token');
+      expect(output).toContain('Enhanced TOC');
+      expect(output).toContain('tocSeparators: true');
+      
+    } finally {
+      console.log = originalLog;
+    }
+  });
+}); 

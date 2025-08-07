@@ -576,6 +576,32 @@ export class TelegraphPublisher {
 	 * Sleep for specified number of milliseconds
 	 * @param ms Milliseconds to sleep
 	 */
+	/**
+	 * Get a Telegraph page
+	 * @param path Path to the Telegraph page (format: Title-12-31)
+	 * @param returnContent If true, content field will be returned
+	 * @returns Promise resolving to TelegraphPage object
+	 */
+	async getPage(path: string, returnContent: boolean = false): Promise<TelegraphPage> {
+		const params = new URLSearchParams();
+		if (returnContent) {
+			params.append('return_content', 'true');
+		}
+
+		const url = params.toString() 
+			? `${this.apiBase}/getPage/${path}?${params.toString()}`
+			: `${this.apiBase}/getPage/${path}`;
+
+		const response = await fetch(url);
+		const data = await response.json() as ApiResponse<TelegraphPage>;
+
+		if (data.ok && data.result) {
+			return data.result;
+		}
+
+		throw new Error(data.error || 'Failed to get page');
+	}
+
 	private async sleep(ms: number): Promise<void> {
 		return new Promise(resolve => setTimeout(resolve, ms));
 	}

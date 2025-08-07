@@ -151,7 +151,7 @@ export class DependencyManager {
 
     // Check for circular dependency
     if (this.processingStack.has(filePath)) {
-      console.warn(`Circular dependency detected: ${filePath}`);
+      // console.warn(`Circular dependency detected: ${filePath}`);
       // Create shallow node but don't cache it to break the cycle
       return this.createNode(filePath, currentDepth, []);
     }

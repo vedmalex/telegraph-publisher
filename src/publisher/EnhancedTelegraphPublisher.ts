@@ -21,9 +21,13 @@ import type {
 } from "../types/metadata";
 import { PublicationStatus } from "../types/metadata";
 import { PathResolver } from '../utils/PathResolver';
-import type { PublishDependenciesOptions, ValidatedPublishDependenciesOptions } from "../types/publisher";
+import type { PublishDependenciesOptions, PublishDependenciesResult, ValidatedPublishDependenciesOptions } from "../types/publisher";
 import { PublishOptionsValidator } from "../types/publisher";
 import { OptionsPropagationChain } from "../patterns/OptionsPropagation";
+import { ConfigManager } from "../config/ConfigManager";
+import { IntelligentRateLimitQueueManager, type QueueDecision } from "./IntelligentRateLimitQueueManager";
+import { TokenContextManager } from "./TokenContextManager.js";
+import { TokenBackfillManager } from "./TokenBackfillManager.js";
 
 /**
  * Enhanced Telegraph publisher with metadata management and dependency resolution
@@ -46,6 +50,16 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   // Hash cache for content hash calculation
   private hashCache = new Map<string, { hash: string; timestamp: number }>();
   private readonly CACHE_TTL = 5000; // 5 seconds
+  
+  // User switching for rate limit handling
+  private accountSwitchCounter = 1;
+  private switchHistory: Array<{
+    timestamp: string;
+    originalToken: string;
+    newToken: string;
+    triggerFile: string;
+    reason: string;
+  }> = [];
 
   constructor(config: MetadataConfig) {
     super();
@@ -103,6 +117,106 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   }
 
   /**
+   * Convert absolute file path to relative path from base file
+   * @param absolutePath Absolute path of dependency file
+   * @param baseFilePath Base file path to calculate relative path from
+   * @returns Relative path as it would appear in markdown links
+   */
+  private convertToRelativePath(absolutePath: string, baseFilePath: string): string {
+    const { relative } = require("node:path");
+    const baseDir = dirname(baseFilePath);
+    return relative(baseDir, absolutePath);
+  }
+
+  /**
+   * Record link mapping for dependency tracking
+   * @param linkMappings Map to record the mapping in
+   * @param dependencyPath Absolute path of the dependency file
+   * @param baseFilePath Base file path for relative calculation
+   * @param telegraphUrl Published Telegraph URL
+   */
+  private recordLinkMapping(
+    linkMappings: Record<string, string>,
+    dependencyPath: string,
+    baseFilePath: string,
+    telegraphUrl: string
+  ): void {
+    const relativePath = this.convertToRelativePath(dependencyPath, baseFilePath);
+    linkMappings[relativePath] = telegraphUrl;
+  }
+
+  /**
+   * Get effective access token with hierarchical fallback
+   * Creative Enhancement: Integrates with TokenContextManager for comprehensive token resolution
+   * @param filePath File path for context-aware resolution
+   * @param sessionToken Optional session token override
+   * @returns Resolved token with source information
+   */
+  private async getEffectiveAccessToken(
+    filePath: string, 
+    sessionToken?: string
+  ): Promise<{ token: string; source: string; confidence: string }> {
+    try {
+      // Use TokenContextManager for comprehensive token resolution
+      const resolvedToken = await TokenContextManager.getEffectiveAccessTokenWithTracking(
+        filePath,
+        sessionToken || this.currentAccessToken,
+        true // Track operation for analytics
+      );
+      
+      return resolvedToken;
+      
+    } catch (error) {
+      // Fallback to legacy resolution for backward compatibility
+      console.warn('⚠️ TokenContextManager failed, using legacy resolution:', error);
+      
+      // Legacy fallback logic
+      if (sessionToken) {
+        return { token: sessionToken, source: 'session', confidence: 'medium' };
+      }
+      
+      if (this.currentAccessToken) {
+        return { token: this.currentAccessToken, source: 'current', confidence: 'low' };
+      }
+      
+      throw new Error(`No access token available for ${basename(filePath)}. Please configure an access token.`);
+    }
+  }
+
+  /**
+   * Synchronous version for backward compatibility where async is not supported
+   * @param filePath File path for resolution
+   * @param cacheToken Optional cache token
+   * @returns Resolved token with source
+   */
+  private getEffectiveAccessTokenSync(filePath: string, cacheToken?: string): { token: string; source: 'cache' | 'directory' | 'global' | 'current' } {
+    // Cache token wins (highest priority)
+    if (cacheToken) {
+      return { token: cacheToken, source: 'cache' };
+    }
+
+    // Directory-specific token (legacy compatibility)
+    const directory = dirname(filePath);
+    const directoryToken = ConfigManager.loadAccessToken(directory);
+    if (directoryToken) {
+      return { token: directoryToken, source: 'directory' };
+    }
+
+    // Global config token
+    const globalToken = ConfigManager.loadAccessToken('.');
+    if (globalToken) {
+      return { token: globalToken, source: 'global' };
+    }
+
+    // Current session token (fallback)
+    if (this.currentAccessToken) {
+      return { token: this.currentAccessToken, source: 'current' };
+    }
+
+    throw new Error(`No access token available for ${basename(filePath)}. Please configure an access token.`);
+  }
+
+  /**
    * Add page to cache after successful publication (Method Signature Evolution pattern)
    * @param filePath Local file path
    * @param url Telegraph URL
@@ -110,8 +224,9 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
    * @param title Page title
    * @param username Author username
    * @param contentHash Content hash for change detection (optional for backward compatibility)
+   * @param accessToken Access token used for publication (optional for backward compatibility)
    */
-  private addToCache(filePath: string, url: string, path: string, title: string, username: string, contentHash?: string): void {
+  private addToCache(filePath: string, url: string, path: string, title: string, username: string, contentHash?: string, accessToken?: string): void {
     if (this.cacheManager) {
       const pageInfo: PublishedPageInfo = {
         telegraphUrl: url,
@@ -121,7 +236,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         authorName: username,
         publishedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
-        contentHash: contentHash // Content Hash Integration pattern
+        contentHash: contentHash, // Content Hash Integration pattern
+        accessToken: accessToken || this.currentAccessToken // Include access token for cache restore
       };
 
       this.cacheManager.addPage(pageInfo);
@@ -176,6 +292,10 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const publicationStatus = MetadataManager.getPublicationStatus(filePath);
       const existingMetadata = MetadataManager.getPublicationInfo(filePath);
 
+      // 🔗 Enhanced Addition: Initialize publishedDependencies collection with preservation logic
+      const originalDependencies = existingMetadata?.publishedDependencies || {};
+      let publishedDependencies: Record<string, string> = {};
+
       // Also check cache for existing publication info
       let cacheInfo: PublishedPageInfo | null = null;
       if (this.cacheManager) {
@@ -187,6 +307,10 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       if (isPublished) {
         // File is already published, use edit instead (regardless of force flags)
+        
+        // 🔗 Enhanced Addition: Initialize publishedDependencies collection for edit mode
+        let editPublishedDependencies: Record<string, string> = {};
+        
         // If we have cache info but no file metadata, we need to restore metadata to file
         if (cacheInfo && !existingMetadata) {
           console.log(`📋 Found ${filePath} in cache but missing metadata in file, restoring...`);
@@ -195,6 +319,17 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           const processed = ContentProcessor.processFile(filePath);
           const contentHash = this.calculateContentHash(processed.contentWithoutMetadata);
           
+          // Implement Token Context Manager pattern - resolve effective access token
+          const tokenResolution = this.getEffectiveAccessTokenSync(filePath, cacheInfo.accessToken);
+          
+          // Progressive Disclosure Logging pattern
+          if (cacheInfo.accessToken) {
+            console.log(`🔑 Cache restore: using cached token for ${basename(filePath)}`);
+          } else {
+            console.log(`🔄 Legacy cache detected for ${basename(filePath)} - using ${tokenResolution.source} token`);
+            console.log(`💾 Token backfill: ${tokenResolution.source} → file metadata for future operations`);
+          }
+          
           const restoredMetadata: FileMetadata = {
             telegraphUrl: cacheInfo.telegraphUrl,
             editPath: cacheInfo.editPath,
@@ -202,14 +337,21 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
             publishedAt: cacheInfo.publishedAt,
             originalFilename: cacheInfo.localFilePath ? basename(cacheInfo.localFilePath) : basename(filePath),
             title: cacheInfo.title,
-            contentHash
+            contentHash,
+            accessToken: tokenResolution.token // Token Backfill Orchestrator pattern
           };
 
           // Restore metadata to file
           const contentWithMetadata = ContentProcessor.injectMetadataIntoContent(processed, restoredMetadata);
           writeFileSync(filePath, contentWithMetadata, 'utf-8');
 
-          console.log(`✅ Metadata restored to ${filePath} from cache`);
+          // Enhanced completion logging
+          if (cacheInfo.accessToken) {
+            console.log(`✅ Metadata restored to ${filePath} from cache`);
+          } else {
+            console.log(`✅ Metadata restored to ${filePath} from cache`);
+            console.log(`✅ Token backfill complete: future edits will use ${tokenResolution.source} token`);
+          }
         }
 
         return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug, generateAside, forceRepublish, tocTitle, tocSeparators });
@@ -236,6 +378,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
             isNewPublication: true
           };
         }
+
+        // 🔗 Enhanced Addition: Collect linkMappings from dependency publication
+        publishedDependencies = dependencyResult.linkMappings || {};
+      } else {
+        // 🔗 Metadata Preservation: When withDependencies=false, preserve existing dependencies
+        publishedDependencies = originalDependencies;
       }
 
       // Process the main file
@@ -245,7 +393,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Unified Pipeline: This is no longer dependent on the `withDependencies` recursion flag
       let processedWithLinks = processed;
       if (this.config.replaceLinksinContent && processed.localLinks.length > 0) {
-        processedWithLinks = await this.replaceLinksWithTelegraphUrls(processed, this.cacheManager);
+        processedWithLinks = await this.replaceLinksWithTelegraphUrls(processed, undefined, this.cacheManager);
       }
 
       // Validate content with relaxed rules for depth 1 or when dependencies are disabled
@@ -289,8 +437,26 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         };
       }
 
-      // Create new page
-      const page = await this.publishNodes(title, telegraphNodes);
+      // Create new page with user switching support
+      let page: any;
+      try {
+        page = await this.publishNodes(title, telegraphNodes);
+      } catch (error) {
+        // Check if this is a FLOOD_WAIT error that can trigger user switching
+        if (error instanceof Error && error.message.includes('FLOOD_WAIT_')) {
+          console.log(`🔄 FLOOD_WAIT detected for new publication: ${basename(filePath)}`);
+          
+          // Create new user and switch
+          await this.createNewUserAndSwitch(filePath);
+          
+          // Retry publication with new user
+          console.log(`🔄 Retrying publication with new user...`);
+          page = await this.publishNodes(title, telegraphNodes);
+        } else {
+          // Re-throw non-FLOOD_WAIT errors
+          throw error;
+        }
+      }
 
       // Create metadata - preserve original title from metadata if it exists
       const originalTitle = processed.metadata?.title;
@@ -299,13 +465,19 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Calculate content hash for new publication
       const contentHash = this.calculateContentHash(processedWithLinks.contentWithoutMetadata);
       
+      // Get the actual token used for publication (may have been switched)
+      const actualTokenUsed = this.currentAccessToken;
+      
       const metadata = MetadataManager.createMetadata(
         page.url,
         page.path,
         username,
         filePath,
         contentHash,
-        metadataTitle
+        metadataTitle,
+        undefined, // description
+        actualTokenUsed,
+        publishedDependencies
       );
 
       // Inject metadata into file
@@ -313,7 +485,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       writeFileSync(filePath, contentWithMetadata, 'utf-8');
 
       // Add to cache after successful publication (Content Hash Integration pattern)
-      this.addToCache(filePath, page.url, page.path, metadataTitle, username, contentHash);
+      this.addToCache(filePath, page.url, page.path, metadataTitle, username, contentHash, actualTokenUsed);
 
       return {
         success: true,
@@ -355,7 +527,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   ): Promise<PublicationResult> {
     try {
       const { withDependencies = true, dryRun = false, debug = false, generateAside = true, forceRepublish = false, tocTitle = '', tocSeparators = true } = options;
-
+      
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
 
@@ -369,7 +541,21 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         };
       }
 
-      // Process dependencies if requested
+      // Token context management for existing files
+      const originalToken = this.currentAccessToken;
+      const fileToken = existingMetadata.accessToken;
+      
+      // If file has its own token, temporarily switch to it
+      if (fileToken && fileToken !== this.currentAccessToken) {
+        console.log(`🔑 Using file-specific token for editing: ${basename(filePath)}`);
+        this.setAccessToken(fileToken);
+        this.currentAccessToken = fileToken;
+      }
+
+      // 🔗 ENHANCED WORKFLOW: Process dependencies BEFORE change detection
+      // 🔗 Metadata Preservation: Initialize with existing dependencies
+      let currentLinkMappings: Record<string, string> = existingMetadata.publishedDependencies || {};
+      
       if (withDependencies) {
         // Use OptionsPropagationChain for clean recursive options
         const recursiveOptions = OptionsPropagationChain.forRecursiveCall(
@@ -390,32 +576,50 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
             isNewPublication: false
           };
         }
+
+        // Capture current link mappings from dependency processing
+        currentLinkMappings = dependencyResult.linkMappings || {};
       }
 
       // Process the main file
       const processed = ContentProcessor.processFile(filePath);
 
-      // Enhanced Change Detection: Timestamp-first with conditional hash calculation
+      // Enhanced Change Detection: Dependencies-first, then timestamp and hash
       if (!forceRepublish && !debug) {
         try {
-          // STAGE 1: Fast timestamp check (primary validation)
-          const { statSync } = require("node:fs");
-          const currentMtime = statSync(filePath).mtime.toISOString();
-          const lastPublishedTime = existingMetadata.publishedAt; // Use publishedAt as reference timestamp
+          // 🔗 STAGE 0: Dependency Change Detection (highest priority)
+          const dependenciesChanged = !this._areDependencyMapsEqual(
+            currentLinkMappings, 
+            existingMetadata.publishedDependencies
+          );
           
-          if (currentMtime <= lastPublishedTime) {
-            // Timestamps are the same or older, no need to check hash
+          if (dependenciesChanged) {
             ProgressIndicator.showStatus(
-              `⚡ Content unchanged (timestamp check). Skipping publication of ${basename(filePath)}.`, 
+              `🔄 Dependencies changed for ${basename(filePath)}. Forcing republication.`, 
               "info"
             );
-            return {
-              success: true,
-              url: existingMetadata.telegraphUrl,
-              path: existingMetadata.editPath,
-              isNewPublication: false,
-              metadata: existingMetadata
-            };
+            // Dependencies changed - skip timestamp/hash checks and proceed with republication
+            // Continue to publication logic below (no return here)
+          } else {
+            // STAGE 1: Fast timestamp check (primary validation)
+            const { statSync } = require("node:fs");
+            const currentMtime = statSync(filePath).mtime.toISOString();
+            const lastPublishedTime = existingMetadata.publishedAt; // Use publishedAt as reference timestamp
+            
+            if (currentMtime <= lastPublishedTime) {
+              // Timestamps are the same or older, no need to check hash
+              ProgressIndicator.showStatus(
+                `⚡ Content unchanged (timestamp check). Skipping publication of ${basename(filePath)}.`, 
+                "info"
+              );
+              return {
+                success: true,
+                url: existingMetadata.telegraphUrl,
+                path: existingMetadata.editPath,
+                isNewPublication: false,
+                metadata: existingMetadata
+              };
+            }
           }
           
           // STAGE 2: Hash check (only if timestamp is newer)
@@ -476,7 +680,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Unified Pipeline: Apply the same logic as in publishWithMetadata for consistency
       let processedWithLinks = processed;
       if (this.config.replaceLinksinContent && processed.localLinks.length > 0) {
-        processedWithLinks = await this.replaceLinksWithTelegraphUrls(processed, this.cacheManager);
+        processedWithLinks = await this.replaceLinksWithTelegraphUrls(processed, currentLinkMappings, this.cacheManager);
       }
 
       // Validate content with relaxed rules for depth 1 or when dependencies are disabled
@@ -521,8 +725,18 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         };
       }
 
-      // Edit existing page
-      const page = await this.editPage(existingMetadata.editPath, title, telegraphNodes, username);
+      // Edit existing page with token context restoration
+      let page: any;
+      try {
+        page = await this.editPage(existingMetadata.editPath, title, telegraphNodes, username);
+      } finally {
+        // Always restore original token after edit operation
+        if (fileToken && originalToken && fileToken !== originalToken) {
+          console.log(`🔄 Restoring original session token after edit`);
+          this.setAccessToken(originalToken);
+          this.currentAccessToken = originalToken;
+        }
+      }
 
       // Update metadata with new timestamp and content hash - preserve original title from metadata if it exists
       const originalTitle = processed.metadata?.title;
@@ -535,7 +749,9 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         ...existingMetadata,
         publishedAt: new Date().toISOString(),
         title: metadataTitle,
-        contentHash: updatedContentHash
+        contentHash: updatedContentHash,
+        // �� Enhanced Addition: Use current link mappings for metadata
+        publishedDependencies: currentLinkMappings
       };
 
       // Update metadata in file
@@ -581,7 +797,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     filePath: string,
     username: string,
     options: PublishDependenciesOptions = {}
-  ): Promise<{ success: boolean; error?: string; publishedFiles?: string[] }> {
+  ): Promise<PublishDependenciesResult> {
     try {
       // Validate and normalize options with defaults
       const validatedOptions = PublishOptionsValidator.validate(options);
@@ -595,12 +811,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       // Check for circular dependencies
       if (analysis.circularDependencies.length > 0) {
-        console.warn('Circular dependencies detected:', analysis.circularDependencies);
+        // console.warn('Circular dependencies detected:', analysis.circularDependencies);
         // Continue with publishing, but log the warning
       }
 
       // Initialize processing state
       const publishedFiles: string[] = [];
+      const linkMappings: Record<string, string> = {};
       const stats = this.initializeStatsTracking(analysis, filePath);
       
       // Clear metadata cache at start of operation
@@ -613,60 +830,172 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           "info"
         );
       } else {
-        return { success: true, publishedFiles: [] };
+        return { success: true, publishedFiles: [], linkMappings: {} };
       }
 
-      // Process all files with explicit force flag handling
-      for (const fileToProcess of analysis.publishOrder) {
-        if (fileToProcess === filePath) continue; // Skip root file
+      // 🎯 Enhanced processing with Intelligent Rate Limit Queue Management
+      const queueManager = new IntelligentRateLimitQueueManager();
+      const processingQueue: string[] = analysis.publishOrder.filter((file: string) => file !== filePath); // Exclude root file
+      queueManager.initialize(processingQueue.length);
+
+      let currentIndex = 0;
+
+      while (currentIndex < processingQueue.length) {
+        const currentFile = processingQueue[currentIndex];
+        if (!currentFile) continue; // Type guard for safety
         
         try {
-          // FORCE FLAG PROPAGATION: Handle force explicitly for each dependency
+          // 🔄 Check if this is a retry of postponed file
+          if (queueManager.isPostponed(currentFile)) {
+            const shouldRetry = queueManager.shouldRetryNow(currentFile);
+            if (!shouldRetry) {
+              // Still too early - move to next file
+              currentIndex++;
+              continue;
+            }
+          }
+
+          // 📄 Process current file with force flag handling
+          let result;
           if (validatedOptions.force) {
-            // If force is enabled, always force republish dependencies
+            // FORCE FLAG PROPAGATION: Handle force explicitly for each dependency
             ProgressIndicator.showStatus(
-              `🔄 FORCE: Processing dependency '${basename(fileToProcess)}' (force propagated)`, 
+              `🔄 FORCE: Processing dependency '${basename(currentFile)}' (force propagated)`, 
               "info"
             );
             
-            const result = await this.publishWithMetadata(fileToProcess, username, { 
+            result = await this.publishWithMetadata(currentFile, username, { 
               ...validatedOptions, 
               forceRepublish: true, 
               withDependencies: false 
             });
-            
-            if (!result.success) {
-              throw new Error(`Failed to force republish dependency ${fileToProcess}: ${result.error}`);
-            }
-            
-            publishedFiles.push(fileToProcess);
-            stats.processedFiles++;
-            
           } else {
             // Standard mode: let publishWithMetadata/editWithMetadata handle change detection
-            await this.processFileByStatus(fileToProcess, username, publishedFiles, stats, validatedOptions);
-            stats.processedFiles++;
+            const statusResult = await this.processFileByStatus(currentFile, username, publishedFiles, stats, validatedOptions);
+            result = { success: true }; // processFileByStatus doesn't return a result, so assume success if no exception
+          }
+          
+          if (result.success) {
+            if (validatedOptions.force) {
+              // For force mode, add to published files and update stats
+              publishedFiles.push(currentFile);
+              stats.processedFiles++;
+            } else {
+              // For standard mode, files are already added in processFileByStatus
+              stats.processedFiles++;
+            }
+            
+            // 🔗 Enhanced Addition: Collect link mapping for dependency tracking
+            if (this.cacheManager) {
+              const telegraphUrl = this.cacheManager.getTelegraphUrl(currentFile);
+              if (telegraphUrl) {
+                this.recordLinkMapping(linkMappings, currentFile, filePath, telegraphUrl);
+              }
+            }
+            
+            // ✅ Success - remove from postponed if it was there
+            queueManager.markSuccessful(currentFile);
+            currentIndex++;
+          } else {
+            throw new Error(result.error || 'Unknown error');
           }
           
         } catch (error) {
-          // Clear cache on error
+          // 🚦 Enhanced error handling with intelligent queue management
+          if (error instanceof Error && error.message.includes('FLOOD_WAIT_')) {
+            const waitMatch = error.message.match(/FLOOD_WAIT_(\d+)/);
+            if (waitMatch?.[1]) {
+              const waitSeconds = parseInt(waitMatch[1], 10);
+              
+              // 🎯 Intelligent queue decision
+              const decision = await queueManager.handleRateLimit(currentFile, waitSeconds, processingQueue);
+              
+              if (decision.action === 'postpone') {
+                // Continue with next file immediately
+                console.log(`⚡ Continuing with next file immediately instead of waiting ${waitSeconds}s`);
+                // currentIndex stays same (next file moved to current position in queue reordering)
+                continue;
+              } else {
+                // Short wait - handle normally
+                console.warn(`🚦 Rate limited: waiting ${waitSeconds}s before retry...`);
+                await this.rateLimiter.handleFloodWait(waitSeconds);
+                // Retry same file
+                continue;
+              }
+            }
+          }
+          
+          // ❌ Other errors - handle based on original behavior
+          const processErrorMessage = error instanceof Error ? error.message : String(error);
+          console.error(`❌ Error processing ${basename(currentFile)}:`, processErrorMessage);
+          queueManager.markFailed(currentFile, processErrorMessage);
+          
+          // Clear cache on error and return (original behavior for non-rate-limit errors)
           this.clearMetadataCache();
-          const errorMessage = error instanceof Error ? error.message : String(error);
           return {
             success: false,
-            error: `Failed to process dependency ${basename(fileToProcess)}: ${errorMessage}`,
+            error: `Failed to process dependency ${basename(currentFile)}: ${processErrorMessage}`,
             publishedFiles
           };
         }
       }
 
+      // 📊 Process final retries for any remaining postponed files
+      const finalRetryFunction = async (retryFilePath: string): Promise<PublicationResult> => {
+        if (validatedOptions.force) {
+          const result = await this.publishWithMetadata(retryFilePath, username, { 
+            ...validatedOptions, 
+            forceRepublish: true, 
+            withDependencies: false 
+          });
+          
+          // Track successful final retry for force mode
+          if (result.success) {
+            publishedFiles.push(retryFilePath);
+            stats.processedFiles++;
+          }
+          
+          return result;
+        } else {
+          // For standard mode, wrap processFileByStatus to return a PublicationResult
+          try {
+            await this.processFileByStatus(retryFilePath, username, publishedFiles, stats, validatedOptions);
+            return { 
+              success: true, 
+              isNewPublication: false, // Assume it's a retry of existing publication
+              url: ''
+            };
+          } catch (error) {
+            return {
+              success: false,
+              isNewPublication: false,
+              error: error instanceof Error ? error.message : String(error)
+            };
+          }
+        }
+      };
+
+      const finalResults = await queueManager.processFinalRetries(finalRetryFunction);
+      
+      // Final retries are already tracked in the finalRetryFunction above
+      console.log(`📊 Final retries completed: ${finalResults.filter(r => r.success).length}/${finalResults.length} successful`);
+
       // Clear metadata cache after operation
       this.clearMetadataCache();
 
-      // Report final results
+      // Report final results with queue statistics
       this.reportProcessingResults(stats, dryRun);
       
-      return { success: true, publishedFiles };
+      const queueStats = queueManager.getStats();
+      if (queueStats.postponed > 0 || finalResults.length > 0) {
+        console.log(`📊 Queue Summary: ${queueStats.processed}/${queueStats.total} processed, ${queueStats.postponed} files had rate limits`);
+        const postponedSummary = queueManager.getPostponedSummary();
+        if (postponedSummary.length > 0) {
+          console.log(`🔄 Postponed files handled: ${postponedSummary.join(', ')}`);
+        }
+      }
+      
+      return { success: true, publishedFiles, linkMappings };
 
     } catch (error) {
       // Clear cache on error
@@ -680,35 +1009,49 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
   }
 
   /**
-   * Replace local links with Telegraph URLs using cache
-   * @param processed Processed content
-   * @param cacheManager Optional cache manager for global URL lookup
-   * @returns Content with replaced links
+   * Replace local links with Telegraph URLs using provided mappings or cache
+   * @param processed Processed content with local links
+   * @param linkMappings Optional pre-built link mappings to use
+   * @param cacheManager Optional cache manager for fallback lookup
+   * @returns Processed content with replaced links
    */
   private async replaceLinksWithTelegraphUrls(
     processed: ProcessedContent,
+    linkMappings?: Record<string, string>,
     cacheManager?: PagesCacheManager,
   ): Promise<ProcessedContent> {
-    // Early return if no cache manager is available
-    if (!cacheManager) {
+    // Early return if no cache manager and no pre-built mappings
+    if (!cacheManager && !linkMappings) {
       return processed;
     }
 
-    const linkMappings = new Map<string, string>();
+    let finalLinkMappings: Map<string, string>;
 
-    // Use global cache to find mappings for all local links
-    for (const link of processed.localLinks) {
-      // Use the resolved absolute path as the key for cache lookup
-      const telegraphUrl = cacheManager.getTelegraphUrl(link.resolvedPath);
+    // Use provided linkMappings if available, otherwise build from cache
+    if (linkMappings && Object.keys(linkMappings).length > 0) {
+      finalLinkMappings = new Map(Object.entries(linkMappings));
+    } else if (cacheManager) {
+      // Fallback to cache-based lookup (existing behavior)
+      const cacheLinkMappings = new Map<string, string>();
       
-      if (telegraphUrl) {
-        // Use the original relative path as the key for replacement
-        linkMappings.set(link.originalPath, telegraphUrl);
+      for (const link of processed.localLinks) {
+        // Use the resolved absolute path as the key for cache lookup
+        const telegraphUrl = cacheManager.getTelegraphUrl(link.resolvedPath);
+        
+        if (telegraphUrl) {
+          // Use the original relative path as the key for replacement
+          cacheLinkMappings.set(link.originalPath, telegraphUrl);
+        }
       }
+      
+      finalLinkMappings = cacheLinkMappings;
+    } else {
+      // No mappings and no cache, return unchanged
+      return processed;
     }
 
     // Replace links in content
-    return ContentProcessor.replaceLinksInContent(processed, linkMappings);
+    return ContentProcessor.replaceLinksInContent(processed, finalLinkMappings);
   }
 
   /**
@@ -738,9 +1081,17 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         const waitMatch = error.message.match(/FLOOD_WAIT_(\d+)/);
         if (waitMatch?.[1]) {
           const waitSeconds = parseInt(waitMatch[1], 10);
+          
+          // Smart FLOOD_WAIT Decision: Re-throw long waits for user switching layer
+          const SWITCH_THRESHOLD = 30; // seconds - matches CREATIVE design
+          if (waitSeconds > SWITCH_THRESHOLD) {
+            console.log(`🔄 FLOOD_WAIT ${waitSeconds}s > ${SWITCH_THRESHOLD}s threshold - delegating to user switching layer`);
+            throw error; // Let publishWithMetadata handle this with user switching
+          }
+          
           console.warn(`🚦 Rate limited: waiting ${waitSeconds}s before retry...`);
 
-          // Handle FLOOD_WAIT with our rate limiter
+          // Handle FLOOD_WAIT with our rate limiter for short waits
           await this.rateLimiter.handleFloodWait(waitSeconds);
 
           // Retry the call
@@ -796,7 +1147,25 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         }
       }
 
-      // Re-throw non-FLOOD_WAIT errors
+      // Enhanced PAGE_ACCESS_DENIED diagnostics (Smart Diagnostics Engine pattern)
+      if (error instanceof Error && error.message.includes('PAGE_ACCESS_DENIED')) {
+        console.error(`🚫 PAGE_ACCESS_DENIED: Token mismatch detected for page: ${path}`);
+        console.error(`   💡 This usually means the file was published with a different access token`);
+        console.error(`   🔧 Suggested solutions:`);
+        console.error(`      1. Check if the file metadata contains the correct accessToken`);
+        console.error(`      2. Verify directory-specific configuration in the file's folder`);
+        console.error(`      3. Use --force flag to republish with current token (if appropriate)`);
+        
+        // Enhance error message with context
+        const enhancedError = new Error(
+          `PAGE_ACCESS_DENIED for ${path}: Token mismatch. The page was likely published with a different access token. ` +
+          `Check file metadata or use directory-specific configuration.`
+        );
+        enhancedError.cause = error;
+        throw enhancedError;
+      }
+
+      // Re-throw other errors
       throw error;
     }
   }
@@ -987,7 +1356,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     if (result.success) {
       publishedFiles.push(filePath);
       stats.unpublishedFiles++;
-      this.dependencyManager.markAsProcessed(filePath);
+      // markAsProcessed removed - deprecated with memoization approach
     } else {
       throw new Error(`Failed to publish dependency ${filePath}: ${result.error}`);
     }
@@ -1135,5 +1504,106 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         "warning"
       );
     }
+  }
+
+  /**
+   * Create new Telegraph user and switch to it for rate limit recovery
+   * @param triggerFile File that triggered the user switch
+   * @returns New Telegraph account information
+   */
+  private async createNewUserAndSwitch(triggerFile: string): Promise<void> {
+    try {
+      // Ensure we have a current access token
+      if (!this.currentAccessToken) {
+        throw new Error('No access token available for user switching');
+      }
+      
+      // Get current account info for preserving author details
+      const currentAccount = await this.getAccountInfo(this.currentAccessToken);
+      
+      // Increment counter for unique name generation
+      this.accountSwitchCounter++;
+      
+      // Generate unique short name
+      const newShortName = `${currentAccount.short_name}-${this.accountSwitchCounter}`;
+      
+      console.log(`🔄 Rate limit encountered. Creating new Telegraph user: ${newShortName}`);
+      console.log(`   Trigger file: ${basename(triggerFile)}`);
+      console.log(`   Original user: ${currentAccount.short_name}`);
+      
+      // Store original token for history
+      const originalToken = this.currentAccessToken;
+      
+      // Create new account (automatically sets this.accessToken in base class)
+      const newAccount = await this.createAccount(
+        newShortName,
+        currentAccount.author_name,
+        currentAccount.author_url
+      );
+      
+      // Update our tracking token
+      this.currentAccessToken = newAccount.access_token;
+      
+      // Record the switch in history
+      this.switchHistory.push({
+        timestamp: new Date().toISOString(),
+        originalToken,
+        newToken: newAccount.access_token,
+        triggerFile,
+        reason: 'FLOOD_WAIT'
+      });
+      
+      console.log(`✅ Successfully switched to new Telegraph user: ${newShortName}`);
+      console.log(`   New token: ${newAccount.access_token.substring(0, 10)}...`);
+      
+    } catch (error) {
+      console.error(`❌ Failed to create new Telegraph user:`, error);
+      throw new Error(`User switching failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+
+
+  /**
+   * Compare two dependency maps for equality
+   * @param mapA First dependency map
+   * @param mapB Second dependency map
+   * @returns True if maps are equal, false otherwise
+   */
+  private _areDependencyMapsEqual(
+    mapA?: Record<string, string>, 
+    mapB?: Record<string, string>
+  ): boolean {
+    // Handle null/undefined cases
+    const isMapAEmpty = !mapA || Object.keys(mapA).length === 0;
+    const isMapBEmpty = !mapB || Object.keys(mapB).length === 0;
+    
+    // Both empty/undefined - consider equal
+    if (isMapAEmpty && isMapBEmpty) {
+      return true;
+    }
+    
+    // One empty, one not - not equal
+    if (isMapAEmpty !== isMapBEmpty) {
+      return false;
+    }
+    
+    // Both maps exist and are non-empty - compare contents
+    const keysA = Object.keys(mapA!);
+    const keysB = Object.keys(mapB!);
+    
+    // Different number of keys - not equal
+    if (keysA.length !== keysB.length) {
+      return false;
+    }
+    
+    // Check each key-value pair
+    for (const key of keysA) {
+      if (!(key in mapB!) || mapA![key] !== mapB![key]) {
+        return false;
+      }
+    }
+    
+    return true;
   }
 }

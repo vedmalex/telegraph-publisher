@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import type { TelegraphPublisher } from "../telegraphPublisher";
-import type { PublishedPageInfo, PublishedPagesCache } from "../types/metadata";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { dirname, join, resolve, isAbsolute } from "node:path";
+import type { PublishedPagesCache, PublishedPageInfo } from "../types/metadata.js";
 
 /**
- * Manages cache of published pages for bidirectional link management
+ * Cache manager for published Telegraph pages
+ * Provides efficient lookups between local files and published pages
  */
 export class PagesCacheManager {
   private static readonly CACHE_FILE_NAME = ".telegraph-pages-cache.json";
@@ -19,6 +19,9 @@ export class PagesCacheManager {
     this.cacheFilePath = join(directory, PagesCacheManager.CACHE_FILE_NAME);
     this.accessTokenHash = this.hashAccessToken(accessToken);
     this.cache = this.loadCache();
+    
+    // Automatically clean up any existing relative paths (QA Issue fix)
+    this.cleanupRelativePaths();
   }
 
   /**
@@ -82,11 +85,34 @@ export class PagesCacheManager {
   }
 
   /**
+   * Validates and normalizes file path to absolute path
+   * @param filePath File path to validate
+   * @param silent Whether to suppress warning messages
+   * @returns Absolute file path
+   * @throws Error if path is relative
+   */
+  private validateAndNormalizePath(filePath: string, silent: boolean = false): string {
+    if (!filePath) {
+      throw new Error("File path cannot be empty");
+    }
+
+    // Convert to absolute path if it's relative
+    const absolutePath = isAbsolute(filePath) ? filePath : resolve(filePath);
+    
+    // Log warning for relative paths (QA Issue fix) - only if not silent
+    if (!isAbsolute(filePath) && !silent) {
+      console.warn(`⚠️  QA Warning: Relative path detected and converted to absolute: ${filePath} → ${absolutePath}`);
+    }
+
+    return absolutePath;
+  }
+
+  /**
    * Sync cache with Telegraph API
    * @param publisher Telegraph publisher instance
    * @returns Success status
    */
-  async syncWithTelegraph(publisher: TelegraphPublisher): Promise<boolean> {
+  async syncWithTelegraph(publisher: any): Promise<boolean> {
     try {
       console.log("🔄 Syncing published pages cache...");
 
@@ -131,6 +157,14 @@ export class PagesCacheManager {
    * @param pageInfo Page information to add
    */
   addPage(pageInfo: PublishedPageInfo): void {
+    // Validate and normalize localFilePath if present (QA Issue fix)
+    if (pageInfo.localFilePath) {
+      pageInfo = {
+        ...pageInfo,
+        localFilePath: this.validateAndNormalizePath(pageInfo.localFilePath)
+      };
+    }
+
     this.cache.pages[pageInfo.telegraphUrl] = pageInfo;
 
     if (pageInfo.localFilePath) {
@@ -150,6 +184,14 @@ export class PagesCacheManager {
   updatePage(telegraphUrl: string, updates: Partial<PublishedPageInfo>): void {
     const existingPage = this.cache.pages[telegraphUrl];
     if (existingPage) {
+      // Validate and normalize localFilePath if present in updates (QA Issue fix)
+      if (updates.localFilePath) {
+        updates = {
+          ...updates,
+          localFilePath: this.validateAndNormalizePath(updates.localFilePath)
+        };
+      }
+
       const updatedPage = { ...existingPage, ...updates, lastUpdated: new Date().toISOString() };
       this.cache.pages[telegraphUrl] = updatedPage;
 
@@ -327,5 +369,67 @@ export class PagesCacheManager {
     } else {
       return 'Just now';
     }
+  }
+
+  /**
+   * Clean up existing relative paths in cache (QA Fix method)
+   * Converts all relative paths to absolute paths
+   * @returns Number of entries fixed
+   */
+  cleanupRelativePaths(): number {
+    let fixedCount = 0;
+    const updatedPages: Record<string, PublishedPageInfo> = {};
+    const newLocalToTelegraph: Record<string, string> = {};
+    const newTelegraphToLocal: Record<string, string> = {};
+
+    // Process all pages in cache
+    for (const [telegraphUrl, pageInfo] of Object.entries(this.cache.pages)) {
+      if (pageInfo.localFilePath && !isAbsolute(pageInfo.localFilePath)) {
+        try {
+          const absolutePath = this.validateAndNormalizePath(pageInfo.localFilePath, true); // Pass true for silent
+          
+          // Create updated page info
+          const updatedPageInfo = {
+            ...pageInfo,
+            localFilePath: absolutePath,
+            lastUpdated: new Date().toISOString()
+          };
+          
+          updatedPages[telegraphUrl] = updatedPageInfo;
+          newLocalToTelegraph[absolutePath] = telegraphUrl;
+          newTelegraphToLocal[telegraphUrl] = absolutePath;
+          
+          fixedCount++;
+          console.log(`✅ Fixed relative path: ${pageInfo.localFilePath} → ${absolutePath}`);
+        } catch (error) {
+          console.error(`❌ Failed to fix path for ${telegraphUrl}: ${pageInfo.localFilePath}`, error);
+          // Keep original entry if conversion fails
+          updatedPages[telegraphUrl] = pageInfo;
+          if (pageInfo.localFilePath) {
+            newLocalToTelegraph[pageInfo.localFilePath] = telegraphUrl;
+            newTelegraphToLocal[telegraphUrl] = pageInfo.localFilePath;
+          }
+        }
+      } else {
+        // Keep entries with absolute paths as-is
+        updatedPages[telegraphUrl] = pageInfo;
+        if (pageInfo.localFilePath) {
+          newLocalToTelegraph[pageInfo.localFilePath] = telegraphUrl;
+          newTelegraphToLocal[telegraphUrl] = pageInfo.localFilePath;
+        }
+      }
+    }
+
+    // Update cache if any fixes were made
+    if (fixedCount > 0) {
+      this.cache.pages = updatedPages;
+      this.cache.localToTelegraph = newLocalToTelegraph;
+      this.cache.telegraphToLocal = newTelegraphToLocal;
+      
+      console.log(`🔧 QA Fix: Cleaned up ${fixedCount} relative paths in cache`);
+      this.saveCache();
+    }
+
+    return fixedCount;
   }
 }

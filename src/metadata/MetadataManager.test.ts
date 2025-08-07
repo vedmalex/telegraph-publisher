@@ -290,6 +290,29 @@ invalidField: some invalid syntax ][
       expect(metadata.title).toBeUndefined();
       expect(metadata.description).toBeUndefined();
       expect(metadata.contentHash).toBe("def456hash");
+      expect(metadata.accessToken).toBeUndefined();
+    });
+
+    it("should create metadata object with accessToken", () => {
+      const url = "https://telegra.ph/Test-Article-01-01";
+      const path = "Test-Article-01-01";
+      const username = "Test Author";
+      const filePath = "/path/to/test.md";
+      const accessToken = "test-access-token-123";
+
+      const metadata = MetadataManager.createMetadata(
+        url, path, username, filePath, "ghi789hash", 
+        "Test Title", "Test Description", accessToken
+      );
+
+      expect(metadata.telegraphUrl).toBe(url);
+      expect(metadata.editPath).toBe(path);
+      expect(metadata.username).toBe(username);
+      expect(metadata.originalFilename).toBe("test.md");
+      expect(metadata.title).toBe("Test Title");
+      expect(metadata.description).toBe("Test Description");
+      expect(metadata.contentHash).toBe("ghi789hash");
+      expect(metadata.accessToken).toBe(accessToken);
     });
   });
 

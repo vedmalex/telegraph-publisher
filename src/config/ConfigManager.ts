@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { MetadataConfig, RateLimitConfig } from "../types/metadata";
+import type { MetadataConfig, RateLimitConfig, ExtendedMetadataConfig } from "../types/metadata";
+import { HierarchicalConfigCache } from "./HierarchicalConfigCache.js";
+import { IntelligentConfigMerger } from "./IntelligentConfigMerger.js";
 
 /**
  * Extended configuration interface including legacy fields
@@ -33,7 +35,7 @@ export class ConfigManager {
   /**
    * Default configuration values
    */
-  private static readonly DEFAULT_CONFIG: MetadataConfig = {
+  public static readonly DEFAULT_CONFIG: MetadataConfig = {
     defaultUsername: undefined,
     autoPublishDependencies: true,
     replaceLinksinContent: true,
@@ -45,29 +47,101 @@ export class ConfigManager {
     customFields: {}
   };
 
-  /**
-   * Load configuration from file
-   * @param directory Directory to look for config file
-   * @returns Configuration object
-   */
-  static loadConfig(directory: string): ExtendedConfig {
-    const configPath = join(directory, ConfigManager.CONFIG_FILE_NAME);
+  // ============================================================================
+  // Creative Enhancement: Hierarchical Configuration Loading
+  // ============================================================================
 
+  /**
+   * Load hierarchical configuration with intelligent caching and merging
+   * @param startPath File or directory path to start hierarchical search
+   * @returns Merged configuration from all hierarchy levels
+   */
+  public static async loadHierarchicalConfig(startPath: string): Promise<ExtendedMetadataConfig> {
+    try {
+      // Use intelligent cache for fast repeated access
+      const config = await HierarchicalConfigCache.loadWithInvalidation(startPath);
+      
+      // Validate merged configuration
+      const validation = IntelligentConfigMerger.validateMergedConfig(config);
+      
+      if (!validation.valid) {
+        console.error('❌ Configuration validation failed:');
+        validation.errors.forEach(error => console.error(`   • ${error}`));
+        throw new Error('Invalid configuration detected');
+      }
+      
+      if (validation.warnings.length > 0) {
+        console.warn('⚠️ Configuration warnings:');
+        validation.warnings.forEach(warning => console.warn(`   • ${warning}`));
+      }
+      
+      return config;
+      
+    } catch (error) {
+      console.warn(`⚠️ Failed to load hierarchical config for ${startPath}:`, error);
+      
+      // Fallback to default config
+      return {
+        ...ConfigManager.DEFAULT_CONFIG,
+        lastModified: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Legacy method - maintained for backward compatibility
+   * Delegates to hierarchical loading for consistency
+   * @param directory Directory to look for config file
+   * @returns Configuration object or null if not found
+   */
+  static getMetadataConfig(directory: string): MetadataConfig | null {
+    try {
+      // Use the new hierarchical loader but return legacy format
+      const hierarchicalConfig = this.loadHierarchicalConfigSync(directory);
+      
+      // Strip extended fields for legacy compatibility
+      const { accessToken, version, lastModified, ...legacyConfig } = hierarchicalConfig;
+      
+      return legacyConfig;
+      
+    } catch (error) {
+      console.warn(`Failed to load config from ${directory}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Synchronous version of hierarchical config loading (for legacy compatibility)
+   * @param startPath Starting path for hierarchical search
+   * @returns Extended configuration
+   */
+  private static loadHierarchicalConfigSync(startPath: string): ExtendedMetadataConfig {
+    // This is a simplified sync version that doesn't use caching
+    // For full functionality, use the async loadHierarchicalConfig method
+    
+    const configPath = join(startPath, ConfigManager.CONFIG_FILE_NAME);
+    
     if (existsSync(configPath)) {
       try {
-        const config = JSON.parse(readFileSync(configPath, "utf-8"));
-        return { ...ConfigManager.DEFAULT_CONFIG, ...config };
+        const content = readFileSync(configPath, 'utf-8');
+        const config = JSON.parse(content) as ExtendedMetadataConfig;
+        
+        // Merge with defaults
+        return IntelligentConfigMerger.deepMerge(
+          { ...ConfigManager.DEFAULT_CONFIG },
+          config
+        );
+        
       } catch (error) {
-        console.warn(`⚠️ Error loading config from ${configPath}:`, error);
-        return { ...ConfigManager.DEFAULT_CONFIG };
+        console.warn(`Failed to parse config file ${configPath}:`, error);
       }
     }
-
+    
     return { ...ConfigManager.DEFAULT_CONFIG };
   }
 
   /**
-   * Save configuration to file
+   * Save configuration to directory
    * @param directory Directory to save config file
    * @param config Configuration to save
    */
@@ -76,7 +150,7 @@ export class ConfigManager {
 
     try {
       const existingConfig = ConfigManager.loadConfig(directory);
-      const mergedConfig = { ...existingConfig, ...config };
+      const mergedConfig = { ...(existingConfig || {}), ...config };
 
       writeFileSync(configPath, JSON.stringify(mergedConfig, null, 2), "utf-8");
       console.log(`✅ Configuration saved to ${configPath}`);
@@ -95,7 +169,21 @@ export class ConfigManager {
    */
   static loadAccessToken(directory: string): string | undefined {
     const config = ConfigManager.loadConfig(directory);
-    return config.accessToken;
+    return config?.accessToken;
+  }
+
+  /**
+   * Load configuration from directory (backward compatibility method)
+   * @param directory Directory to look for config file
+   * @returns Extended configuration or null if not found
+   */
+  static loadConfig(directory: string): ExtendedMetadataConfig | null {
+    try {
+      return this.loadHierarchicalConfigSync(directory);
+    } catch (error) {
+      console.warn(`Failed to load config from ${directory}:`, error);
+      return null;
+    }
   }
 
   /**
@@ -105,27 +193,6 @@ export class ConfigManager {
    */
   static saveAccessToken(directory: string, accessToken: string): void {
     ConfigManager.saveConfig(directory, { accessToken });
-  }
-
-  /**
-   * Get metadata configuration
-   * @param directory Directory to load config from
-   * @returns Metadata configuration
-   */
-  static getMetadataConfig(directory: string): MetadataConfig {
-    const config = ConfigManager.loadConfig(directory);
-
-    return {
-      defaultUsername: config.defaultUsername,
-      autoPublishDependencies: config.autoPublishDependencies ?? ConfigManager.DEFAULT_CONFIG.autoPublishDependencies,
-      replaceLinksinContent: config.replaceLinksinContent ?? ConfigManager.DEFAULT_CONFIG.replaceLinksinContent,
-      maxDependencyDepth: config.maxDependencyDepth ?? ConfigManager.DEFAULT_CONFIG.maxDependencyDepth,
-      createBackups: config.createBackups ?? ConfigManager.DEFAULT_CONFIG.createBackups,
-      manageBidirectionalLinks: config.manageBidirectionalLinks ?? ConfigManager.DEFAULT_CONFIG.manageBidirectionalLinks,
-      autoSyncCache: config.autoSyncCache ?? ConfigManager.DEFAULT_CONFIG.autoSyncCache,
-      rateLimiting: config.rateLimiting ?? ConfigManager.DEFAULT_CONFIG.rateLimiting,
-      customFields: config.customFields ?? ConfigManager.DEFAULT_CONFIG.customFields
-    };
   }
 
   /**
@@ -146,6 +213,11 @@ export class ConfigManager {
 
     console.log("\n📋 Current Configuration:");
     console.log("========================");
+
+    if (!config) {
+      console.log("❌ No configuration found");
+      return;
+    }
 
     if (config.accessToken) {
       const maskedToken = config.accessToken.substring(0, 8) + "..." + config.accessToken.slice(-4);
@@ -174,7 +246,7 @@ export class ConfigManager {
 
   /**
    * Reset configuration to defaults
-   * @param directory Directory to save config to
+   * @param directory Directory to reset config for
    * @param keepAccessToken Whether to preserve access token
    */
   static resetConfig(directory: string, keepAccessToken: boolean = true): void {
@@ -182,7 +254,7 @@ export class ConfigManager {
 
     if (keepAccessToken) {
       const existingConfig = ConfigManager.loadConfig(directory);
-      if (existingConfig.accessToken) {
+      if (existingConfig && existingConfig.accessToken) {
         config.accessToken = existingConfig.accessToken;
       }
     }

@@ -732,7 +732,7 @@ function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
 		{ regex: /\*(.*?)\*/g, tag: "em" },
 		{ regex: /_(.*?)_/g, tag: "em" },
 		{ regex: /`(.*?)`/g, tag: "code" },
-		{ regex: /\[(.*?)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g, tag: "a", isLink: true },
+		{ regex: /\[([^[\]]*(?:\[[^\]]*\][^[\]]*)*)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g, tag: "a", isLink: true },
 	];
 
 	// Find all matches with their positions

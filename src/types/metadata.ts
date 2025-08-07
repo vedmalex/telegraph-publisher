@@ -57,6 +57,39 @@ export interface FileMetadata {
   description?: string;
   /** Optional content hash for change detection */
   contentHash?: string;
+  /**
+   * Access token used for publication/editing.
+   * 
+   * @optional - для backward compatibility
+   * @source - может быть из metadata, cache, config, или session
+   * @validation - автоматически валидируется при загрузке
+   * @backfill - автоматически добавляется при первом успешном редактировании
+   */
+  accessToken?: string;
+  
+  // Creative Addition: Token metadata для enhanced diagnostics
+  /** Source of the access token for diagnostic purposes */
+  tokenSource?: 'metadata' | 'cache' | 'config' | 'session' | 'backfilled';
+  /** ISO timestamp when token was last updated */
+  tokenUpdatedAt?: string;
+  
+  /**
+   * Map of published dependencies for this file.
+   * Records the mapping between local relative paths and their published Telegraph URLs.
+   * This enables intelligent dependency change detection and republication decisions.
+   * 
+   * @example
+   * ```yaml
+   * publishedDependencies:
+   *   ./chapter1.md: "https://telegra.ph/Chapter-1-08-07"
+   *   ../shared/glossary.md: "https://telegra.ph/Glossary-08-07"
+   * ```
+   * 
+   * @optional - for backward compatibility with existing files
+   * @format - Record<relativePath, telegraphUrl>
+   * @autoManaged - automatically collected during publication
+   */
+  publishedDependencies?: Record<string, string>;
 }
 
 /**
@@ -81,6 +114,20 @@ export interface PublishedPageInfo {
   views?: number;
   /** Content hash for change detection (Evolutionary Interface Design pattern) */
   contentHash?: string;
+  /**
+   * Access token associated with this published page.
+   * 
+   * @persistence - сохраняется в .telegraph-pages-cache.json
+   * @restoration - используется для восстановления метаданных
+   * @consistency - поддерживает sync между файлом и кэшем
+   */
+  accessToken?: string;
+  
+  // Creative Addition: Enhanced cache metadata
+  /** Cache version for future cache migrations */
+  cacheVersion?: string;
+  /** Last token validation timestamp */
+  lastTokenValidation?: string;
 }
 
 /**
@@ -221,6 +268,62 @@ export interface PublicationProgress {
   progressPercentage: number;
 }
 
+// ============================================================================
+// Creative Enhancement: Smart Validation Pattern Types
+// ============================================================================
+
+/**
+ * Result of token validation with enhanced feedback
+ */
+export interface ValidationResult {
+  /** Whether the token is valid */
+  valid: boolean;
+  /** Severity level of validation result */
+  severity: 'info' | 'warning' | 'error';
+  /** Human-readable validation message */
+  message: string;
+  /** Actionable suggestions for fixing issues */
+  suggestions?: string[];
+}
+
+/**
+ * Context information for token resolution operations
+ */
+export interface TokenResolutionContext {
+  /** File path being processed */
+  filePath: string;
+  /** File name for logging */
+  fileName: string;
+  /** Existing metadata from file */
+  metadata: FileMetadata | null;
+  /** Cache information for file */
+  cacheInfo: PublishedPageInfo | null;
+  /** Hierarchical configuration */
+  hierarchicalConfig: any; // Will be typed properly when ConfigManager is enhanced
+  /** Current session token */
+  sessionToken?: string;
+  /** Processing timestamp */
+  timestamp: string;
+}
+
+/**
+ * Result of token resolution with source tracking
+ */
+export interface ResolvedToken {
+  /** Whether resolution was successful */
+  success: boolean;
+  /** The resolved token (if successful) */
+  token?: string;
+  /** Source of the token */
+  source?: 'metadata' | 'cache' | 'config' | 'session';
+  /** Confidence level in the resolution */
+  confidence?: 'high' | 'medium' | 'low';
+  /** Human-readable message */
+  message?: string;
+  /** Failure reason (if unsuccessful) */
+  reason?: string;
+}
+
 /**
  * Configuration options for metadata management
  */
@@ -243,4 +346,64 @@ export interface MetadataConfig {
   rateLimiting: RateLimitConfig;
   /** Custom metadata fields */
   customFields?: Record<string, any>;
+}
+
+// ============================================================================
+// Creative Enhancement: Hierarchical Configuration Types
+// ============================================================================
+
+/**
+ * Extended configuration interface including legacy and new fields
+ */
+export interface ExtendedMetadataConfig extends MetadataConfig {
+  /** Access token for hierarchical token resolution */
+  accessToken?: string;
+  /** Configuration version for compatibility */
+  version?: string;
+  /** Timestamp when config was last modified */
+  lastModified?: string;
+}
+
+/**
+ * Cached configuration with metadata
+ */
+export interface CachedConfig {
+  /** Configuration object */
+  config: ExtendedMetadataConfig;
+  /** File path where config was loaded from */
+  filePath: string;
+  /** File modification time for cache validation */
+  modifiedTime: number;
+  /** Cache timestamp */
+  cachedAt: number;
+}
+
+/**
+ * Context for deep merge operations
+ */
+export interface MergeContext {
+  /** Current path in object hierarchy */
+  path?: string;
+  /** Source file path for logging */
+  sourcePath?: string;
+  /** Target file path for logging */
+  targetPath?: string;
+}
+
+/**
+ * Configuration conflict report
+ */
+export interface ConflictReport {
+  /** Path where conflict occurred */
+  path: string;
+  /** Value from parent config */
+  parentValue: any;
+  /** Value from child config */
+  childValue: any;
+  /** Parent config file path */
+  parentSource: string;
+  /** Child config file path */
+  childSource: string;
+  /** Conflict resolution action taken */
+  resolution: 'child_wins' | 'parent_wins' | 'merged';
 }

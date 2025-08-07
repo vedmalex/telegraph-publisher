@@ -62,10 +62,10 @@ export class ProgressIndicator {
     const elapsed = Date.now() - this.startTime;
     const eta = this.current > 0 ? (elapsed / this.current) * (this.total - this.current) : 0;
 
-    // Create progress bar
-    const barLength = 30;
+    // Create simple ASCII progress bar
+    const barLength = 15;
     const filled = Math.round((this.current / this.total) * barLength);
-    const bar = "█".repeat(filled) + "░".repeat(barLength - filled);
+    const bar = "=".repeat(filled) + "-".repeat(barLength - filled);
 
     // Format time
     const formatTime = (ms: number): string => {
@@ -73,6 +73,12 @@ export class ProgressIndicator {
       const minutes = Math.floor(seconds / 60);
       const remainingSeconds = seconds % 60;
       return minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
+    };
+
+    // Truncate message to prevent line overflow
+    const truncateMessage = (msg: string, maxLength: number): string => {
+      if (msg.length <= maxLength) return msg;
+      return msg.substring(0, maxLength - 3) + "...";
     };
 
     let output = `\r${this.label}: [${bar}] ${percentage}% (${this.current}/${this.total})`;
@@ -86,11 +92,15 @@ export class ProgressIndicator {
     }
 
     if (message) {
-      output += ` | ${message}`;
+      // Limit message length to prevent overflow
+      const maxMessageLength = 60;
+      const truncatedMessage = truncateMessage(message, maxMessageLength);
+      output += ` | ${truncatedMessage}`;
     }
 
-    // Clear line and write progress
-    process.stdout.write(output.padEnd(120));
+    // Clear the entire line first, then write progress
+    process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 120) + '\r');
+    process.stdout.write(output);
   }
 
   /**

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import type { Command } from "commander";
 import { PagesCacheManager } from "../cache/PagesCacheManager";
 import { ConfigManager } from "../config/ConfigManager";
@@ -12,7 +12,7 @@ import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
 import { MetadataManager } from "../metadata/MetadataManager";
 import { EnhancedTelegraphPublisher } from "../publisher/EnhancedTelegraphPublisher";
 import { TelegraphPublisher } from "../telegraphPublisher";
-import { type FileMetadata, PublicationStatus, type TelegraphLink } from "../types/metadata";
+import { type FileMetadata, PublicationStatus, type TelegraphLink, type ExtendedMetadataConfig } from "../types/metadata";
 import { PathResolver } from "../utils/PathResolver";
 import { PublicationWorkflowManager } from "../workflow";
 import { ProgressIndicator } from "./ProgressIndicator";
@@ -37,7 +37,7 @@ export class EnhancedCommands {
    * @param options CLI options
    * @returns Configuration updates to apply
    */
-  private static extractConfigUpdatesFromCli(options: any): Partial<import('../types/metadata').MetadataConfig> {
+  private static extractConfigUpdatesFromCli(options: any): Partial<ExtendedMetadataConfig> {
     const updates: any = {};
     
     for (const [cliKey, configPath] of Object.entries(EnhancedCommands.CLI_TO_CONFIG_MAPPING)) {
@@ -80,6 +80,89 @@ export class EnhancedCommands {
       `💾 Configuration auto-saved to .telegraph-publisher-config.json:\n${changes}`,
       'success'
     );
+  }
+
+  /**
+   * Creative Enhancement: Load hierarchical configuration with CLI priority preservation
+   * @param filePath File path to start hierarchical config search from
+   * @param cliOptions CLI options that should take priority
+   * @returns Merged configuration with CLI overrides
+   */
+  private static async loadConfigWithCliPriority(
+    filePath: string, 
+    cliOptions: any
+  ): Promise<ExtendedMetadataConfig> {
+    try {
+      // Load hierarchical configuration
+      const hierarchicalConfig = await ConfigManager.loadHierarchicalConfig(filePath);
+      
+      // Extract CLI overrides
+      const cliOverrides = EnhancedCommands.extractConfigUpdatesFromCli(cliOptions);
+      
+      // CLI options override hierarchical config (highest priority)
+      const finalConfig: ExtendedMetadataConfig = {
+        ...hierarchicalConfig,
+        ...cliOverrides
+      };
+      
+      // Add CLI token if provided (highest priority for accessToken)
+      if (cliOptions.token) {
+        finalConfig.accessToken = cliOptions.token;
+      }
+      
+      // Log configuration sources for debugging
+      if (Object.keys(cliOverrides).length > 0) {
+        console.log('🔧 CLI overrides applied:', Object.keys(cliOverrides).join(', '));
+      }
+      
+      return finalConfig;
+      
+    } catch (error) {
+      console.warn('⚠️ Failed to load hierarchical config, falling back to legacy:', error);
+      
+      // Fallback to legacy config loading
+      const legacyConfig = ConfigManager.getMetadataConfig(dirname(filePath));
+      if (!legacyConfig) {
+        throw new Error('Failed to load any configuration');
+      }
+      
+      const cliOverrides = EnhancedCommands.extractConfigUpdatesFromCli(cliOptions);
+      
+      return {
+        ...legacyConfig,
+        ...cliOverrides,
+        accessToken: cliOptions.token || undefined
+      };
+    }
+  }
+
+  /**
+   * Synchronous version for backward compatibility (where async is not supported)
+   * @param filePath File path to start config search from  
+   * @param cliOptions CLI options for overrides
+   * @returns Configuration with CLI priority
+   */
+  private static loadConfigWithCliPrioritySync(
+    filePath: string,
+    cliOptions: any
+  ): ExtendedMetadataConfig {
+    // Use legacy synchronous loading for immediate compatibility
+    const legacyConfig = ConfigManager.getMetadataConfig(dirname(filePath));
+    const cliOverrides = EnhancedCommands.extractConfigUpdatesFromCli(cliOptions);
+    
+    // Ensure all required fields are present with proper defaults
+    const baseConfig: ExtendedMetadataConfig = {
+      ...ConfigManager.DEFAULT_CONFIG,
+      ...(legacyConfig || {}),
+      ...cliOverrides
+    };
+    
+    // Handle accessToken with proper type checking
+    if (cliOptions.token) {
+      baseConfig.accessToken = cliOptions.token;
+    }
+    
+    return baseConfig;
   }
 
   /**
@@ -257,6 +340,31 @@ export class EnhancedCommands {
   }
 
   /**
+   * Add cache validation command
+   * @param program Commander program instance
+   */
+  static addCacheValidateCommand(program: Command): void {
+    program
+      .command("cache:validate")
+      .alias("cv")
+      .description("Validate the integrity of the pages cache")
+      .option("--fix", "Attempt to automatically remove invalid entries from the cache")
+      .option("-v, --verbose", "Show detailed validation progress")
+      .option("--dry-run", "Show what would be validated without making API calls")
+      .action(async (options) => {
+        try {
+          await EnhancedCommands.handleCacheValidateCommand(options);
+        } catch (error) {
+          ProgressIndicator.showStatus(
+            `Cache validation failed: ${error instanceof Error ? error.message : String(error)}`,
+            "error"
+          );
+          process.exit(1);
+        }
+      });
+  }
+
+  /**
    * Handle unified publish command (combines pub and edit functionality)
    * @param options Command options
    */
@@ -274,8 +382,8 @@ export class EnhancedCommands {
       ProgressIndicator.showStatus(`Created new file: ${resolve(options.file)}`, "success");
     }
 
-    // STEP 1: Load existing configuration
-    const existingConfig = ConfigManager.getMetadataConfig(fileDirectory);
+    // STEP 1: Load existing configuration with hierarchical support
+    const existingConfig = EnhancedCommands.loadConfigWithCliPrioritySync(options.file, options);
     
     // STEP 2: Extract configuration updates from CLI options  
     const configUpdatesFromCli = EnhancedCommands.extractConfigUpdatesFromCli(options);
@@ -335,7 +443,7 @@ export class EnhancedCommands {
       throw new Error(`File not found: ${filePath}`);
     }
 
-    const config = ConfigManager.getMetadataConfig(dirname(filePath));
+    const config = EnhancedCommands.loadConfigWithCliPrioritySync(filePath, options);
     config.maxDependencyDepth = parseInt(options.depth) || config.maxDependencyDepth;
 
     const pathResolver = PathResolver.getInstance();
@@ -783,6 +891,242 @@ export class EnhancedCommands {
       if (argv.includes(flag)) {
         throw new DeprecatedFlagError(flag, '--force');
       }
+    }
+  }
+
+  /**
+   * Find cache file by searching up the directory tree
+   * @param startDir Starting directory
+   * @returns Cache file path or null if not found
+   */
+  private static findCacheFile(startDir: string): string | null {
+    const cacheFileName = ".telegraph-pages-cache.json";
+    let currentDir = resolve(startDir);
+    
+    // Search up to 10 levels to avoid infinite loop
+    for (let i = 0; i < 10; i++) {
+      const cacheFilePath = resolve(currentDir, cacheFileName);
+      if (existsSync(cacheFilePath)) {
+        return cacheFilePath;
+      }
+      
+      const parentDir = dirname(currentDir);
+      if (parentDir === currentDir) {
+        // Reached filesystem root
+        break;
+      }
+      currentDir = parentDir;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Handle cache validation command
+   * @param options Command options
+   */
+  static async handleCacheValidateCommand(options: any): Promise<void> {
+    ProgressIndicator.showStatus("🔎 Starting cache validation...", "info");
+    
+    try {
+      // Find cache file by looking in current directory and up the tree
+      const cacheFilePath = EnhancedCommands.findCacheFile(process.cwd());
+      
+      if (!cacheFilePath || !existsSync(cacheFilePath)) {
+        ProgressIndicator.showStatus("❌ No cache file found. Run a publish command first to create cache.", "error");
+        return;
+      }
+
+      ProgressIndicator.showStatus(`📁 Found cache file: ${cacheFilePath}`, "info");
+      
+      // Read cache file directly for validation purposes
+      const cacheContent = readFileSync(cacheFilePath, 'utf-8');
+      const cacheData = JSON.parse(cacheContent);
+      const entries = Object.entries(cacheData.pages || {});
+      
+      if (entries.length === 0) {
+        ProgressIndicator.showStatus("✅ Cache is empty - nothing to validate.", "success");
+        return;
+      }
+
+      ProgressIndicator.showStatus(`📊 Found ${entries.length} cache entries to validate...`, "info");
+      
+      if (options.dryRun) {
+        ProgressIndicator.showStatus("🏃 Dry run mode - would validate cache without API calls", "info");
+        console.log(`\nWould validate ${entries.length} entries:`);
+        for (const [url, info] of entries) {
+          console.log(`  📄 ${(info as any).localFilePath || 'Unknown'} → ${url}`);
+        }
+        return;
+      }
+
+      // Initialize validation counters
+      let validEntries = 0;
+      let invalidEntries = 0;
+      const invalidList: Array<{url: string, localPath: string, reason: string}> = [];
+      
+      ProgressIndicator.showStatus("🔍 Phase 1: Local file validation...", "info");
+      
+      // Phase 1: Local file validation
+      for (const [url, info] of entries) {
+        const pageInfo = info as any;
+        const localPath = pageInfo.localFilePath;
+        
+        if (localPath) {
+          if (!existsSync(localPath)) {
+            invalidEntries++;
+            invalidList.push({
+              url,
+              localPath,
+              reason: 'LOCAL_FILE_NOT_FOUND'
+            });
+          } else {
+            validEntries++;
+          }
+        } else {
+          validEntries++; // Consider entries without local path as valid for now
+        }
+        
+        if (options.verbose) {
+          const status = localPath && existsSync(localPath) ? '✅' : '❌';
+          console.log(`  ${status} ${localPath || 'No local path'} → ${url}`);
+        }
+      }
+      
+      ProgressIndicator.showStatus(`📝 Phase 1 complete: ${validEntries} valid files, ${invalidEntries} missing files`, "info");
+      
+      // Phase 2: Telegraph API validation (optional)
+      if (!options.dryRun && entries.length > 0) {
+        ProgressIndicator.showStatus("🌐 Phase 2: Telegraph API validation...", "info");
+        
+        const publisher = new TelegraphPublisher();
+        let apiValidEntries = 0;
+        let apiInvalidEntries = 0;
+        
+        // Simple rate limiting: delay between requests
+        const API_DELAY_MS = 200; // 5 requests per second max
+        
+        // Initialize progress bar for API validation
+        const apiProgress = new ProgressIndicator(entries.length, "🌐 API Validation");
+        
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          if (!entry) {
+            apiProgress.increment(`⏭️ Skip #${i + 1} (empty)`);
+            continue;
+          }
+          const [url, info] = entry;
+          const pageInfo = info as any;
+          
+          // Extract path from Telegraph URL
+          const urlMatch = url.match(/https:\/\/telegra\.ph\/(.+)/);
+          if (!urlMatch) {
+            if (options.verbose) {
+              console.log(`  ⚠️  Invalid Telegraph URL format: ${url}`);
+            }
+            apiProgress.increment(`⏭️ Skip #${i + 1} (bad URL)`);
+            continue;
+          }
+          
+          const pagePath = urlMatch[1];
+          if (!pagePath) {
+            if (options.verbose) {
+              console.log(`  ⚠️  Empty page path in URL: ${url}`);
+            }
+            apiProgress.increment(`⏭️ Skip #${i + 1} (no path)`);
+            continue;
+          }
+          
+          try {
+            // Add delay for rate limiting
+            if (i > 0) {
+              await new Promise(resolve => setTimeout(resolve, API_DELAY_MS));
+            }
+            
+            await publisher.getPage(pagePath, false);
+            apiValidEntries++;
+            
+            if (options.verbose) {
+              console.log(`  ✅ API: ${url} → exists`);
+            }
+            
+            apiProgress.increment(`✅ ${basename(url)} (${apiValidEntries}✓/${apiInvalidEntries}✗)`);
+          } catch (error) {
+            apiInvalidEntries++;
+            
+            // Check if page was already marked as invalid due to missing local file
+            const existingInvalid = invalidList.find(item => item.url === url);
+            if (!existingInvalid) {
+              invalidList.push({
+                url,
+                localPath: pageInfo.localFilePath || 'Unknown',
+                reason: 'REMOTE_PAGE_NOT_FOUND'
+              });
+              invalidEntries++;
+              validEntries = Math.max(0, validEntries - 1);
+            } else {
+              // Update reason to include both issues
+              existingInvalid.reason = 'LOCAL_FILE_NOT_FOUND + REMOTE_PAGE_NOT_FOUND';
+            }
+            
+            if (options.verbose) {
+              console.log(`  ❌ API: ${url} → ${error instanceof Error ? error.message : 'not found'}`);
+            }
+            
+            apiProgress.increment(`❌ ${basename(url)} (${apiValidEntries}✓/${apiInvalidEntries}✗)`);
+          }
+        }
+        
+        apiProgress.complete(`Phase 2 complete: ${apiValidEntries} accessible, ${apiInvalidEntries} missing`);
+      }
+      
+      // Report results
+      console.log('\n📊 Validation Summary:');
+      console.log(`  ✅ Valid entries: ${validEntries}`);
+      console.log(`  ❌ Invalid entries: ${invalidEntries}`);
+      
+      if (invalidList.length > 0) {
+        console.log('\n❌ Invalid entries found:');
+        console.table(invalidList);
+        
+        if (options.fix) {
+          ProgressIndicator.showStatus("🔧 --fix mode: Removing invalid entries...", "warning");
+          
+          // Create a cleaned cache by removing invalid entries
+          const cleanedPages: Record<string, any> = {};
+          let removedCount = 0;
+          
+          for (const [url, info] of entries) {
+            const isInvalid = invalidList.some(invalid => invalid.url === url);
+            if (!isInvalid) {
+              cleanedPages[url] = info;
+            } else {
+              removedCount++;
+            }
+          }
+          
+          // Update cache data and write back to file
+          cacheData.pages = cleanedPages;
+          cacheData.lastUpdated = new Date().toISOString();
+          
+          try {
+            const updatedCacheContent = JSON.stringify(cacheData, null, 2);
+            require('fs').writeFileSync(cacheFilePath, updatedCacheContent, 'utf-8');
+            
+            ProgressIndicator.showStatus(`✅ Cache cleaned: removed ${removedCount} invalid entries`, "success");
+            console.log(`💾 Updated cache file: ${cacheFilePath}`);
+          } catch (error) {
+            ProgressIndicator.showStatus(`❌ Failed to update cache file: ${error instanceof Error ? error.message : String(error)}`, "error");
+          }
+        } else {
+          ProgressIndicator.showStatus("💡 To automatically remove invalid entries, run with the --fix flag.", "info");
+        }
+      } else {
+        ProgressIndicator.showStatus("🎉 All cache entries are valid!", "success");
+      }
+      
+    } catch (error) {
+      throw new Error(`Cache validation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }

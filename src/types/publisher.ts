@@ -1,4 +1,21 @@
 /**
+ * Result of dependency publishing operation
+ * 
+ * @interface PublishDependenciesResult
+ * @description Enhanced result with link mappings for dependency tracking
+ */
+export interface PublishDependenciesResult {
+  /** Whether the operation succeeded */
+  success: boolean;
+  /** Error message if operation failed */
+  error?: string;
+  /** List of files that were published */
+  publishedFiles?: string[];
+  /** Map of original relative paths to published Telegraph URLs */
+  linkMappings?: Record<string, string>;
+}
+
+/**
  * Configuration options for dependency publishing operations
  * 
  * @interface PublishDependenciesOptions
