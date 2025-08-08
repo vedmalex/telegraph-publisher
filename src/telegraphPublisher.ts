@@ -201,13 +201,10 @@ export class TelegraphPublisher {
 		const data = (await response.json()) as ApiResponse<TelegraphPage>;
 
 		if (!data.ok) {
-			// Handle FLOOD_WAIT errors
 			if (data.error && data.error.startsWith('FLOOD_WAIT_')) {
 				const waitSeconds = parseInt(data.error!.split('_')[2]) || 5;
-				console.warn(`Rate limited by Telegraph API. Waiting ${waitSeconds} seconds...`);
-				await this.sleep(waitSeconds * 1000);
-				// Retry the request
-				return this.publishHtml(title, htmlContent);
+				// Do not block here: propagate to caller (Enhanced layer / queue manager)
+				throw new Error(`FLOOD_WAIT_${waitSeconds}`);
 			}
 			throw new Error(`Telegraph API error: ${data.error}`);
 		}
@@ -306,13 +303,10 @@ export class TelegraphPublisher {
 
 		const data = (await response.json()) as ApiResponse<TelegraphPage>;
 		if (!data.ok) {
-			// Handle FLOOD_WAIT errors
 			if (data.error && data.error.startsWith('FLOOD_WAIT_')) {
 				const waitSeconds = parseInt(data.error!.split('_')[2]) || 5;
-				console.warn(`Rate limited by Telegraph API. Waiting ${waitSeconds} seconds...`);
-				await this.sleep(waitSeconds * 1000);
-				// Retry the request with original parameters
-				return this.editPage(path, title, nodes, authorName, authorUrl);
+				// Do not block here: propagate to caller (Enhanced layer / queue manager)
+				throw new Error(`FLOOD_WAIT_${waitSeconds}`);
 			}
 			throw new Error(`Telegraph API error: ${data.error}`);
 		}

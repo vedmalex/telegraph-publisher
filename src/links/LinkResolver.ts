@@ -7,6 +7,8 @@ import type {
   FileScanResult,
   ScanResult
 } from './types';
+import { newMarkdownLinkRegex } from './utils/regex';
+import { isMarkdownFilePath } from './utils/fs';
 
 /**
  * LinkResolver provides intelligent suggestions for fixing broken links
@@ -300,11 +302,11 @@ export class LinkResolver {
   }
 
   /**
- * Calculate string similarity between two strings using simple character matching
- * @param str1 First string
- * @param str2 Second string
- * @returns Similarity score between 0 and 1
- */
+  * Calculate string similarity between two strings using simple character matching
+  * @param str1 First string
+  * @param str2 Second string
+  * @returns Similarity score between 0 and 1
+  */
   private calculateStringSimilarity(str1: string, str2: string): number {
     if (str1 === str2) return 1.0;
     if (str1.length === 0 || str2.length === 0) return 0.0;
@@ -342,12 +344,11 @@ export class LinkResolver {
 
     const localLinks: LocalLink[] = [];
 
-    // Regex to match markdown links: [text](path)
-    const linkRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
+    // Use shared regex for markdown links
+    const linkRegex = newMarkdownLinkRegex();
     let match: RegExpExecArray | null;
 
-    match = linkRegex.exec(content);
-    while (match !== null) {
+    while ((match = linkRegex.exec(content)) !== null) {
       const fullMatch = match[0] || '';
       const text = match[1] || '';
       const path = match[2] || '';
@@ -367,8 +368,6 @@ export class LinkResolver {
           endIndex: startIndex + fullMatch.length
         });
       }
-
-      match = linkRegex.exec(content);
     }
 
     return localLinks;
@@ -393,11 +392,11 @@ export class LinkResolver {
   }
 
   /**
- * Resolve a relative path to absolute path
- * @param relativePath Relative path to resolve
- * @param basePath Base path for resolution (can be file or directory path)
- * @returns Absolute path
- */
+  * Resolve a relative path to absolute path
+  * @param relativePath Relative path to resolve
+  * @param basePath Base path for resolution (can be file or directory path)
+  * @returns Absolute path
+  */
   private static resolveLocalPath(relativePath: string, basePath: string): string {
     try {
       return LinkResolver.pathResolverInstance.resolve(basePath, relativePath);
@@ -424,9 +423,8 @@ export class LinkResolver {
         return false;
       }
 
-      // Check if the resolved path points to a markdown file
-      const extension = extname(link.resolvedPath).toLowerCase();
-      return extension === '.md' || extension === '.markdown';
+      // Check if the resolved path points to a markdown file (shared util)
+      return isMarkdownFilePath(link.resolvedPath);
     });
   }
 
@@ -471,8 +469,8 @@ export class LinkResolver {
       return content;
     }
 
-    // Regex to match markdown links: [text](path)
-    const linkRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
+    // Use shared markdown link regex
+    const linkRegex = newMarkdownLinkRegex();
 
     // Replace links using callback function
     return content.replace(linkRegex, (fullMatch: string, linkText: string, linkPath: string) => {
@@ -508,7 +506,6 @@ export class LinkResolver {
    * @returns True if file is markdown
    */
   static isMarkdownFile(filePath: string): boolean {
-    const ext = filePath.toLowerCase();
-    return ext.endsWith('.md') || ext.endsWith('.markdown');
+    return isMarkdownFilePath(filePath);
   }
 }

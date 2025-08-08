@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastUpdated": "2025-08-07T14:26:07.427Z",
+  "lastUpdated": "2025-08-07T19:58:35.161Z",
   "accessTokenHash": "4c5dc9b7708905f7",
   "pages": {
     "https://telegra.ph/test-page-01-01": {
@@ -10,7 +10,7 @@
       "title": "Test Page",
       "authorName": "testuser",
       "publishedAt": "2025-08-07T13:12:14.624Z",
-      "lastUpdated": "2025-08-07T14:26:07.427Z",
+      "lastUpdated": "2025-08-07T19:58:35.161Z",
       "contentHash": "eb3ea244fc201b681f033362a20efb9f55ff3127f96e6f6c508d59553b8ce2cd",
       "accessToken": "test-token"
     }

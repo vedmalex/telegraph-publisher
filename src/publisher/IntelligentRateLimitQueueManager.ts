@@ -19,6 +19,7 @@ export interface PostponedFileInfo {
   priority?: number;
   complexity?: 'simple' | 'medium' | 'complex';
   lastErrorCode?: string;
+  accessToken?: string;
 }
 
 export interface QueueDecision {
@@ -71,6 +72,7 @@ export class IntelligentRateLimitQueueManager {
   private static readonly POSTPONE_THRESHOLD = 30; // seconds - threshold для postponement decision
   private static readonly MAX_RETRY_ATTEMPTS = 3; // maximum retry attempts for postponed files
   private static readonly QUEUE_LOG_INTERVAL = 5; // log progress every N files
+  private static readonly MAX_RETRY_DELAY = 30; // seconds - cap for retry-after to avoid long stalls
 
   // Creative Enhancement: Predictive Intelligence properties
   private static readonly DECISION_HISTORY_LIMIT = 100;
@@ -125,14 +127,14 @@ export class IntelligentRateLimitQueueManager {
    * @param processingQueue Current processing queue (mutable)
    * @returns Decision on how to handle the rate limit
    */
-  async handleRateLimit(filePath: string, waitSeconds: number, processingQueue: string[]): Promise<QueueDecision> {
+  async handleRateLimit(filePath: string, waitSeconds: number, processingQueue: string[], accessToken: string = ''): Promise<QueueDecision> {
     const fileName = basename(filePath);
     
     // 🎯 Smart decision logic
     const shouldPostpone = this.shouldPostponeFile(waitSeconds, processingQueue, filePath);
     
     if (shouldPostpone) {
-      return this.postponeFile(filePath, waitSeconds, processingQueue);
+      return this.postponeFile(filePath, waitSeconds, processingQueue, accessToken);
     } else {
       // Short wait or single file - handle normally
       this.queueProgress?.increment(`⏱️ ${fileName} (waiting ${waitSeconds}s)`);
@@ -160,15 +162,16 @@ export class IntelligentRateLimitQueueManager {
   /**
    * Postpone file и reorder queue
    */
-  private postponeFile(filePath: string, waitSeconds: number, queue: string[]): QueueDecision {
+  private postponeFile(filePath: string, waitSeconds: number, queue: string[], accessToken: string = ''): QueueDecision {
     const fileName = basename(filePath);
     const currentIndex = queue.indexOf(filePath);
     
     // 📋 Remove from current position
     queue.splice(currentIndex, 1);
     
-    // ⏰ Schedule for retry
-    const retryAfter = Date.now() + (waitSeconds * 1000);
+    // ⏰ Schedule for retry (cap excessively long waits)
+    const cappedWait = Math.min(waitSeconds, IntelligentRateLimitQueueManager.MAX_RETRY_DELAY);
+    const retryAfter = Date.now() + (cappedWait * 1000);
     const existingInfo = this.postponedFiles.get(filePath);
     const attempts = (existingInfo?.attempts || 0) + 1;
     
@@ -177,16 +180,17 @@ export class IntelligentRateLimitQueueManager {
       retryAfter,
       postponedAt: Date.now(),
       attempts,
-      reason: 'FLOOD_WAIT'
+      reason: 'FLOOD_WAIT',
+      accessToken: accessToken || existingInfo?.accessToken
     });
     
-    // 🔄 Add to end of queue for later retry
-    queue.push(filePath);
+    // 🔼 Add to FRONT of queue to retry as soon as possible (non-blocking approach)
+    queue.unshift(filePath);
     
     // Compact logging through progress bar
-    this.queueProgress?.increment(`⏭️ ${fileName} (postponed ${waitSeconds}s, attempt ${attempts})`);
+    this.queueProgress?.increment(`⏭️ ${fileName} (postponed ${waitSeconds}s→${cappedWait}s, attempt ${attempts})`);
     
-    const nextFile = queue[currentIndex] || null;
+    const nextFile = queue[currentIndex + 1] || null;
     return { 
       action: 'postpone', 
       nextFile 
@@ -266,54 +270,118 @@ export class IntelligentRateLimitQueueManager {
    * @param publishFunction Function to call for publishing each file
    */
   async processFinalRetries(
-    publishFunction: (filePath: string) => Promise<PublicationResult>
+    publishFunction: (filePath: string) => Promise<PublicationResult>,
+    getAccessToken?: (filePath: string) => string | undefined
   ): Promise<PublicationResult[]> {
+    const results: PublicationResult[] = [];
+
+    const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+    // Nothing to do
     if (this.postponedFiles.size === 0) {
-      return [];
+      return results;
     }
 
     // Initialize retry progress bar
     this.retryProgress = new ProgressIndicator(this.postponedFiles.size, "🔄 Final Retries");
-    const results: PublicationResult[] = [];
-    
-    for (const [filePath, info] of this.postponedFiles.entries()) {
-      const fileName = basename(filePath);
-      
-      if (info.attempts >= IntelligentRateLimitQueueManager.MAX_RETRY_ATTEMPTS) {
-        this.retryProgress.increment(`⚠️ ${fileName} (max attempts)`);
-        results.push({
-          success: false,
-          error: `Max retry attempts exceeded (${info.attempts})`,
-          isNewPublication: false
-        });
+
+    // Loop until all postponed files are processed
+    while (this.postponedFiles.size > 0) {
+      let progressThisRound = 0;
+
+      for (const [filePath, info] of Array.from(this.postponedFiles.entries())) {
+        const fileName = basename(filePath);
+
+        // Skip if not yet time to retry
+        if (Date.now() < info.retryAfter) {
+          continue;
+        }
+
+        if (info.attempts >= IntelligentRateLimitQueueManager.MAX_RETRY_ATTEMPTS) {
+          this.retryProgress.increment(`⚠️ ${fileName} (max attempts)`);
+          results.push({ success: false, error: `Max retry attempts exceeded (${info.attempts})`, isNewPublication: false });
+          this.postponedFiles.delete(filePath);
+          this.processedCount++;
+          progressThisRound++;
+          continue;
+        }
+
+        try {
+          const result = await publishFunction(filePath);
+          results.push(result);
+
+          if (result.success) {
+            this.retryProgress.increment(`✅ ${fileName} (retry success)`);
+            this.postponedFiles.delete(filePath);
+            this.processedCount++;
+            progressThisRound++;
+          } else {
+            // Non-FLOOD failures: mark processed and remove
+            this.retryProgress.increment(`⚠️ ${fileName} (retry failed)`);
+            this.postponedFiles.delete(filePath);
+            this.processedCount++;
+            progressThisRound++;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          // FLOOD_WAIT handling: reschedule instead of failing
+          const match = message.match(/FLOOD_WAIT_(\d+)/);
+          if (match) {
+            const waitSeconds = parseInt(match[1], 10);
+            const token = getAccessToken ? (getAccessToken(filePath) || '') : (info.accessToken || '');
+            const cappedWait = Math.min(waitSeconds, IntelligentRateLimitQueueManager.MAX_RETRY_DELAY);
+            this.postponedFiles.set(filePath, {
+              ...info,
+              originalWaitTime: waitSeconds,
+              retryAfter: Date.now() + cappedWait * 1000,
+              postponedAt: Date.now(),
+              attempts: info.attempts + 1,
+              reason: 'FLOOD_WAIT',
+              accessToken: (token || info.accessToken || '')
+            });
+            this.retryProgress.increment(`⏭️ ${fileName} (postponed ${waitSeconds}s→${cappedWait}s, attempt ${info.attempts + 1})`);
+            // Do not count as processed; will retry in a future round
+          } else {
+            // Other errors: mark and remove
+            this.retryProgress.increment(`❌ ${fileName} (error)`);
+            results.push({ success: false, error: message, isNewPublication: false });
+            this.postponedFiles.delete(filePath);
+            this.processedCount++;
+            progressThisRound++;
+          }
+        }
+      }
+
+      // If progress made, continue another round immediately
+      if (progressThisRound > 0) {
         continue;
       }
-      
-      try {
-        const result = await publishFunction(filePath);
-        results.push(result);
-        
-        if (result.success) {
-          this.retryProgress.increment(`✅ ${fileName} (retry success)`);
-        } else {
-          this.retryProgress.increment(`⚠️ ${fileName} (retry failed)`);
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        this.retryProgress.increment(`❌ ${fileName} (error)`);
-        results.push({
-          success: false,
-          error: errorMessage,
-          isNewPublication: false
-        });
+
+      // No progress: compute next wait by grouping tokens
+      if (this.postponedFiles.size === 0) break;
+
+      const tokens = new Set<string>();
+      let earliestRetry = Number.POSITIVE_INFINITY;
+      for (const [, info] of this.postponedFiles.entries()) {
+        if (info.accessToken) tokens.add(info.accessToken);
+        earliestRetry = Math.min(earliestRetry, info.retryAfter);
+      }
+
+      const now = Date.now();
+      const waitMs = Math.max(0, earliestRetry - now);
+
+      // Minimal logs; avoid console.error noise
+      if (tokens.size <= 1) {
+        // Single token — wait until nearest retry
+        await sleep(waitMs);
+      } else {
+        // Multiple tokens — still wait until the nearest retry to unblock soonest
+        await sleep(waitMs);
       }
     }
-    
-    this.retryProgress.complete(`Final retries complete: ${this.postponedFiles.size} files processed`);
-    
-    // Clear postponed files after final retry
-    this.postponedFiles.clear();
-    
+
+    this.retryProgress.complete(`Final retries complete: ${this.processedCount} files processed`);
+
     return results;
   }
 

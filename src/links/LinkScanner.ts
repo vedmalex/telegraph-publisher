@@ -8,6 +8,8 @@ import {
   type ProgressCallback,
   type ScanConfig
 } from './types';
+import { newMarkdownLinkRegex } from './utils/regex';
+import { isMarkdownFilePath } from './utils/fs';
 
 /**
  * LinkScanner is responsible for discovering Markdown files and extracting links from them
@@ -88,24 +90,19 @@ export class LinkScanner {
   }
 
   /**
- * Extract Markdown links from content using regex
- * @param content File content to parse
- * @returns Array of found links
- */
+   * Extract Markdown links from content using regex
+   * @param content File content to parse
+   * @returns Array of found links
+   */
   public static extractLinks(content: string): MarkdownLink[] {
     const links: MarkdownLink[] = [];
     const lines = content.split('\n');
 
-    // Improved regex to handle nested brackets and balanced parentheses in URLs
-    const linkRegex = /\[([^[\]]*(?:\[[^\]]*\][^[\]]*)*)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g;
-
     lines.forEach((line, lineIndex) => {
-      linkRegex.lastIndex = 0; // Reset regex state
+      const linkRegex = newMarkdownLinkRegex();
 
       let match: RegExpExecArray | null;
-      while (true) {
-        match = linkRegex.exec(line);
-        if (match === null) break;
+      while ((match = linkRegex.exec(line)) !== null) {
         const [fullMatch, text, href] = match;
         const columnStart = match.index || 0;
         const columnEnd = columnStart + fullMatch.length;
@@ -129,7 +126,7 @@ export class LinkScanner {
    * @returns True if the link is local
    */
   private isLocalLink(href: string): boolean {
-    // External links start with protocol or are email links
+    // External links start with protocol or are email/ftp links
     if (href.startsWith('http://') ||
       href.startsWith('https://') ||
       href.startsWith('mailto:') ||
@@ -138,9 +135,10 @@ export class LinkScanner {
       return false;
     }
 
-    // Fragment-only links (#section) are considered local and need anchor verification
+    // Fragment-only links (#section) are NOT counted as local files here.
+    // Anchor verification is handled by LinkVerifier with file context.
     if (href.startsWith('#')) {
-      return true;
+      return false;
     }
 
     return true;
@@ -216,9 +214,12 @@ export class LinkScanner {
    * @returns True if file is markdown
    */
   private isMarkdownFile(filePath: string): boolean {
-    return this.config.extensions.some(ext =>
-      filePath.toLowerCase().endsWith(ext.toLowerCase())
-    );
+    // Prefer shared util, but respect custom extensions if provided in config
+    if (this.config.extensions && this.config.extensions.length > 0) {
+      const lower = filePath.toLowerCase();
+      return this.config.extensions.some(ext => lower.endsWith(ext.toLowerCase()));
+    }
+    return isMarkdownFilePath(filePath);
   }
 
   /**

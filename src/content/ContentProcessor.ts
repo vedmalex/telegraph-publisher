@@ -155,21 +155,22 @@ export class ContentProcessor {
     const replacementMap = new Map<string, string>();
 
     for (const link of processedContent.localLinks) {
-      // FIXED: Use originalPath directly as it matches the key in linkMappings
-      // The linkMappings uses link.originalPath as key, not the resolved absolute path
-      const telegraphUrl = linkMappings.get(link.originalPath);
+      // Look up by resolved absolute path (without anchor), as provided by caller
+      const anchorPosResolved = link.resolvedPath.indexOf('#');
+      const resolvedFileOnly = anchorPosResolved !== -1 ? link.resolvedPath.substring(0, anchorPosResolved) : link.resolvedPath;
+      const telegraphBase = linkMappings.get(resolvedFileOnly);
       
-      if (telegraphUrl) {
-        // Check for and preserve the URL fragment (anchor) from original path
+      if (telegraphBase) {
+        // Preserve the anchor from the original markdown path if present
         const originalAnchorIndex = link.originalPath.indexOf('#');
-        let finalUrl = telegraphUrl;
+        let finalUrl = telegraphBase;
 
         if (originalAnchorIndex !== -1) {
           const anchor = link.originalPath.substring(originalAnchorIndex);
           finalUrl += anchor;
         }
 
-        // Use the final URL (with anchor) for replacement
+        // Map the original markdown path to the final Telegraph URL
         replacementMap.set(link.originalPath, finalUrl);
         // Update link object
         link.telegraphUrl = finalUrl;
@@ -186,8 +187,8 @@ export class ContentProcessor {
     return {
       ...processedContent,
       contentWithReplacedLinks,
-      // Remove published links from localLinks array
-      localLinks: processedContent.localLinks.filter(link => !link.isPublished),
+      // Preserve full localLinks array and mark published links in-place
+      localLinks: processedContent.localLinks,
       hasChanges: replacementMap.size > 0
     };
   }

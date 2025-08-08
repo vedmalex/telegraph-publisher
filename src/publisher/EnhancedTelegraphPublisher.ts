@@ -750,7 +750,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         publishedAt: new Date().toISOString(),
         title: metadataTitle,
         contentHash: updatedContentHash,
-        // �� Enhanced Addition: Use current link mappings for metadata
+        //  Enhanced Addition: Use current link mappings for metadata
         publishedDependencies: currentLinkMappings
       };
 
@@ -913,7 +913,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
               if (decision.action === 'postpone') {
                 // Continue with next file immediately
                 console.log(`⚡ Continuing with next file immediately instead of waiting ${waitSeconds}s`);
-                // currentIndex stays same (next file moved to current position in queue reordering)
+                // We re-queued the postponed file to the FRONT; advance index to process the next file
+                currentIndex++;
                 continue;
               } else {
                 // Short wait - handle normally
@@ -1123,51 +1124,55 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     // Apply rate limiting before API call
     await this.rateLimiter.beforeCall();
 
-    try {
-      // Call parent implementation
-      const result = await super.editPage(path, title, nodes, authorName, authorUrl);
+    // Build payload mirroring base implementation
+    const payload: Record<string, unknown> = {
+      access_token: this.currentAccessToken,
+      path,
+      title,
+      content: JSON.stringify(nodes),
+      return_content: false,
+    };
+    if (authorName) payload.author_name = authorName;
+    if (authorUrl) payload.author_url = authorUrl;
 
-      // Mark successful call
-      this.rateLimiter.markSuccessfulCall();
+    // Perform request directly to avoid base-class internal waiting
+    const response = await fetch(`https://api.telegra.ph/editPage/${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
 
-      return result;
-    } catch (error) {
-      // Check if this is a FLOOD_WAIT error
-      if (error instanceof Error && error.message.includes('FLOOD_WAIT_')) {
-        const waitMatch = error.message.match(/FLOOD_WAIT_(\d+)/);
-        if (waitMatch?.[1]) {
-          const waitSeconds = parseInt(waitMatch[1], 10);
-          console.warn(`🚦 Rate limited: waiting ${waitSeconds}s before retry...`);
-
-          // Handle FLOOD_WAIT with our rate limiter
-          await this.rateLimiter.handleFloodWait(waitSeconds);
-
-          // Retry the call
-          return await super.editPage(path, title, nodes, authorName, authorUrl);
-        }
-      }
-
-      // Enhanced PAGE_ACCESS_DENIED diagnostics (Smart Diagnostics Engine pattern)
-      if (error instanceof Error && error.message.includes('PAGE_ACCESS_DENIED')) {
-        console.error(`🚫 PAGE_ACCESS_DENIED: Token mismatch detected for page: ${path}`);
-        console.error(`   💡 This usually means the file was published with a different access token`);
-        console.error(`   🔧 Suggested solutions:`);
-        console.error(`      1. Check if the file metadata contains the correct accessToken`);
-        console.error(`      2. Verify directory-specific configuration in the file's folder`);
-        console.error(`      3. Use --force flag to republish with current token (if appropriate)`);
-        
-        // Enhance error message with context
-        const enhancedError = new Error(
-          `PAGE_ACCESS_DENIED for ${path}: Token mismatch. The page was likely published with a different access token. ` +
-          `Check file metadata or use directory-specific configuration.`
-        );
-        enhancedError.cause = error;
-        throw enhancedError;
-      }
-
-      // Re-throw other errors
-      throw error;
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
+
+    const data = (await response.json()) as { ok: boolean; result?: TelegraphPage; error?: string };
+
+    if (!data.ok) {
+      if (data.error && data.error.startsWith('FLOOD_WAIT_')) {
+        const waitSeconds = parseInt(data.error.split('_')[2] || '5', 10);
+        const SWITCH_THRESHOLD = 30; // seconds
+        if (waitSeconds > SWITCH_THRESHOLD) {
+          // Delegate long waits to upper layers (queue manager / user switching)
+          throw new Error(`FLOOD_WAIT_${waitSeconds}`);
+        }
+        // Short wait: handle locally via rate limiter and retry
+        await this.rateLimiter.handleFloodWait(waitSeconds);
+        return this.editPage(path, title, nodes, authorName, authorUrl);
+      }
+      throw new Error(`Telegraph API error: ${data.error}`);
+    }
+
+    // Mark successful call
+    this.rateLimiter.markSuccessfulCall();
+
+    if (!data.result) {
+      throw new Error('Telegraph API returned empty result');
+    }
+
+    return data.result;
   }
 
   /**
