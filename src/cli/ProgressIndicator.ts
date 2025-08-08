@@ -58,14 +58,19 @@ export class ProgressIndicator {
    * @param message Optional status message
    */
   private render(message?: string): void {
-    const percentage = Math.round((this.current / this.total) * 100);
+    // Prevent division by zero and ensure valid bounds
+    const safeTotal = Math.max(this.total, 1);
+    const safeCurrent = Math.max(0, Math.min(this.current, safeTotal));
+    
+    const percentage = Math.round((safeCurrent / safeTotal) * 100);
     const elapsed = Date.now() - this.startTime;
-    const eta = this.current > 0 ? (elapsed / this.current) * (this.total - this.current) : 0;
+    const eta = safeCurrent > 0 ? (elapsed / safeCurrent) * (safeTotal - safeCurrent) : 0;
 
-    // Create simple ASCII progress bar
+    // Create simple ASCII progress bar with bounds checking
     const barLength = 15;
-    const filled = Math.round((this.current / this.total) * barLength);
-    const bar = "=".repeat(filled) + "-".repeat(barLength - filled);
+    const filled = Math.max(0, Math.min(barLength, Math.round((safeCurrent / safeTotal) * barLength)));
+    const empty = Math.max(0, barLength - filled);
+    const bar = "=".repeat(filled) + "-".repeat(empty);
 
     // Format time
     const formatTime = (ms: number): string => {
@@ -81,13 +86,13 @@ export class ProgressIndicator {
       return msg.substring(0, maxLength - 3) + "...";
     };
 
-    let output = `\r${this.label}: [${bar}] ${percentage}% (${this.current}/${this.total})`;
+    let output = `\r${this.label}: [${bar}] ${percentage}% (${safeCurrent}/${safeTotal})`;
 
     if (elapsed > 1000) {
       output += ` | Elapsed: ${formatTime(elapsed)}`;
     }
 
-    if (eta > 1000 && this.current < this.total) {
+    if (eta > 1000 && safeCurrent < safeTotal) {
       output += ` | ETA: ${formatTime(eta)}`;
     }
 

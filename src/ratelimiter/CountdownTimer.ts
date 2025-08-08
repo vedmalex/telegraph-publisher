@@ -175,8 +175,9 @@ export class CountdownTimer {
    */
   private generateProgressBar(progress: number): string {
     const barLength = 20;
-    const filled = Math.floor((progress / 100) * barLength);
-    const empty = barLength - filled;
+    const safeProgress = Math.max(0, Math.min(100, progress));
+    const filled = Math.floor((safeProgress / 100) * barLength);
+    const empty = Math.max(0, barLength - filled);
 
     const filledChar = '█';
     const emptyChar = '▓';
@@ -210,8 +211,10 @@ export class CountdownTimer {
    * @returns Progress bar string
    */
   static generateProgressBar(progress: number, length: number = 20): string {
-    const filled = Math.floor((progress / 100) * length);
-    const empty = length - filled;
+    const safeProgress = Math.max(0, Math.min(100, progress));
+    const safeLength = Math.max(1, length);
+    const filled = Math.floor((safeProgress / 100) * safeLength);
+    const empty = Math.max(0, safeLength - filled);
 
     const filledChar = '█';
     const emptyChar = '▓';

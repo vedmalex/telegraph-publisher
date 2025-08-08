@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, resolve, join } from "node:path";
+
 import type { PagesCacheManager } from "../cache/PagesCacheManager";
 import { PagesCacheManager as PagesCacheManagerClass } from "../cache/PagesCacheManager";
 import { ProgressIndicator } from "../cli/ProgressIndicator";
@@ -372,15 +373,20 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         );
         const dependencyResult = await this.publishDependencies(filePath, username, recursiveOptions);
         if (!dependencyResult.success) {
-          return {
-            success: false,
-            error: `Failed to publish dependencies: ${dependencyResult.error}`,
-            isNewPublication: true
-          };
+          this.appendPublishLog({
+            level: 'error',
+            phase: 'dependencies',
+            rootFile: filePath,
+            error: dependencyResult.error || 'Unknown error'
+          });
+          // Non-fatal: continue with cached/existing links
         }
 
-        // 🔗 Enhanced Addition: Collect linkMappings from dependency publication
-        publishedDependencies = dependencyResult.linkMappings || {};
+        // 🔗 Enhanced Addition: Collect linkMappings from dependency publication (merge if any)
+        if (dependencyResult.linkMappings && Object.keys(dependencyResult.linkMappings).length > 0) {
+          publishedDependencies = { ...(publishedDependencies || {}), ...dependencyResult.linkMappings };
+        }
+        this.appendPublishLog({ level: 'info', phase: 'dependencies', rootFile: filePath, publishedCount: (dependencyResult.publishedFiles || []).length });
       } else {
         // 🔗 Metadata Preservation: When withDependencies=false, preserve existing dependencies
         publishedDependencies = originalDependencies;
@@ -393,16 +399,18 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // Unified Pipeline: This is no longer dependent on the `withDependencies` recursion flag
       let processedWithLinks = processed;
       if (this.config.replaceLinksinContent && processed.localLinks.length > 0) {
-        processedWithLinks = await this.replaceLinksWithTelegraphUrls(processed, undefined, this.cacheManager);
+        // pass publishedDependencies so we never lose previously known links
+        processedWithLinks = await this.replaceLinksWithTelegraphUrls(processed, publishedDependencies, this.cacheManager);
       }
 
       // Validate content with relaxed rules for depth 1 or when dependencies are disabled
       const isDepthOne = this.config.maxDependencyDepth === 1;
       const validation = ContentProcessor.validateContent(processedWithLinks, {
         allowBrokenLinks: isDepthOne,
-        allowUnpublishedDependencies: isDepthOne || !withDependencies
+        allowUnpublishedDependencies: isDepthOne || !withDependencies || forceRepublish
       });
       if (!validation.isValid) {
+        this.appendPublishLog({ level: 'error', phase: 'validation', file: filePath, issues: validation.issues });
         return {
           success: false,
           error: `Content validation failed: ${validation.issues.join(', ')}`,
@@ -441,6 +449,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       let page: any;
       try {
         page = await this.publishNodes(title, telegraphNodes);
+        this.appendPublishLog({ level: 'info', phase: 'publish', title, ok: true });
       } catch (error) {
         // Check if this is a FLOOD_WAIT error that can trigger user switching
         if (error instanceof Error && error.message.includes('FLOOD_WAIT_')) {
@@ -454,6 +463,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           page = await this.publishNodes(title, telegraphNodes);
         } else {
           // Re-throw non-FLOOD_WAIT errors
+          this.appendPublishLog({ level: 'error', phase: 'publish', title, error: error instanceof Error ? error.message : String(error) });
           throw error;
         }
       }
@@ -575,15 +585,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         );
         const dependencyResult = await this.publishDependencies(filePath, username, recursiveOptions);
         if (!dependencyResult.success) {
-          return {
-            success: false,
-            error: `Failed to publish dependencies: ${dependencyResult.error}`,
-            isNewPublication: false
-          };
+          // Non-fatal: continue with cached/existing links
         }
 
-        // Capture current link mappings from dependency processing
-        currentLinkMappings = dependencyResult.linkMappings || {};
+        // Capture current link mappings from dependency processing (merge if any)
+        if (dependencyResult.linkMappings && Object.keys(dependencyResult.linkMappings).length > 0) {
+          currentLinkMappings = { ...(currentLinkMappings || {}), ...dependencyResult.linkMappings };
+        }
       }
 
       // Process the main file
@@ -692,7 +700,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const isDepthOne = this.config.maxDependencyDepth === 1;
       const validation = ContentProcessor.validateContent(processedWithLinks, {
         allowBrokenLinks: isDepthOne,
-        allowUnpublishedDependencies: isDepthOne || !withDependencies
+        allowUnpublishedDependencies: isDepthOne || !withDependencies || forceRepublish
       });
       if (!validation.isValid) {
         return {
@@ -782,10 +790,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       };
 
     } catch (error) {
+      this.appendPublishLog({ level: 'error', phase: 'edit', file: filePath, error: error instanceof Error ? error.message : String(error) });
       const msg = error instanceof Error ? error.message : String(error);
       if (msg.includes('FLOOD_WAIT_')) {
         // Suppress error log for rate-limit and rethrow to be handled by queue manager/final retries
-        throw error;
+        throw new Error(msg);
       }
       console.error(`Error editing file ${filePath}:`, error);
       return {
@@ -1022,7 +1031,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
         }
       };
 
-      const finalResults = await queueManager.processFinalRetries(finalRetryFunction, () => this.currentAccessToken || '');
+      await queueManager.processFinalRetries(finalRetryFunction, () => this.currentAccessToken || '');
       // Debug: write token stats if enabled
       if (debug && tokenStats.size > 0) {
         try {
@@ -1037,25 +1046,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           // ignore
         }
       }
-      
-      // Final retries are already tracked in the finalRetryFunction above
-      console.log(`📊 Final retries completed: ${finalResults.filter(r => r.success).length}/${finalResults.length} successful`);
 
       // Clear metadata cache after operation
       this.clearMetadataCache();
 
       // Report final results with queue statistics
       this.reportProcessingResults(stats, dryRun);
-      
-      const queueStats = queueManager.getStats();
-      if (queueStats.postponed > 0 || finalResults.length > 0) {
-        console.log(`📊 Queue Summary: ${queueStats.processed}/${queueStats.total} processed, ${queueStats.postponed} files had rate limits`);
-        const postponedSummary = queueManager.getPostponedSummary();
-        if (postponedSummary.length > 0) {
-          console.log(`🔄 Postponed files handled: ${postponedSummary.join(', ')}`);
-        }
-      }
-      
+
       return { success: true, publishedFiles, linkMappings };
 
     } catch (error) {
@@ -1081,38 +1078,47 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     linkMappings?: Record<string, string>,
     cacheManager?: PagesCacheManager,
   ): Promise<ProcessedContent> {
-    // Early return if no cache manager and no pre-built mappings
-    if (!cacheManager && !linkMappings) {
-      return processed;
-    }
+    // Build mapping keyed by resolved absolute file path (without anchor) → Telegraph URL
+    // This is what ContentProcessor.replaceLinksInContent expects for lookups
+    const resolvedToUrl = new Map<string, string>();
 
-    let finalLinkMappings: Map<string, string>;
+    const trySet = (resolvedFileOnly: string, url?: string | null): void => {
+      if (!url) return;
+      resolvedToUrl.set(resolvedFileOnly, url);
+    };
 
-    // Use provided linkMappings if available, otherwise build from cache
-    if (linkMappings && Object.keys(linkMappings).length > 0) {
-      finalLinkMappings = new Map(Object.entries(linkMappings));
-    } else if (cacheManager) {
-      // Fallback to cache-based lookup (existing behavior)
-      const cacheLinkMappings = new Map<string, string>();
-      
-      for (const link of processed.localLinks) {
-        // Use the resolved absolute path as the key for cache lookup
-        const telegraphUrl = cacheManager.getTelegraphUrl(link.resolvedPath);
-        
-        if (telegraphUrl) {
-          // Use the original relative path as the key for replacement
-          cacheLinkMappings.set(link.originalPath, telegraphUrl);
+    for (const link of processed.localLinks) {
+      const anchorPos = link.resolvedPath.indexOf('#');
+      const resolvedFileOnly = anchorPos !== -1 ? link.resolvedPath.substring(0, anchorPos) : link.resolvedPath;
+
+      // 1) Prefer explicit linkMappings by originalPath (with and without leading ./)
+      const normalizedOriginal = link.originalPath.replace(/^\.\//, '');
+      let url: string | undefined = undefined;
+      if (linkMappings) {
+        url = linkMappings[link.originalPath] || linkMappings[normalizedOriginal];
+      }
+
+      // 2) Fallback to cache by absolute resolved path
+      if (!url && cacheManager) {
+        url = cacheManager.getTelegraphUrl(resolvedFileOnly) || undefined;
+      }
+
+      // 3) As last resort, use existing publishedDependencies from metadata by originalPath
+      if (!url) {
+        const existingDeps = processed.metadata?.publishedDependencies as Record<string, string> | undefined;
+        if (existingDeps) {
+          url = existingDeps[link.originalPath] || existingDeps[normalizedOriginal];
         }
       }
-      
-      finalLinkMappings = cacheLinkMappings;
-    } else {
-      // No mappings and no cache, return unchanged
+
+      trySet(resolvedFileOnly, url || null);
+    }
+
+    if (resolvedToUrl.size === 0) {
       return processed;
     }
 
-    // Replace links in content
-    return ContentProcessor.replaceLinksInContent(processed, finalLinkMappings);
+    return ContentProcessor.replaceLinksInContent(processed, resolvedToUrl);
   }
 
   /**
@@ -1131,6 +1137,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     try {
       // Call parent implementation
       const result = await super.publishNodes(title, nodes);
+      this.appendPublishLog({ level: 'info', phase: 'publish', title, ok: true });
 
       // Mark successful call
       this.rateLimiter.markSuccessfulCall();
@@ -1161,6 +1168,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       }
 
       // Re-throw non-FLOOD_WAIT errors
+      this.appendPublishLog({ level: 'error', phase: 'publish', title, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -1211,6 +1219,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     const data = (await response.json()) as { ok: boolean; result?: TelegraphPage; error?: string };
 
     if (!data.ok) {
+      this.appendPublishLog({ level: 'error', phase: 'editPage', path, error: data.error });
       if (data.error && data.error.startsWith('FLOOD_WAIT_')) {
         const waitSeconds = parseInt(data.error.split('_')[2] || '5', 10);
         const SWITCH_THRESHOLD = 30; // seconds
@@ -1227,6 +1236,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
     // Mark successful call
     this.rateLimiter.markSuccessfulCall();
+    this.appendPublishLog({ level: 'info', phase: 'editPage', path, ok: true });
 
     if (!data.result) {
       throw new Error('Telegraph API returned empty result');
@@ -1295,7 +1305,19 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     }
   }
 
-
+  private appendPublishLog(entry: Record<string, unknown>): void {
+    try {
+      const line = JSON.stringify({
+        ts: new Date().toISOString(),
+        ...entry,
+      });
+      const outPath = join(process.cwd(), 'telegraph-publish.log');
+      // Append with newline; use fs.appendFileSync via writeFileSync with flag
+      require('node:fs').writeFileSync(outPath, line + '\n', { flag: 'a', encoding: 'utf-8' });
+    } catch {
+      // ignore logging errors
+    }
+  }
 
   /**
    * Initialize statistics tracking for dependency processing
