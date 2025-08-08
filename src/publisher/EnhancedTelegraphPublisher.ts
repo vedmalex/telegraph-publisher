@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, resolve, join } from "node:path";
 import type { PagesCacheManager } from "../cache/PagesCacheManager";
 import { PagesCacheManager as PagesCacheManagerClass } from "../cache/PagesCacheManager";
 import { ProgressIndicator } from "../cli/ProgressIndicator";
@@ -496,10 +496,15 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       };
 
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('FLOOD_WAIT_')) {
+        // Suppress log for rate limit and let upper layers/queue handle it
+        throw error;
+      }
       console.error(`Error publishing file ${filePath}:`, error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: msg,
         isNewPublication: true
       };
     }
@@ -777,10 +782,15 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       };
 
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('FLOOD_WAIT_')) {
+        // Suppress error log for rate-limit and rethrow to be handled by queue manager/final retries
+        throw error;
+      }
       console.error(`Error editing file ${filePath}:`, error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: msg,
         isNewPublication: false
       };
     }
@@ -819,6 +829,8 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const publishedFiles: string[] = [];
       const linkMappings: Record<string, string> = {};
       const stats = this.initializeStatsTracking(analysis, filePath);
+      // Debug: token-to-files statistics
+      const tokenStats: Map<string, string[]> = new Map();
       
       // Clear metadata cache at start of operation
       this.clearMetadataCache();
@@ -864,6 +876,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
               "info"
             );
             
+            if (debug) {
+              const tokenKey = this.currentAccessToken || 'unknown-token';
+              const arr = tokenStats.get(tokenKey) || [];
+              arr.push(currentFile);
+              tokenStats.set(tokenKey, arr);
+            }
+            
             result = await this.publishWithMetadata(currentFile, username, { 
               ...validatedOptions, 
               forceRepublish: true, 
@@ -871,6 +890,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
             });
           } else {
             // Standard mode: let publishWithMetadata/editWithMetadata handle change detection
+            if (debug) {
+              const tokenKey = this.currentAccessToken || 'unknown-token';
+              const arr = tokenStats.get(tokenKey) || [];
+              arr.push(currentFile);
+              tokenStats.set(tokenKey, arr);
+            }
             const statusResult = await this.processFileByStatus(currentFile, username, publishedFiles, stats, validatedOptions);
             result = { success: true }; // processFileByStatus doesn't return a result, so assume success if no exception
           }
@@ -908,7 +933,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
               const waitSeconds = parseInt(waitMatch[1], 10);
               
               // 🎯 Intelligent queue decision
-              const decision = await queueManager.handleRateLimit(currentFile, waitSeconds, processingQueue);
+              const decision = await queueManager.handleRateLimit(currentFile, waitSeconds, processingQueue, this.currentAccessToken || '');
               
               if (decision.action === 'postpone') {
                 // Continue with next file immediately
@@ -944,6 +969,12 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       // 📊 Process final retries for any remaining postponed files
       const finalRetryFunction = async (retryFilePath: string): Promise<PublicationResult> => {
         if (validatedOptions.force) {
+          if (debug) {
+            const tokenKey = this.currentAccessToken || 'unknown-token';
+            const arr = tokenStats.get(tokenKey) || [];
+            arr.push(retryFilePath);
+            tokenStats.set(tokenKey, arr);
+          }
           const result = await this.publishWithMetadata(retryFilePath, username, { 
             ...validatedOptions, 
             forceRepublish: true, 
@@ -955,11 +986,21 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
             publishedFiles.push(retryFilePath);
             stats.processedFiles++;
           }
+          // If rate-limited surfaced as error string, rethrow to let queue reschedule
+          if (!result.success && result.error && result.error.includes('FLOOD_WAIT_')) {
+            throw new Error(result.error);
+          }
           
           return result;
         } else {
           // For standard mode, wrap processFileByStatus to return a PublicationResult
           try {
+            if (debug) {
+              const tokenKey = this.currentAccessToken || 'unknown-token';
+              const arr = tokenStats.get(tokenKey) || [];
+              arr.push(retryFilePath);
+              tokenStats.set(tokenKey, arr);
+            }
             await this.processFileByStatus(retryFilePath, username, publishedFiles, stats, validatedOptions);
             return { 
               success: true, 
@@ -967,16 +1008,35 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
               url: ''
             };
           } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (msg.includes('FLOOD_WAIT_')) {
+              // Propagate FLOOD_WAIT to queue manager final retries
+              throw new Error(msg);
+            }
             return {
               success: false,
               isNewPublication: false,
-              error: error instanceof Error ? error.message : String(error)
+              error: msg
             };
           }
         }
       };
 
-      const finalResults = await queueManager.processFinalRetries(finalRetryFunction);
+      const finalResults = await queueManager.processFinalRetries(finalRetryFunction, () => this.currentAccessToken || '');
+      // Debug: write token stats if enabled
+      if (debug && tokenStats.size > 0) {
+        try {
+          const obj: Record<string, string[]> = {};
+          for (const [token, files] of tokenStats.entries()) {
+            obj[token] = files;
+          }
+          const outPath = join(process.cwd(), 'telegraph-token-stats.json');
+          writeFileSync(outPath, JSON.stringify(obj, null, 2), 'utf-8');
+          ProgressIndicator.showStatus(`🧾 Token stats saved: ${outPath}`, 'info');
+        } catch {
+          // ignore
+        }
+      }
       
       // Final retries are already tracked in the finalRetryFunction above
       console.log(`📊 Final retries completed: ${finalResults.filter(r => r.success).length}/${finalResults.length} successful`);

@@ -297,7 +297,8 @@ export class IntelligentRateLimitQueueManager {
           continue;
         }
 
-        if (info.attempts >= IntelligentRateLimitQueueManager.MAX_RETRY_ATTEMPTS) {
+        // During final retries: for FLOOD_WAIT we do not enforce max attempts cap
+        if (info.reason !== 'FLOOD_WAIT' && info.attempts >= IntelligentRateLimitQueueManager.MAX_RETRY_ATTEMPTS) {
           this.retryProgress.increment(`⚠️ ${fileName} (max attempts)`);
           results.push({ success: false, error: `Max retry attempts exceeded (${info.attempts})`, isNewPublication: false });
           this.postponedFiles.delete(filePath);
@@ -315,6 +316,21 @@ export class IntelligentRateLimitQueueManager {
             this.postponedFiles.delete(filePath);
             this.processedCount++;
             progressThisRound++;
+          } else if (result.error && /FLOOD_WAIT_(\d+)/.test(result.error)) {
+            // Treat as FLOOD_WAIT: reschedule exactly as told (no cap)
+            const match = result.error.match(/FLOOD_WAIT_(\d+)/);
+            const waitSeconds = match ? parseInt(match[1], 10) : 5;
+            const token = getAccessToken ? (getAccessToken(filePath) || '') : (info.accessToken || '');
+            this.postponedFiles.set(filePath, {
+              ...info,
+              originalWaitTime: waitSeconds,
+              retryAfter: Date.now() + waitSeconds * 1000,
+              postponedAt: Date.now(),
+              attempts: info.attempts + 1,
+              reason: 'FLOOD_WAIT',
+              accessToken: token
+            });
+            this.retryProgress.increment(`⏭️ ${fileName} (postponed ${waitSeconds}s, attempt ${info.attempts + 1})`);
           } else {
             // Non-FLOOD failures: mark processed and remove
             this.retryProgress.increment(`⚠️ ${fileName} (retry failed)`);
@@ -324,22 +340,21 @@ export class IntelligentRateLimitQueueManager {
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          // FLOOD_WAIT handling: reschedule instead of failing
+          // FLOOD_WAIT handling: reschedule instead of failing (no cap on final phase)
           const match = message.match(/FLOOD_WAIT_(\d+)/);
           if (match) {
             const waitSeconds = parseInt(match[1], 10);
             const token = getAccessToken ? (getAccessToken(filePath) || '') : (info.accessToken || '');
-            const cappedWait = Math.min(waitSeconds, IntelligentRateLimitQueueManager.MAX_RETRY_DELAY);
             this.postponedFiles.set(filePath, {
               ...info,
               originalWaitTime: waitSeconds,
-              retryAfter: Date.now() + cappedWait * 1000,
+              retryAfter: Date.now() + waitSeconds * 1000,
               postponedAt: Date.now(),
               attempts: info.attempts + 1,
               reason: 'FLOOD_WAIT',
-              accessToken: (token || info.accessToken || '')
+              accessToken: token
             });
-            this.retryProgress.increment(`⏭️ ${fileName} (postponed ${waitSeconds}s→${cappedWait}s, attempt ${info.attempts + 1})`);
+            this.retryProgress.increment(`⏭️ ${fileName} (postponed ${waitSeconds}s, attempt ${info.attempts + 1})`);
             // Do not count as processed; will retry in a future round
           } else {
             // Other errors: mark and remove
@@ -357,26 +372,48 @@ export class IntelligentRateLimitQueueManager {
         continue;
       }
 
-      // No progress: compute next wait by grouping tokens
+      // No progress: compute next wait using token grouping
       if (this.postponedFiles.size === 0) break;
 
-      const tokens = new Set<string>();
-      let earliestRetry = Number.POSITIVE_INFINITY;
-      for (const [, info] of this.postponedFiles.entries()) {
-        if (info.accessToken) tokens.add(info.accessToken);
-        earliestRetry = Math.min(earliestRetry, info.retryAfter);
+      const tokenToEarliest: Map<string, number> = new Map();
+      for (const [fp, info] of this.postponedFiles.entries()) {
+        const token = info.accessToken || '';
+        if (!tokenToEarliest.has(token)) {
+          tokenToEarliest.set(token, info.retryAfter);
+        } else {
+          tokenToEarliest.set(token, Math.min(tokenToEarliest.get(token)!, info.retryAfter));
+        }
       }
 
+      // Determine waiting strategy
+      const distinctTokens = [...tokenToEarliest.keys()];
       const now = Date.now();
-      const waitMs = Math.max(0, earliestRetry - now);
 
-      // Minimal logs; avoid console.error noise
-      if (tokens.size <= 1) {
-        // Single token — wait until nearest retry
-        await sleep(waitMs);
+      if (distinctTokens.length <= 1) {
+        // Single token for all remaining files — wait exactly until its earliest retry
+        const nextTs = tokenToEarliest.get(distinctTokens[0]) || now;
+        const waitMs = Math.max(0, nextTs - now);
+        // Progress-style ticking wait
+        const step = 1000;
+        let remaining = Math.ceil(waitMs / 1000);
+        while (remaining > 0) {
+          this.retryProgress.update(this.processedCount, `⏳ Waiting ${remaining}s (rate-limit)`);
+          // eslint-disable-next-line no-await-in-loop
+          await sleep(Math.min(step, waitMs));
+          remaining--;
+        }
       } else {
-        // Multiple tokens — still wait until the nearest retry to unblock soonest
-        await sleep(waitMs);
+        // Multiple tokens — wait until the nearest token retry to resume some progress ASAP
+        const earliestRetry = Math.min(...distinctTokens.map(t => tokenToEarliest.get(t) || now));
+        const waitMs = Math.max(0, earliestRetry - now);
+        const step = 1000;
+        let remaining = Math.ceil(waitMs / 1000);
+                  while (remaining > 0) {
+            this.retryProgress.update(this.processedCount, `⏳ Waiting ${remaining}s (nearest token window)`);
+            // eslint-disable-next-line no-await-in-loop
+            await sleep(Math.min(step, waitMs));
+            remaining--;
+          }
       }
     }
 
