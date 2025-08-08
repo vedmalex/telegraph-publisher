@@ -174,7 +174,7 @@ export class EnhancedCommands {
       .command("publish")
       .alias("pub")
       .description("Unified publish/edit command: creates, publishes, or updates Markdown files (if no file specified, publishes entire directory)")
-      .option("-f, --file <path>", "Path to the Markdown file (optional - if not specified, publishes current directory)")
+      .option("-f, --file <path...>", "Path(s) to the Markdown file(s) (optional - if not specified, publishes current directory)")
       .option("-a, --author <name>", "Author's name (overrides config default)")
       .option("--title <title>", "Title of the article (optional, will be extracted from file if not provided)")
       .option("--author-url <url>", "Author's URL (optional)")
@@ -369,6 +369,31 @@ export class EnhancedCommands {
    * @param options Command options
    */
   static async handleUnifiedPublishCommand(options: any): Promise<void> {
+    // Support multiple files: if array provided, process sequentially
+    if (Array.isArray(options.file)) {
+      const files: string[] = options.file;
+
+      // Handle debug mode: debug implies dry-run
+      if (options.debug) {
+        options.dryRun = true;
+      }
+
+      for (let i = 0; i < files.length; i++) {
+        const filePath = files[i];
+        if (!filePath) continue;
+        try {
+          await EnhancedCommands.processSinglePublish(filePath, options);
+        } catch (error) {
+          ProgressIndicator.showStatus(
+            `Publication workflow failed for ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+            "error"
+          );
+          process.exit(1);
+        }
+      }
+      return;
+    }
+
     const targetPath = options.file || process.cwd();
     const fileDirectory = options.file ? dirname(resolve(options.file)) : process.cwd();
 
@@ -1128,5 +1153,51 @@ export class EnhancedCommands {
     } catch (error) {
       throw new Error(`Cache validation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private static async processSinglePublish(filePath: string, options: any): Promise<void> {
+    const resolvedPath = resolve(filePath);
+    const fileDirectory = dirname(resolvedPath);
+
+    // Create missing file (edit behavior)
+    if (!existsSync(resolvedPath)) {
+      ProgressIndicator.showStatus("File not found. Creating new file...", "info");
+      const initialContent = options.title
+        ? `# ${options.title}\n\nContent goes here...`
+        : `# New Article\n\nContent goes here...`;
+      writeFileSync(resolvedPath, initialContent);
+      ProgressIndicator.showStatus(`Created new file: ${resolvedPath}`, "success");
+    }
+
+    // Load config with CLI priority for this file
+    const existingConfig = EnhancedCommands.loadConfigWithCliPrioritySync(resolvedPath, options);
+    const configUpdatesFromCli = EnhancedCommands.extractConfigUpdatesFromCli(options);
+    const finalConfig = {
+      ...existingConfig,
+      ...configUpdatesFromCli
+    };
+
+    if (Object.keys(configUpdatesFromCli).length > 0) {
+      ConfigManager.updateMetadataConfig(fileDirectory, finalConfig);
+      EnhancedCommands.notifyConfigurationUpdate(configUpdatesFromCli, fileDirectory);
+    }
+
+    const accessToken = options.token || ConfigManager.loadAccessToken(fileDirectory);
+    if (options.token) {
+      ConfigManager.saveAccessToken(fileDirectory, options.token);
+    }
+    if (!accessToken) {
+      throw new Error("Access token is required. Set it using --token or configure it with 'config' command");
+    }
+
+    const workflowManager = new PublicationWorkflowManager(finalConfig, accessToken);
+
+    // Apply debug->dry-run per file as well
+    if (options.debug) {
+      options.dryRun = true;
+    }
+
+    const perFileOptions = { ...options, file: resolvedPath };
+    await workflowManager.publish(resolvedPath, perFileOptions);
   }
 }

@@ -1,0 +1,12 @@
+# Specification Changes Log - Multi-file `--file` Option
+
+## 2025-08-08 10:30 - Phase: IMPLEMENT
+**Change Type:** Addition
+**Affected Requirement:** REQ-001..REQ-006
+**Reason:** Initial user specification captured
+**Previous Value:** N/A
+**New Value:** Added multi-file processing requirements and acceptance criteria
+**Impact Assessment:** Minimal changes localized to CLI option and publish handler
+**Stakeholder:** User request
+
+---

@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EnhancedCommands } from './EnhancedCommands';
 import { DeprecatedFlagError } from '../errors/DeprecatedFlagError';
+import { describe as d2, it as it2, expect as expect2, vi as vi2, beforeEach as beforeEach2, afterEach as afterEach2 } from 'vitest';
+import { PublicationWorkflowManager } from '../workflow';
+import { writeFileSync as wfs, mkdirSync as mks, rmSync as rms, existsSync as exs } from 'node:fs';
+import { resolve as rsv, join as jn } from 'node:path';
 
 describe('EnhancedCommands CLI Integration', () => {
   let processExitSpy: any;
@@ -458,5 +462,50 @@ accessToken: file-token-123
     } finally {
       console.log = originalLog;
     }
+  });
+}); 
+
+d2('Multi-file --file option integration', () => {
+  const testDir = rsv('./test-multifile');
+  const fileA = jn(testDir, 'a.md');
+  const fileB = jn(testDir, 'b.md');
+
+  let publishSpy: any;
+
+  beforeEach2(() => {
+    if (exs(testDir)) {
+      rms(testDir, { recursive: true, force: true });
+    }
+    mks(testDir, { recursive: true });
+    wfs(fileA, '# A');
+    wfs(fileB, '# B');
+
+    publishSpy = vi2.spyOn(PublicationWorkflowManager.prototype as any, 'publish').mockResolvedValue(undefined);
+  });
+
+  afterEach2(() => {
+    publishSpy.mockRestore();
+    if (exs(testDir)) {
+      rms(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it2('should process multiple files sequentially with same options', async () => {
+    await EnhancedCommands.handleUnifiedPublishCommand({
+      file: [fileA, fileB],
+      token: 'test-token',
+      dryRun: true,
+      debug: true,
+      withDependencies: false,
+      verbose: false
+    });
+
+    expect2(publishSpy).toHaveBeenCalledTimes(2);
+    expect2(publishSpy.mock.calls[0][0]).toBe(fileA);
+    expect2(publishSpy.mock.calls[1][0]).toBe(fileB);
+
+    // Ensure options preserved per call (dryRun set due to debug as well)
+    expect2(publishSpy.mock.calls[0][1].dryRun).toBe(true);
+    expect2(publishSpy.mock.calls[1][1].dryRun).toBe(true);
   });
 }); 
