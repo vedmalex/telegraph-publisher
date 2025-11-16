@@ -1,4 +1,5 @@
 {
+  "defaultUsername": "Test Author",
   "autoPublishDependencies": true,
   "replaceLinksinContent": true,
   "maxDependencyDepth": 20,

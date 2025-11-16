@@ -18,6 +18,7 @@ import { PublicationWorkflowManager } from "../workflow";
 import { ProgressIndicator } from "./ProgressIndicator";
 import { DeprecatedFlagError, UserFriendlyErrorReporter } from "../errors/DeprecatedFlagError";
 import { AutoRegistrationManager } from "../publisher/AutoRegistrationManager";
+import { EpubGenerator } from "../epub/EpubGenerator";
 
 /**
  * Enhanced CLI commands with metadata management
@@ -968,6 +969,172 @@ export class EnhancedCommands {
     }
 
     return null;
+  }
+
+  /**
+   * Add EPUB generation command
+   * @param program Commander program instance
+   */
+  static addEpubCommand(program: Command): void {
+    program
+      .command("epub")
+      .description("Generate EPUB file from Markdown file(s), reusing the same publication mechanism")
+      .option("-f, --file <path...>", "Path(s) to the Markdown file(s) (required)")
+      .option("-o, --output <path>", "Output EPUB file path (default: book.epub)")
+      .option("-t, --title <title>", "Book title (optional, will be extracted from first file if not provided)")
+      .option("-a, --author <name>", "Author's name (required)")
+      .option("--cover <path>", "Path to cover image file (JPG or PNG)")
+      .option("--debug", "Keep temporary files for debugging (don't delete temp directory)")
+      .option("--with-dependencies", "Automatically include linked local files (default: true)")
+      .option("--no-with-dependencies", "Skip automatic dependency inclusion")
+      .option("--toc-title <title>", "Title for the Table of Contents section (default: 'Содержание')")
+      .option("--toc-separators", "Add horizontal separators (HR) before and after Table of Contents (default: true)")
+      .option("--no-toc-separators", "Disable horizontal separators around Table of Contents")
+      .option("--language <lang>", "Book language code (default: 'ru')")
+      .option("-v, --verbose", "Show detailed progress information")
+      .action(async (options) => {
+        try {
+          await EnhancedCommands.handleEpubCommand(options);
+        } catch (error) {
+          ProgressIndicator.showStatus(
+            `EPUB generation failed: ${error instanceof Error ? error.message : String(error)}`,
+            "error"
+          );
+          process.exit(1);
+        }
+      });
+  }
+
+  /**
+   * Handle EPUB generation command
+   * Reuses the same processing pipeline as Telegraph publication
+   * @param options Command options
+   */
+  private static async handleEpubCommand(options: any): Promise<void> {
+    if (!options.file || options.file.length === 0) {
+      throw new Error("At least one file is required. Use -f or --file to specify Markdown file(s).");
+    }
+
+    if (!options.author) {
+      throw new Error("Author is required. Use -a or --author to specify author name.");
+    }
+
+    const filePaths = Array.isArray(options.file) ? options.file : [options.file];
+    const firstFilePath = resolve(filePaths[0]);
+    const fileDirectory = dirname(firstFilePath);
+
+    // Load config (same as publish command)
+    const existingConfig = EnhancedCommands.loadConfigWithCliPrioritySync(firstFilePath, options);
+    const configUpdatesFromCli = EnhancedCommands.extractConfigUpdatesFromCli(options);
+    const finalConfig = {
+      ...existingConfig,
+      ...configUpdatesFromCli,
+    };
+
+    if (Object.keys(configUpdatesFromCli).length > 0) {
+      ConfigManager.updateMetadataConfig(fileDirectory, finalConfig);
+      EnhancedCommands.notifyConfigurationUpdate(configUpdatesFromCli, fileDirectory);
+    }
+
+    // Extract title from first file if not provided
+    let bookTitle = options.title;
+    if (!bookTitle) {
+      const firstFileContent = readFileSync(firstFilePath, "utf-8");
+      // Prefer the first Markdown heading (#, ##, etc.) as book title
+      const contentWithoutMetadata = MetadataManager.removeMetadata(firstFileContent);
+      const headingLine = contentWithoutMetadata
+        .split(/\r?\n/)
+        .find((line) => /^#{1,6}\s+.+/.test(line));
+
+      if (headingLine) {
+        const extractedTitle = headingLine.replace(/^#{1,6}\s+/, "").trim();
+        if (extractedTitle) {
+          bookTitle = extractedTitle;
+        }
+      }
+
+      if (!bookTitle) {
+        const metadata = MetadataManager.parseMetadata(firstFileContent);
+        bookTitle = metadata?.title || basename(firstFilePath, ".md");
+      }
+    }
+
+    // Determine output path
+    const outputPath = options.output || resolve(fileDirectory, "book.epub");
+
+    ProgressIndicator.showStatus(`📚 Generating EPUB: ${bookTitle}`, "info");
+    ProgressIndicator.showStatus(`   Author: ${options.author}`, "info");
+    ProgressIndicator.showStatus(`   Output: ${outputPath}`, "info");
+
+    // Create EPUB generator
+    const epubGenerator = new EpubGenerator({
+      outputPath,
+      title: bookTitle,
+      author: options.author,
+      language: options.language || "ru",
+      cover: options.cover,
+      debug: options.debug,
+    });
+
+    // Process files with dependencies (reusing DependencyManager)
+    // We maintain an ordered list to preserve CLI file order while
+    // ensuring each dependency/file is added only once.
+    const orderedFilesToProcess: string[] = [];
+    const processedFiles = new Set<string>();
+
+    const processFileWithDependencies = async (filePath: string): Promise<void> => {
+      const resolvedPath = resolve(filePath);
+
+      if (processedFiles.has(resolvedPath)) {
+        return;
+      }
+
+      if (!existsSync(resolvedPath)) {
+        throw new Error(`File not found: ${resolvedPath}`);
+      }
+
+      // Collect dependencies first (same logic as publish command)
+      if (options.withDependencies !== false) {
+        const pathResolver = PathResolver.getInstance();
+        const dependencyManager = new DependencyManager(finalConfig, pathResolver);
+        const dependencyTree = dependencyManager.buildDependencyTree(resolvedPath, (finalConfig as any).maxDepth || 10);
+        const dependencies = dependencyManager.orderDependencies(dependencyTree);
+
+        // Ensure dependencies are added before the current file
+        for (const dep of dependencies) {
+          const resolvedDep = resolve(dep);
+          if (resolvedDep !== resolvedPath && !processedFiles.has(resolvedDep)) {
+            await processFileWithDependencies(resolvedDep);
+          }
+        }
+      }
+
+      if (!processedFiles.has(resolvedPath)) {
+        processedFiles.add(resolvedPath);
+        orderedFilesToProcess.push(resolvedPath);
+      }
+    };
+
+    // Process all specified files in the order provided via CLI
+    for (const filePath of filePaths) {
+      await processFileWithDependencies(filePath);
+    }
+
+    // Add chapters to EPUB following the ordered list
+    for (const filePath of orderedFilesToProcess) {
+      ProgressIndicator.showStatus(`   Processing: ${basename(filePath)}`, "info");
+      await epubGenerator.addChapterFromFile(filePath, {
+        generateToc: true, // Generate TOC for each chapter (independent of dependency processing)
+        tocTitle: options.tocTitle,
+        tocSeparators: options.tocSeparators !== false,
+      });
+    }
+
+    // Generate EPUB
+    ProgressIndicator.showStatus("   Generating EPUB file...", "info");
+    await epubGenerator.generate();
+
+    ProgressIndicator.showStatus(`✅ EPUB generated successfully: ${outputPath}`, "success");
   }
 
   /**

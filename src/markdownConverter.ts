@@ -349,6 +349,26 @@ export function convertMarkdownToTelegraphNodes(
 	options: { generateToc?: boolean; tocTitle?: string; tocSeparators?: boolean } = { generateToc: true }
 ): TelegraphNode[] {
 	const nodes: TelegraphNode[] = [];
+	let currentParagraphLines: string[] = [];
+
+	const flushParagraph = () => {
+		if (currentParagraphLines.length === 0) {
+			return;
+		}
+
+		// Treat consecutive non-empty lines as a single paragraph block
+		// and preserve single line breaks as '\n' within the paragraph.
+		const paragraphContent = currentParagraphLines.join("\n");
+
+		if (paragraphContent.trim().length === 0) {
+			currentParagraphLines = [];
+			return;
+		}
+
+		nodes.push({ tag: "p", children: processInlineMarkdown(paragraphContent) });
+
+		currentParagraphLines = [];
+	};
 	
 	// Generate and add Table of Contents if enabled and there are 2+ headings
 	if (options.generateToc !== false) {
@@ -403,6 +423,7 @@ export function convertMarkdownToTelegraphNodes(
 			if (inCodeBlock) {
 				// End of code block
 				// Close any open blocks first
+				flushParagraph();
 				if (inTable) {
 					nodes.push(parseTable(tableLines));
 					inTable = false;
@@ -433,6 +454,7 @@ export function convertMarkdownToTelegraphNodes(
 			} else {
 				// Start of code block
 				// Close any open blocks first
+				flushParagraph();
 				if (inTable) {
 					nodes.push(parseTable(tableLines));
 					inTable = false;
@@ -469,6 +491,7 @@ export function convertMarkdownToTelegraphNodes(
 		if (isTableLine || isTableSeparator) {
 			if (!inTable) {
 				// Close any open blocks first
+				flushParagraph();
 				if (inList) {
 					nodes.push({ tag: currentListTag, children: currentListItems });
 					inList = false;
@@ -490,6 +513,7 @@ export function convertMarkdownToTelegraphNodes(
 			continue;
 		} else if (inTable) {
 			// End of table
+			flushParagraph();
 			nodes.push(parseTable(tableLines));
 			inTable = false;
 			tableLines = [];
@@ -500,6 +524,7 @@ export function convertMarkdownToTelegraphNodes(
 		if (line.startsWith(">")) {
 			if (!inBlockquote) {
 				// If previously in a list, close it first
+				flushParagraph();
 				if (inList) {
 					nodes.push({ tag: currentListTag, children: currentListItems });
 					inList = false;
@@ -512,6 +537,7 @@ export function convertMarkdownToTelegraphNodes(
 			continue;
 		} else if (inBlockquote) {
 			// If not a blockquote line, but was in blockquote, close it
+			flushParagraph();
 			nodes.push({
 				tag: "blockquote",
 				children: processInlineMarkdown(blockquoteContent.join("\n")),
@@ -525,6 +551,7 @@ export function convertMarkdownToTelegraphNodes(
 		const headingMatch = line.match(/^(#+)\s*(.*)/);
 		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
 			// Close any open blocks before adding a heading
+			flushParagraph();
 			if (inList) {
 				nodes.push({ tag: currentListTag, children: currentListItems });
 				inList = false;
@@ -630,6 +657,7 @@ export function convertMarkdownToTelegraphNodes(
 		// Handle horizontal rules (simple check for now)
 		if (line.match(/^[*-]{3,}\s*$/)) {
 			// Close any open blocks before adding HR
+			flushParagraph();
 			if (inList) {
 				nodes.push({ tag: currentListTag, children: currentListItems });
 				inList = false;
@@ -649,21 +677,9 @@ export function convertMarkdownToTelegraphNodes(
 
 		// Handle empty lines or plain paragraphs
 		if (line.trim() === "") {
-			// Do not add empty paragraphs if previous node was also an empty paragraph
-			const lastNode = nodes[nodes.length - 1];
-			if (
-				nodes.length > 0 &&
-				typeof lastNode === "object" &&
-				lastNode.tag === "p" &&
-				(!lastNode.children ||
-					lastNode.children.length === 0 ||
-					(lastNode.children.length === 1 && lastNode.children[0] === ""))
-			) {
-				continue; // Skip adding redundant empty paragraph
-			}
+			// Empty line ends the current paragraph (if any)
 			if (!inList && !inBlockquote && !inCodeBlock && !inTable) {
-				// Only add empty paragraph if not inside a block
-				nodes.push({ tag: "p", children: [""] });
+				flushParagraph();
 			}
 			continue;
 		}
@@ -684,10 +700,12 @@ export function convertMarkdownToTelegraphNodes(
 			blockquoteContent = [];
 		}
 
-		nodes.push({ tag: "p", children: processInlineMarkdown(line) });
+		// Accumulate paragraph lines; they will be merged into full paragraphs
+		currentParagraphLines.push(line);
 	}
 
 	// After loop, close any open blocks
+	flushParagraph();
 	if (inCodeBlock) {
 		nodes.push({
 			tag: "pre",

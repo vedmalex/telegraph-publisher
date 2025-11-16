@@ -182,15 +182,15 @@ No headings at all.`;
 	const resultOne = convertMarkdownToTelegraphNodes(markdownOne);
 	const resultNone = convertMarkdownToTelegraphNodes(markdownNone);
 
-	// Should not include ToC (no aside element)
+	// Should not include ToC (no aside element) and should treat
+	// consecutive non-empty lines as a single paragraph block.
 	expect(resultOne).toEqual([
 		{ tag: "h3", children: ["Single Heading"] },
 		{ tag: "p", children: ["Some content here."] }
 	]);
 
 	expect(resultNone).toEqual([
-		{ tag: "p", children: ["Just regular content."] },
-		{ tag: "p", children: ["No headings at all."] }
+		{ tag: "p", children: ["Just regular content.\nNo headings at all."] }
 	]);
 });
 
@@ -541,6 +541,33 @@ test("should convert tables to nested lists", () => {
 			],
 		},
 	]);
+});
+
+test("should merge multiple lines into a single paragraph block with preserved newlines", () => {
+	const markdown = [
+		"Давным-давно там, под сводами лиан, корова Сурабхи поклонялась Господу",
+		"Гаурасундаре, Верховной Личности Бога. Теперь, спустя много лет, рядом",
+		"находится бхаджана-кутир, именуемый Прадьюмна-кунджа. В этом укрытом",
+		"вьющимися растениями бхаджана-кутире, постоянно пребывая в блаженстве",
+		"поклонения Господу (то есть в бхаджанананде), обитал",
+		"бабаджи-парамахамса, посвященный в ученики Прадьюмной Брахмачари, вечным",
+		"спутником Верховного Господа.",
+	].join("\n");
+
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result).toHaveLength(1);
+	expect(result[0]).toMatchObject({
+		tag: "p",
+	});
+
+	const paragraphNode = result[0];
+	expect(paragraphNode && typeof paragraphNode === "object" && paragraphNode.children).toBeDefined();
+	const textContent = (paragraphNode!.children || [])
+		.map((child) => (typeof child === "string" ? child : ""))
+		.join("");
+
+	expect(textContent).toBe(markdown);
 });
 
 test("should handle table with empty cells", () => {

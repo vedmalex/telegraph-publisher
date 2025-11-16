@@ -64,7 +64,13 @@ export class DependencyManager {
 
     this.topologicalSortRecursive(root, visited, temporary, ordered);
 
-    return ordered.reverse(); // Reverse to get dependencies first
+    // `ordered` already contains dependencies before the files that depend on them
+    // thanks to the post-order traversal in `topologicalSortRecursive`.
+    // Returning it as-is ensures that:
+    // - Dependency analysis commands get a natural "dependencies-first" order.
+    // - EPUB generation that walks this list preserves the logical order
+    //   of files as they are linked (e.g. from index pages).
+    return ordered;
   }
 
   /**
