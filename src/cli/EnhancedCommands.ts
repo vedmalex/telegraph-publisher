@@ -17,6 +17,7 @@ import { PathResolver } from "../utils/PathResolver";
 import { PublicationWorkflowManager } from "../workflow";
 import { ProgressIndicator } from "./ProgressIndicator";
 import { DeprecatedFlagError, UserFriendlyErrorReporter } from "../errors/DeprecatedFlagError";
+import { AutoRegistrationManager } from "../publisher/AutoRegistrationManager";
 
 /**
  * Enhanced CLI commands with metadata management
@@ -39,7 +40,7 @@ export class EnhancedCommands {
    */
   private static extractConfigUpdatesFromCli(options: any): Partial<ExtendedMetadataConfig> {
     const updates: any = {};
-    
+
     for (const [cliKey, configPath] of Object.entries(EnhancedCommands.CLI_TO_CONFIG_MAPPING)) {
       if (options[cliKey] !== undefined) {
         if (configPath.includes('.')) {
@@ -56,7 +57,7 @@ export class EnhancedCommands {
         }
       }
     }
-    
+
     return updates;
   }
 
@@ -75,7 +76,7 @@ export class EnhancedCommands {
         return `  ${key}: ${value}`;
       })
       .join('\n');
-      
+
     ProgressIndicator.showStatus(
       `💾 Configuration auto-saved to .telegraph-publisher-config.json:\n${changes}`,
       'success'
@@ -89,45 +90,45 @@ export class EnhancedCommands {
    * @returns Merged configuration with CLI overrides
    */
   private static async loadConfigWithCliPriority(
-    filePath: string, 
+    filePath: string,
     cliOptions: any
   ): Promise<ExtendedMetadataConfig> {
     try {
       // Load hierarchical configuration
       const hierarchicalConfig = await ConfigManager.loadHierarchicalConfig(filePath);
-      
+
       // Extract CLI overrides
       const cliOverrides = EnhancedCommands.extractConfigUpdatesFromCli(cliOptions);
-      
+
       // CLI options override hierarchical config (highest priority)
       const finalConfig: ExtendedMetadataConfig = {
         ...hierarchicalConfig,
         ...cliOverrides
       };
-      
+
       // Add CLI token if provided (highest priority for accessToken)
       if (cliOptions.token) {
         finalConfig.accessToken = cliOptions.token;
       }
-      
+
       // Log configuration sources for debugging
       if (Object.keys(cliOverrides).length > 0) {
         console.log('🔧 CLI overrides applied:', Object.keys(cliOverrides).join(', '));
       }
-      
+
       return finalConfig;
-      
+
     } catch (error) {
       console.warn('⚠️ Failed to load hierarchical config, falling back to legacy:', error);
-      
+
       // Fallback to legacy config loading
       const legacyConfig = ConfigManager.getMetadataConfig(dirname(filePath));
       if (!legacyConfig) {
         throw new Error('Failed to load any configuration');
       }
-      
+
       const cliOverrides = EnhancedCommands.extractConfigUpdatesFromCli(cliOptions);
-      
+
       return {
         ...legacyConfig,
         ...cliOverrides,
@@ -138,7 +139,7 @@ export class EnhancedCommands {
 
   /**
    * Synchronous version for backward compatibility (where async is not supported)
-   * @param filePath File path to start config search from  
+   * @param filePath File path to start config search from
    * @param cliOptions CLI options for overrides
    * @returns Configuration with CLI priority
    */
@@ -149,19 +150,19 @@ export class EnhancedCommands {
     // Use legacy synchronous loading for immediate compatibility
     const legacyConfig = ConfigManager.getMetadataConfig(dirname(filePath));
     const cliOverrides = EnhancedCommands.extractConfigUpdatesFromCli(cliOptions);
-    
+
     // Ensure all required fields are present with proper defaults
     const baseConfig: ExtendedMetadataConfig = {
       ...ConfigManager.DEFAULT_CONFIG,
       ...(legacyConfig || {}),
       ...cliOverrides
     };
-    
+
     // Handle accessToken with proper type checking
     if (cliOptions.token) {
       baseConfig.accessToken = cliOptions.token;
     }
-    
+
     return baseConfig;
   }
 
@@ -191,6 +192,7 @@ export class EnhancedCommands {
       .option("--no-toc-separators", "Disable horizontal separators around Table of Contents")
       .option("--force", "Bypass link verification and force republish of unchanged files (for debugging)")
       .option("--token <token>", "Access token (optional, will try to load from config)")
+      .option("--no-auto-register", "Disable automatic Telegraph account creation if no token is found")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
         try {
@@ -409,27 +411,49 @@ export class EnhancedCommands {
 
     // STEP 1: Load existing configuration with hierarchical support
     const existingConfig = EnhancedCommands.loadConfigWithCliPrioritySync(options.file, options);
-    
-    // STEP 2: Extract configuration updates from CLI options  
+
+    // STEP 2: Extract configuration updates from CLI options
     const configUpdatesFromCli = EnhancedCommands.extractConfigUpdatesFromCli(options);
-    
+
     // STEP 3: Merge configurations with CLI priority (Configuration Cascade pattern)
     const finalConfig = {
       ...existingConfig,
       ...configUpdatesFromCli
     };
-    
+
     // STEP 4: Persist merged configuration immediately (Immediate Persistence pattern)
     if (Object.keys(configUpdatesFromCli).length > 0) {
       ConfigManager.updateMetadataConfig(fileDirectory, finalConfig);
       EnhancedCommands.notifyConfigurationUpdate(configUpdatesFromCli, fileDirectory);
     }
-    
-    // STEP 5: Handle access token with same persistence pattern
-    const accessToken = options.token || ConfigManager.loadAccessToken(fileDirectory);
+
+    // STEP 5: Handle access token with auto-registration fallback
+    let accessToken = options.token || ConfigManager.loadAccessToken(fileDirectory);
 
     if (options.token) {
       ConfigManager.saveAccessToken(fileDirectory, options.token);
+    }
+
+    // Auto-registration if no token exists and auto-registration is enabled
+    if (!accessToken && !options.noAutoRegister) {
+      try {
+        const autoRegistrationManager = new AutoRegistrationManager();
+        accessToken = await autoRegistrationManager.getOrCreateAccessToken(
+          fileDirectory,
+          {
+            username: finalConfig.defaultUsername,
+            authorName: options.author,
+            authorUrl: options.authorUrl,
+            baseShortName: 'TelegraphPublisher'
+          }
+        );
+      } catch (error) {
+        ProgressIndicator.showStatus(
+          `❌ Автоматическая регистрация не удалась: ${error instanceof Error ? error.message : String(error)}`,
+          "error"
+        );
+        throw new Error("Access token is required. Set it using --token or configure it with 'config' command");
+      }
     }
 
     if (!accessToken) {
@@ -911,7 +935,7 @@ export class EnhancedCommands {
    */
   private static validateDeprecatedFlags(argv: string[]): void {
     const deprecatedFlags = ['--force-republish'];
-    
+
     for (const flag of deprecatedFlags) {
       if (argv.includes(flag)) {
         throw new DeprecatedFlagError(flag, '--force');
@@ -927,14 +951,14 @@ export class EnhancedCommands {
   private static findCacheFile(startDir: string): string | null {
     const cacheFileName = ".telegraph-pages-cache.json";
     let currentDir = resolve(startDir);
-    
+
     // Search up to 10 levels to avoid infinite loop
     for (let i = 0; i < 10; i++) {
       const cacheFilePath = resolve(currentDir, cacheFileName);
       if (existsSync(cacheFilePath)) {
         return cacheFilePath;
       }
-      
+
       const parentDir = dirname(currentDir);
       if (parentDir === currentDir) {
         // Reached filesystem root
@@ -942,7 +966,7 @@ export class EnhancedCommands {
       }
       currentDir = parentDir;
     }
-    
+
     return null;
   }
 
@@ -952,30 +976,30 @@ export class EnhancedCommands {
    */
   static async handleCacheValidateCommand(options: any): Promise<void> {
     ProgressIndicator.showStatus("🔎 Starting cache validation...", "info");
-    
+
     try {
       // Find cache file by looking in current directory and up the tree
       const cacheFilePath = EnhancedCommands.findCacheFile(process.cwd());
-      
+
       if (!cacheFilePath || !existsSync(cacheFilePath)) {
         ProgressIndicator.showStatus("❌ No cache file found. Run a publish command first to create cache.", "error");
         return;
       }
 
       ProgressIndicator.showStatus(`📁 Found cache file: ${cacheFilePath}`, "info");
-      
+
       // Read cache file directly for validation purposes
       const cacheContent = readFileSync(cacheFilePath, 'utf-8');
       const cacheData = JSON.parse(cacheContent);
       const entries = Object.entries(cacheData.pages || {});
-      
+
       if (entries.length === 0) {
         ProgressIndicator.showStatus("✅ Cache is empty - nothing to validate.", "success");
         return;
       }
 
       ProgressIndicator.showStatus(`📊 Found ${entries.length} cache entries to validate...`, "info");
-      
+
       if (options.dryRun) {
         ProgressIndicator.showStatus("🏃 Dry run mode - would validate cache without API calls", "info");
         console.log(`\nWould validate ${entries.length} entries:`);
@@ -988,15 +1012,15 @@ export class EnhancedCommands {
       // Initialize validation counters
       let validEntries = 0;
       let invalidEntries = 0;
-      const invalidList: Array<{url: string, localPath: string, reason: string}> = [];
-      
+      const invalidList: Array<{ url: string, localPath: string, reason: string }> = [];
+
       ProgressIndicator.showStatus("🔍 Phase 1: Local file validation...", "info");
-      
+
       // Phase 1: Local file validation
       for (const [url, info] of entries) {
         const pageInfo = info as any;
         const localPath = pageInfo.localFilePath;
-        
+
         if (localPath) {
           if (!existsSync(localPath)) {
             invalidEntries++;
@@ -1011,29 +1035,29 @@ export class EnhancedCommands {
         } else {
           validEntries++; // Consider entries without local path as valid for now
         }
-        
+
         if (options.verbose) {
           const status = localPath && existsSync(localPath) ? '✅' : '❌';
           console.log(`  ${status} ${localPath || 'No local path'} → ${url}`);
         }
       }
-      
+
       ProgressIndicator.showStatus(`📝 Phase 1 complete: ${validEntries} valid files, ${invalidEntries} missing files`, "info");
-      
+
       // Phase 2: Telegraph API validation (optional)
       if (!options.dryRun && entries.length > 0) {
         ProgressIndicator.showStatus("🌐 Phase 2: Telegraph API validation...", "info");
-        
+
         const publisher = new TelegraphPublisher();
         let apiValidEntries = 0;
         let apiInvalidEntries = 0;
-        
+
         // Simple rate limiting: delay between requests
         const API_DELAY_MS = 200; // 5 requests per second max
-        
+
         // Initialize progress bar for API validation
         const apiProgress = new ProgressIndicator(entries.length, "🌐 API Validation");
-        
+
         for (let i = 0; i < entries.length; i++) {
           const entry = entries[i];
           if (!entry) {
@@ -1042,7 +1066,7 @@ export class EnhancedCommands {
           }
           const [url, info] = entry;
           const pageInfo = info as any;
-          
+
           // Extract path from Telegraph URL
           const urlMatch = url.match(/https:\/\/telegra\.ph\/(.+)/);
           if (!urlMatch) {
@@ -1052,7 +1076,7 @@ export class EnhancedCommands {
             apiProgress.increment(`⏭️ Skip #${i + 1} (bad URL)`);
             continue;
           }
-          
+
           const pagePath = urlMatch[1];
           if (!pagePath) {
             if (options.verbose) {
@@ -1061,24 +1085,24 @@ export class EnhancedCommands {
             apiProgress.increment(`⏭️ Skip #${i + 1} (no path)`);
             continue;
           }
-          
+
           try {
             // Add delay for rate limiting
             if (i > 0) {
               await new Promise(resolve => setTimeout(resolve, API_DELAY_MS));
             }
-            
+
             await publisher.getPage(pagePath, false);
             apiValidEntries++;
-            
+
             if (options.verbose) {
               console.log(`  ✅ API: ${url} → exists`);
             }
-            
+
             apiProgress.increment(`✅ ${basename(url)} (${apiValidEntries}✓/${apiInvalidEntries}✗)`);
           } catch (error) {
             apiInvalidEntries++;
-            
+
             // Check if page was already marked as invalid due to missing local file
             const existingInvalid = invalidList.find(item => item.url === url);
             if (!existingInvalid) {
@@ -1093,34 +1117,34 @@ export class EnhancedCommands {
               // Update reason to include both issues
               existingInvalid.reason = 'LOCAL_FILE_NOT_FOUND + REMOTE_PAGE_NOT_FOUND';
             }
-            
+
             if (options.verbose) {
               console.log(`  ❌ API: ${url} → ${error instanceof Error ? error.message : 'not found'}`);
             }
-            
+
             apiProgress.increment(`❌ ${basename(url)} (${apiValidEntries}✓/${apiInvalidEntries}✗)`);
           }
         }
-        
+
         apiProgress.complete(`Phase 2 complete: ${apiValidEntries} accessible, ${apiInvalidEntries} missing`);
       }
-      
+
       // Report results
       console.log('\n📊 Validation Summary:');
       console.log(`  ✅ Valid entries: ${validEntries}`);
       console.log(`  ❌ Invalid entries: ${invalidEntries}`);
-      
+
       if (invalidList.length > 0) {
         console.log('\n❌ Invalid entries found:');
         console.table(invalidList);
-        
+
         if (options.fix) {
           ProgressIndicator.showStatus("🔧 --fix mode: Removing invalid entries...", "warning");
-          
+
           // Create a cleaned cache by removing invalid entries
           const cleanedPages: Record<string, any> = {};
           let removedCount = 0;
-          
+
           for (const [url, info] of entries) {
             const isInvalid = invalidList.some(invalid => invalid.url === url);
             if (!isInvalid) {
@@ -1129,15 +1153,15 @@ export class EnhancedCommands {
               removedCount++;
             }
           }
-          
+
           // Update cache data and write back to file
           cacheData.pages = cleanedPages;
           cacheData.lastUpdated = new Date().toISOString();
-          
+
           try {
             const updatedCacheContent = JSON.stringify(cacheData, null, 2);
             require('fs').writeFileSync(cacheFilePath, updatedCacheContent, 'utf-8');
-            
+
             ProgressIndicator.showStatus(`✅ Cache cleaned: removed ${removedCount} invalid entries`, "success");
             console.log(`💾 Updated cache file: ${cacheFilePath}`);
           } catch (error) {
@@ -1149,7 +1173,7 @@ export class EnhancedCommands {
       } else {
         ProgressIndicator.showStatus("🎉 All cache entries are valid!", "success");
       }
-      
+
     } catch (error) {
       throw new Error(`Cache validation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1182,10 +1206,33 @@ export class EnhancedCommands {
       EnhancedCommands.notifyConfigurationUpdate(configUpdatesFromCli, fileDirectory);
     }
 
-    const accessToken = options.token || ConfigManager.loadAccessToken(fileDirectory);
+    let accessToken = options.token || ConfigManager.loadAccessToken(fileDirectory);
     if (options.token) {
       ConfigManager.saveAccessToken(fileDirectory, options.token);
     }
+
+    // Auto-registration if no token exists and auto-registration is enabled
+    if (!accessToken && !options.noAutoRegister) {
+      try {
+        const autoRegistrationManager = new AutoRegistrationManager();
+        accessToken = await autoRegistrationManager.getOrCreateAccessToken(
+          fileDirectory,
+          {
+            username: finalConfig.defaultUsername,
+            authorName: options.author,
+            authorUrl: options.authorUrl,
+            baseShortName: 'TelegraphPublisher'
+          }
+        );
+      } catch (error) {
+        ProgressIndicator.showStatus(
+          `❌ Автоматическая регистрация не удалась: ${error instanceof Error ? error.message : String(error)}`,
+          "error"
+        );
+        throw new Error("Access token is required. Set it using --token or configure it with 'config' command");
+      }
+    }
+
     if (!accessToken) {
       throw new Error("Access token is required. Set it using --token or configure it with 'config' command");
     }

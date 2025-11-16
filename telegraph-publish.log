@@ -1,0 +1,9 @@
+{"ts":"2025-08-22T22:09:24.197Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-auto-registration.md","publishedCount":0}
+{"ts":"2025-08-22T22:10:02.747Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-auto-registration.md","publishedCount":0}
+{"ts":"2025-08-22T22:10:02.847Z","level":"info","phase":"publish","title":"Тест автоматической регистрации","ok":true}
+{"ts":"2025-08-22T22:10:02.847Z","level":"info","phase":"publish","title":"Тест автоматической регистрации","ok":true}
+{"ts":"2025-08-22T22:10:45.555Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-new-file.md","publishedCount":0}
+{"ts":"2025-08-22T22:10:45.796Z","level":"info","phase":"publish","title":"Новый тестовый файл","ok":true}
+{"ts":"2025-08-22T22:10:45.812Z","level":"info","phase":"publish","title":"Новый тестовый файл","ok":true}
+{"ts":"2025-08-22T22:11:00.019Z","level":"info","phase":"editPage","path":"Novyj-testovyj-fajl-08-22","ok":true}
+{"ts":"2025-08-22T22:11:21.732Z","level":"info","phase":"editPage","path":"Novyj-testovyj-fajl-08-22","ok":true}

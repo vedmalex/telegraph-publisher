@@ -1,7 +1,7 @@
 {
   "autoPublishDependencies": true,
   "replaceLinksinContent": true,
-  "maxDependencyDepth": 1,
+  "maxDependencyDepth": 20,
   "createBackups": false,
   "manageBidirectionalLinks": true,
   "autoSyncCache": true,
@@ -15,5 +15,5 @@
     "enableAdaptiveThrottling": true
   },
   "customFields": {},
-  "accessToken": "fake-token"
+  "accessToken": "c696bf43d7d13f79bf4798c7c6a3aa9dc0bf4f107b2ae45c226474a225af"
 }
