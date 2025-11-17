@@ -12,7 +12,7 @@ import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
 import { MetadataManager } from "../metadata/MetadataManager";
 import { EnhancedTelegraphPublisher } from "../publisher/EnhancedTelegraphPublisher";
 import { TelegraphPublisher } from "../telegraphPublisher";
-import { type FileMetadata, PublicationStatus, type TelegraphLink, type ExtendedMetadataConfig } from "../types/metadata";
+import { type FileMetadata, PublicationStatus, type TelegraphLink, type ExtendedMetadataConfig, type DependencyNode } from "../types/metadata";
 import { PathResolver } from "../utils/PathResolver";
 import { PublicationWorkflowManager } from "../workflow";
 import { ProgressIndicator } from "./ProgressIndicator";
@@ -1078,8 +1078,12 @@ export class EnhancedCommands {
 
     // Process files with dependencies (reusing DependencyManager)
     // We maintain an ordered list to preserve CLI file order while
-    // ensuring each dependency/file is added only once, using the same
-    // depth and ordering semantics as the publish workflow.
+    // ensuring each dependency/file is added only once.
+    // Ordering strategy:
+    // - If dependencies disabled: use CLI order only.
+    // - If enabled: build a dependency tree per root file and traverse it
+    //   по слоям (уровни вложенности / BFS), чтобы сначала шли все файлы
+    //   верхнего уровня, затем их вложенные зависимости и т.д.
     const orderedFilesToProcess: string[] = [];
     const processedFiles = new Set<string>();
 
@@ -1096,10 +1100,40 @@ export class EnhancedCommands {
         }
       }
     } else {
-      // Dependencies enabled: use DependencyManager once per root file,
-      // mirroring publishDependencies: buildDependencyTree + orderDependencies.
+      // Dependencies enabled: use DependencyManager once per root file.
       const pathResolver = PathResolver.getInstance();
       const dependencyManager = new DependencyManager(finalConfig, pathResolver);
+
+      const getLayeredOrder = (root: DependencyNode): string[] => {
+        const result: string[] = [];
+        const seen = new Set<string>();
+
+        let currentLevel: DependencyNode[] = [root];
+        while (currentLevel.length > 0) {
+          const nextLevel: DependencyNode[] = [];
+
+          for (const node of currentLevel) {
+            const nodePath = resolve(node.filePath);
+            if (!seen.has(nodePath)) {
+              seen.add(nodePath);
+              result.push(nodePath);
+
+              if (node.dependencies && node.dependencies.length > 0) {
+                for (const dep of node.dependencies) {
+                  const depPath = resolve(dep.filePath);
+                  if (!seen.has(depPath)) {
+                    nextLevel.push(dep);
+                  }
+                }
+              }
+            }
+          }
+
+          currentLevel = nextLevel;
+        }
+
+        return result;
+      };
 
       for (const filePath of filePaths) {
         const resolvedRoot = resolve(filePath);
@@ -1108,9 +1142,9 @@ export class EnhancedCommands {
         }
 
         const dependencyTree = dependencyManager.buildDependencyTree(resolvedRoot);
-        const ordered = dependencyManager.orderDependencies(dependencyTree);
+        const layered = getLayeredOrder(dependencyTree);
 
-        for (const depPath of ordered) {
+        for (const depPath of layered) {
           const resolvedDep = resolve(depPath);
           if (!processedFiles.has(resolvedDep)) {
             processedFiles.add(resolvedDep);
