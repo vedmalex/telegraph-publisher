@@ -53,24 +53,42 @@ export class EpubGenerator {
 		// - remove front-matter
 		// - remove duplicate H1 that equals metadata title
 		const processedContent = ContentProcessor.processFile(filePath);
-		const metadata = processedContent.metadata;
 		const contentWithoutMetadata = processedContent.contentWithoutMetadata;
 
-                // generateToc is independent of dependency processing - it controls TOC generation within the chapter
+		// Use the same title extraction strategy as publish:
+		// metadata.title → first heading/bold line → short first line → filename.
+		let chapterTitle = ContentProcessor.extractTitle(processedContent) || basename(filePath, ".md");
+
+		// Remove duplicate top-level heading that matches the chosen chapter title
+		// so that EPUB does not contain both <h1> and a converted markdown heading
+		// with the same text.
+		const contentWithoutDuplicateTitle = ContentProcessor.removeDuplicateTitle(
+			contentWithoutMetadata,
+			chapterTitle
+		);
+
 		// Convert markdown to TelegraphNode[] (reusing the same converter and ToC options)
-		const nodes = convertMarkdownToTelegraphNodes(contentWithoutMetadata, {
+		const nodes = convertMarkdownToTelegraphNodes(contentWithoutDuplicateTitle, {
 			generateToc: options.generateToc !== false, // Default to true if not explicitly disabled
 			tocTitle: options.tocTitle,
 			tocSeparators: options.tocSeparators !== false,
 		});
 
+		// Optional debug: save raw TelegraphNode JSON for EPUB content,
+		// similar to publish debug mode, but with .epub.json suffix for clarity.
+		if (this.debug) {
+			const jsonOutputPath = resolve(filePath.replace(/\.md$/i, ".epub.json"));
+			try {
+				writeFileSync(jsonOutputPath, JSON.stringify(nodes, null, 2), "utf-8");
+				// Do not use ProgressIndicator here to keep EPUB generator decoupled from CLI UI.
+			} catch {
+				// Swallow debug JSON errors to avoid breaking EPUB generation.
+			}
+		}
+
 		// Resolve local links (same as Telegraph publication)
 		const linkResolver = new LinkResolver();
 		const resolvedNodes = await this.resolveLinksInNodes(nodes, filePath, linkResolver);
-
-		// Use the same title extraction strategy as publish:
-		// metadata.title → first heading/bold line → short first line → filename.
-		let chapterTitle = ContentProcessor.extractTitle(processedContent) || basename(filePath, ".md");
 
 		const chapterId = `chapter-${this.chapters.length + 1}`;
 

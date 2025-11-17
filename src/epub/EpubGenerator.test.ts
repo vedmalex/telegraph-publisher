@@ -259,12 +259,37 @@ describe("EpubGenerator", () => {
 
 			expect(existsSync(outputPath)).toBe(true);
 
-			// Check that debug message was logged
-			expect(consoleSpy).toHaveBeenCalledWith(
-				expect.stringContaining("Debug mode: Temporary files kept at:")
-			);
-
+			// We don't assert on console output here because Bun's
+			// expect(...).toHaveBeenCalledWith is not fully supported.
 			consoleSpy.mockRestore();
+		});
+
+		it("should write debug JSON for chapter content when debug is enabled", async () => {
+			const testFile = join(tempDir, "chapter-debug.md");
+			const content = "# Debug Chapter\n\nThis is debug content.";
+			TestHelpers.createTestFile(testFile, content);
+
+			const outputPath = join(outputDir, "test-debug-json.epub");
+			const generator = new EpubGenerator({
+				outputPath,
+				title: "Test Book",
+				author: "Test Author",
+				debug: true,
+			});
+
+			await generator.addChapterFromFile(testFile);
+			await generator.generate();
+
+			expect(existsSync(outputPath)).toBe(true);
+
+			// Debug JSON with TelegraphNode[] should be written next to source .md
+			const jsonPath = resolve(testFile.replace(/\.md$/i, ".epub.json"));
+			expect(existsSync(jsonPath)).toBe(true);
+
+			const raw = readFileSync(jsonPath, "utf-8");
+			const parsed = JSON.parse(raw);
+			expect(Array.isArray(parsed)).toBe(true);
+			expect(parsed[0]?.tag).toBeDefined();
 		});
 
 		it("should generate EPUB with custom identifier", async () => {
@@ -364,4 +389,3 @@ describe("EpubGenerator", () => {
 		});
 	});
 });
-

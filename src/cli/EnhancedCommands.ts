@@ -1078,46 +1078,46 @@ export class EnhancedCommands {
 
     // Process files with dependencies (reusing DependencyManager)
     // We maintain an ordered list to preserve CLI file order while
-    // ensuring each dependency/file is added only once.
+    // ensuring each dependency/file is added only once, using the same
+    // depth and ordering semantics as the publish workflow.
     const orderedFilesToProcess: string[] = [];
     const processedFiles = new Set<string>();
 
-    const processFileWithDependencies = async (filePath: string): Promise<void> => {
-      const resolvedPath = resolve(filePath);
-
-      if (processedFiles.has(resolvedPath)) {
-        return;
+    if (options.withDependencies === false) {
+      // Dependencies disabled: process only the files explicitly provided via CLI
+      for (const filePath of filePaths) {
+        const resolvedPath = resolve(filePath);
+        if (!existsSync(resolvedPath)) {
+          throw new Error(`File not found: ${resolvedPath}`);
+        }
+        if (!processedFiles.has(resolvedPath)) {
+          processedFiles.add(resolvedPath);
+          orderedFilesToProcess.push(resolvedPath);
+        }
       }
+    } else {
+      // Dependencies enabled: use DependencyManager once per root file,
+      // mirroring publishDependencies: buildDependencyTree + orderDependencies.
+      const pathResolver = PathResolver.getInstance();
+      const dependencyManager = new DependencyManager(finalConfig, pathResolver);
 
-      if (!existsSync(resolvedPath)) {
-        throw new Error(`File not found: ${resolvedPath}`);
-      }
+      for (const filePath of filePaths) {
+        const resolvedRoot = resolve(filePath);
+        if (!existsSync(resolvedRoot)) {
+          throw new Error(`File not found: ${resolvedRoot}`);
+        }
 
-      // Collect dependencies first (same logic as publish command)
-      if (options.withDependencies !== false) {
-        const pathResolver = PathResolver.getInstance();
-        const dependencyManager = new DependencyManager(finalConfig, pathResolver);
-        const dependencyTree = dependencyManager.buildDependencyTree(resolvedPath, (finalConfig as any).maxDepth || 10);
-        const dependencies = dependencyManager.orderDependencies(dependencyTree);
+        const dependencyTree = dependencyManager.buildDependencyTree(resolvedRoot);
+        const ordered = dependencyManager.orderDependencies(dependencyTree);
 
-        // Ensure dependencies are added before the current file
-        for (const dep of dependencies) {
-          const resolvedDep = resolve(dep);
-          if (resolvedDep !== resolvedPath && !processedFiles.has(resolvedDep)) {
-            await processFileWithDependencies(resolvedDep);
+        for (const depPath of ordered) {
+          const resolvedDep = resolve(depPath);
+          if (!processedFiles.has(resolvedDep)) {
+            processedFiles.add(resolvedDep);
+            orderedFilesToProcess.push(resolvedDep);
           }
         }
       }
-
-      if (!processedFiles.has(resolvedPath)) {
-        processedFiles.add(resolvedPath);
-        orderedFilesToProcess.push(resolvedPath);
-      }
-    };
-
-    // Process all specified files in the order provided via CLI
-    for (const filePath of filePaths) {
-      await processFileWithDependencies(filePath);
     }
 
     // Add chapters to EPUB following the ordered list
