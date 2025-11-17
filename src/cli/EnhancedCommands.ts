@@ -1076,83 +1076,113 @@ export class EnhancedCommands {
       debug: options.debug,
     });
 
-    // Process files with dependencies (reusing DependencyManager)
-    // We maintain an ordered list to preserve CLI file order while
-    // ensuring each dependency/file is added only once.
-    // Ordering strategy:
-    // - If dependencies disabled: use CLI order only.
-    // - If enabled: build a dependency tree per root file and traverse it
-    //   по слоям (уровни вложенности / BFS), чтобы сначала шли все файлы
-    //   верхнего уровня, затем их вложенные зависимости и т.д.
+    // Process files with dependencies.
+    // Алгоритм EPUB-обхода не использует DependencyManager, а строит
+    // слоистый порядок файлов по реальным ссылкам в Markdown:
+    //   - слой 0: все файлы из CLI (в порядке передачи),
+    //   - слой 1: их прямые зависимости,
+    //   - слой 2: зависимости зависимостей и т.д.
+    //
+    // При этом каждый файл обрабатывается не более одного раза, что
+    // автоматически предотвращает циклы и избыточный обход.
     const orderedFilesToProcess: string[] = [];
-    const processedFiles = new Set<string>();
+    const visitedFiles = new Map<string, { level: number; order: number }>();
+    let bfsQueue: Array<{ filePath: string; level: number }> = [];
 
-    if (options.withDependencies === false) {
-      // Dependencies disabled: process only the files explicitly provided via CLI
-      for (const filePath of filePaths) {
+    const depsEnabled = options.withDependencies !== false;
+
+    if (!depsEnabled) {
+      // Без зависимостей: только явно переданные файлы
+      filePaths.forEach((filePath, index) => {
         const resolvedPath = resolve(filePath);
         if (!existsSync(resolvedPath)) {
           throw new Error(`File not found: ${resolvedPath}`);
         }
-        if (!processedFiles.has(resolvedPath)) {
-          processedFiles.add(resolvedPath);
+        if (!visitedFiles.has(resolvedPath)) {
+          visitedFiles.set(resolvedPath, { level: 0, order: index });
           orderedFilesToProcess.push(resolvedPath);
         }
-      }
+      });
     } else {
-      // Dependencies enabled: use DependencyManager once per root file.
-      const pathResolver = PathResolver.getInstance();
-      const dependencyManager = new DependencyManager(finalConfig, pathResolver);
+      // С зависимостями: BFS по дереву ссылок
+      // 1. Инициализируем очередь корневыми файлами (слой 0)
+      filePaths.forEach((filePath, index) => {
+        const resolvedPath = resolve(filePath);
+        if (!existsSync(resolvedPath)) {
+          throw new Error(`File not found: ${resolvedPath}`);
+        }
+        if (!visitedFiles.has(resolvedPath)) {
+          visitedFiles.set(resolvedPath, { level: 0, order: index });
+          bfsQueue.push({ filePath: resolvedPath, level: 0 });
+          orderedFilesToProcess.push(resolvedPath);
+        }
+      });
 
-      const getLayeredOrder = (root: DependencyNode): string[] => {
-        const result: string[] = [];
-        const seen = new Set<string>();
+      // 2. BFS: для каждого файла ищем локальные markdown-ссылки и добавляем новые файлы
+      let queueIndex = 0;
+      while (queueIndex < bfsQueue.length) {
+        const current = bfsQueue[queueIndex];
+        queueIndex++;
 
-        let currentLevel: DependencyNode[] = [root];
-        while (currentLevel.length > 0) {
-          const nextLevel: DependencyNode[] = [];
+        const currentPath = current.filePath;
+        let content: string;
+        try {
+          content = readFileSync(currentPath, "utf-8");
+        } catch {
+          continue;
+        }
 
-          for (const node of currentLevel) {
-            const nodePath = resolve(node.filePath);
-            if (!seen.has(nodePath)) {
-              seen.add(nodePath);
-              result.push(nodePath);
+        const contentWithoutMetadata = MetadataManager.removeMetadata(content);
 
-              if (node.dependencies && node.dependencies.length > 0) {
-                for (const dep of node.dependencies) {
-                  const depPath = resolve(dep.filePath);
-                  if (!seen.has(depPath)) {
-                    nextLevel.push(dep);
-                  }
-                }
-              }
-            }
+        // Найти все локальные ссылки
+        const localLinks = LinkResolver.findLocalLinks(
+          contentWithoutMetadata,
+          currentPath,
+        );
+
+        for (const link of localLinks) {
+          const resolvedWithAnchor = link.resolvedPath;
+          const anchorIndex = resolvedWithAnchor.indexOf("#");
+          const resolvedPath =
+            anchorIndex !== -1
+              ? resolvedWithAnchor.substring(0, anchorIndex)
+              : resolvedWithAnchor;
+
+          // Обрабатываем только markdown-файлы
+          if (
+            !resolvedPath.toLowerCase().endsWith(".md") &&
+            !resolvedPath.toLowerCase().endsWith(".markdown")
+          ) {
+            continue;
           }
 
-          currentLevel = nextLevel;
-        }
+          if (!existsSync(resolvedPath)) {
+            continue;
+          }
 
-        return result;
-      };
-
-      for (const filePath of filePaths) {
-        const resolvedRoot = resolve(filePath);
-        if (!existsSync(resolvedRoot)) {
-          throw new Error(`File not found: ${resolvedRoot}`);
-        }
-
-        const dependencyTree = dependencyManager.buildDependencyTree(resolvedRoot);
-        const layered = getLayeredOrder(dependencyTree);
-
-        for (const depPath of layered) {
-          const resolvedDep = resolve(depPath);
-          if (!processedFiles.has(resolvedDep)) {
-            processedFiles.add(resolvedDep);
-            orderedFilesToProcess.push(resolvedDep);
+          if (!visitedFiles.has(resolvedPath)) {
+            const level = current.level + 1;
+            visitedFiles.set(resolvedPath, {
+              level,
+              order: orderedFilesToProcess.length,
+            });
+            bfsQueue.push({ filePath: resolvedPath, level });
+            orderedFilesToProcess.push(resolvedPath);
           }
         }
       }
     }
+
+    // Precompute chapter path mapping for internal link rewriting in EPUB:
+    // absolute sourcePath (.md) -> chapter-N.html
+    const chapterPathMapping: Record<string, string> = {};
+    orderedFilesToProcess.forEach((filePath, index) => {
+      const abs = resolve(filePath);
+      const htmlName = `chapter-${index + 1}.html`;
+      chapterPathMapping[abs] = htmlName;
+    });
+
+    epubGenerator.setChapterPathMap(chapterPathMapping);
 
     // Add chapters to EPUB following the ordered list
     for (const filePath of orderedFilesToProcess) {

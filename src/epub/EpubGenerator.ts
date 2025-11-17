@@ -21,6 +21,7 @@ export class EpubGenerator {
 	private cover?: string;
 	private debug?: boolean;
 	private chapters: Array<{ title: string; content: TelegraphNode[]; id: string; sourcePath: string }> = [];
+	private chapterPathMap: Map<string, string> = new Map();
 
 	constructor(options: {
 		outputPath: string;
@@ -38,6 +39,21 @@ export class EpubGenerator {
 		this.identifier = options.identifier || `epub-${Date.now()}`;
 		this.cover = options.cover ? resolve(options.cover) : undefined;
 		this.debug = options.debug;
+	}
+
+	/**
+	 * Provide an explicit mapping between source markdown files and their
+	 * corresponding chapter HTML filenames (e.g. /abs/path.md -> chapter-3.html).
+	 * This allows internal links to be rewritten correctly even when the
+	 * target chapter is added later in the pipeline.
+	 */
+	setChapterPathMap(mapping: Record<string, string>): void {
+		this.chapterPathMap = new Map<string, string>();
+		for (const [key, value] of Object.entries(mapping)) {
+			if (key && value) {
+				this.chapterPathMap.set(resolve(key), value);
+			}
+		}
 	}
 
 	/**
@@ -112,24 +128,48 @@ export class EpubGenerator {
 
 		for (const node of nodes) {
 			if (node.tag === "a" && node.attrs?.href) {
-				const href = node.attrs.href;
-				// Check if it's a local markdown link
-				if (href.startsWith("./") || href.startsWith("../") || (!href.startsWith("http") && !href.startsWith("#"))) {
-					// For EPUB, we convert local markdown links to internal chapter references
-					// Create a temporary markdown content to use findLocalLinks
-					const tempContent = `[link](${href})`;
+				const originalHref = node.attrs.href;
+				// Check if it's a local markdown-style link (not http/https/mailto/etc., not pure anchor)
+				if (originalHref.startsWith("./") || originalHref.startsWith("../") || (!originalHref.startsWith("http") && !originalHref.startsWith("#"))) {
+					// For EPUB, we convert local markdown links to internal chapter references.
+					// Create a temporary markdown content to use findLocalLinks.
+					const tempContent = `[link](${originalHref})`;
 					const localLinks = LinkResolver.findLocalLinks(tempContent, sourcePath);
 					
 					if (localLinks.length > 0 && localLinks[0]) {
-						const resolvedPath = localLinks[0].resolvedPath;
-						// Format: chapter-N.xhtml where N is the chapter index
-						const chapterIndex = this.chapters.findIndex(ch => ch.sourcePath === resolvedPath);
-						if (chapterIndex !== -1) {
+						const resolvedWithAnchor = localLinks[0].resolvedPath;
+						const anchorIndex = resolvedWithAnchor.indexOf("#");
+						const resolvedPath = anchorIndex !== -1
+							? resolvedWithAnchor.substring(0, anchorIndex)
+							: resolvedWithAnchor;
+						const anchorSuffix = anchorIndex !== -1
+							? resolvedWithAnchor.substring(anchorIndex)
+							: "";
+
+						// Prefer explicit chapter mapping when available
+						const mappedHref = this.chapterPathMap.get(resolvedPath);
+						if (mappedHref) {
 							resolvedNodes.push({
 								...node,
 								attrs: {
 									...node.attrs,
-									href: `chapter-${chapterIndex + 1}.xhtml`,
+									href: `${mappedHref}${anchorSuffix}`,
+								},
+							});
+							continue;
+						}
+
+						// Fallback: attempt to locate chapter by sourcePath
+						const chapterIndex = this.chapters.findIndex(
+							(ch) => ch.sourcePath === resolvedPath,
+						);
+						if (chapterIndex !== -1) {
+							const htmlFile = `chapter-${chapterIndex + 1}.html${anchorSuffix}`;
+							resolvedNodes.push({
+								...node,
+								attrs: {
+									...node.attrs,
+									href: htmlFile,
 								},
 							});
 							continue;
