@@ -78,7 +78,7 @@ export function extractTitleAndContent(markdown: string): {
  * @param tableLines Array of lines that form the table
  * @returns TelegraphNode representing the nested list structure
  */
-function parseTable(tableLines: string[]): TelegraphNode {
+function parseTable(tableLines: string[], asHtmlTable: boolean = false): TelegraphNode {
 	if (tableLines.length < 3) {
 		// Not a valid table, return as paragraphs
 		return { tag: "p", children: [tableLines.join("\n")] };
@@ -97,6 +97,59 @@ function parseTable(tableLines: string[]): TelegraphNode {
 
 	// Parse data rows
 	const dataRows = tableLines.slice(2);
+
+	if (asHtmlTable) {
+		// EPUB mode: build a semantic HTML-like table structure
+		const headerCells: TelegraphNode[] = headers.map((header) => ({
+			tag: "th",
+			children: processInlineMarkdown(header),
+		}));
+
+		const bodyRows: TelegraphNode[] = [];
+
+		dataRows.forEach((row) => {
+			const allCells = row.split("|").map((cell) => cell.trim());
+			const cells = allCells.slice(1, -1);
+			if (cells.length === 0) return;
+
+			const cellNodes: TelegraphNode[] = [];
+			const numColumns = headers.length;
+
+			for (let i = 0; i < numColumns; i++) {
+				const value = cells[i] || "";
+				cellNodes.push({
+					tag: "td",
+					children: processInlineMarkdown(value),
+				});
+			}
+
+			bodyRows.push({
+				tag: "tr",
+				children: cellNodes,
+			});
+		});
+
+		return {
+			tag: "table",
+			children: [
+				{
+					tag: "thead",
+					children: [
+						{
+							tag: "tr",
+							children: headerCells,
+						},
+					],
+				},
+				{
+					tag: "tbody",
+					children: bodyRows,
+				},
+			],
+		};
+	}
+
+	// Default (Telegraph) mode: convert table into nested ordered list
 	const listItems: TelegraphNode[] = [];
 
 	dataRows.forEach((row, index) => {
@@ -116,9 +169,19 @@ function parseTable(tableLines: string[]): TelegraphNode {
 		for (let i = 0; i < numColumns; i++) {
 			const header = headers[i] || `Колонка ${i + 1}`;
 			const value = cells[i] || "";
+
+			// Preserve inline formatting (links, bold, etc.) inside table values
+			const headerParts = processInlineMarkdown(header);
+			const valueParts = processInlineMarkdown(value);
+			const combinedChildren: (string | TelegraphNode)[] = [
+				...headerParts,
+				": ",
+				...valueParts,
+			];
+
 			nestedItems.push({
 				tag: "li",
-				children: [`${header}: ${value}`],
+				children: combinedChildren,
 			});
 		}
 
@@ -346,8 +409,20 @@ function generateTocAsideWithAnchorGenerator(markdown: string, tocTitle: string 
  */
 export function convertMarkdownToTelegraphNodes(
 	markdown: string,
-	options: { generateToc?: boolean; tocTitle?: string; tocSeparators?: boolean } = { generateToc: true }
+	options: {
+		generateToc?: boolean;
+		tocTitle?: string;
+		tocSeparators?: boolean;
+		/**
+		 * Target rendering environment:
+		 * - "telegraph" (default) – optimize for Telegra.ph API (no tables)
+		 * - "epub" – allow richer structures like <table>
+		 */
+		target?: "telegraph" | "epub";
+	} = {},
 ): TelegraphNode[] {
+	const { generateToc = true, tocTitle, tocSeparators = true, target = "telegraph" } = options;
+
 	const nodes: TelegraphNode[] = [];
 	let currentParagraphLines: string[] = [];
 
@@ -371,18 +446,18 @@ export function convertMarkdownToTelegraphNodes(
 	};
 	
 	// Generate and add Table of Contents if enabled and there are 2+ headings
-	if (options.generateToc !== false) {
+	if (generateToc) {
 		// Feature flag: Use unified AnchorGenerator for consistent anchor generation
 		const USE_UNIFIED_ANCHORS = process.env.USE_UNIFIED_ANCHORS === 'true' || 
 									process.env.NODE_ENV !== 'production';
 		
 		const tocAside = USE_UNIFIED_ANCHORS 
-			? generateTocAsideWithAnchorGenerator(markdown, options.tocTitle)
-			: generateTocAside(markdown, options.tocTitle);
+			? generateTocAsideWithAnchorGenerator(markdown, tocTitle)
+			: generateTocAside(markdown, tocTitle);
 			
 		if (tocAside) {
 			// Add HR before TOC (if separators enabled)
-			if (options.tocSeparators) {
+			if (tocSeparators) {
 				nodes.push({ tag: 'hr' });
 			}
 			
@@ -394,7 +469,7 @@ export function convertMarkdownToTelegraphNodes(
 			}
 			
 			// Add HR after TOC (if separators enabled)
-			if (options.tocSeparators) {
+			if (tocSeparators) {
 				nodes.push({ tag: 'hr' });
 			}
 		}
@@ -425,7 +500,7 @@ export function convertMarkdownToTelegraphNodes(
 				// Close any open blocks first
 				flushParagraph();
 				if (inTable) {
-					nodes.push(parseTable(tableLines));
+					nodes.push(parseTable(tableLines, target === "epub"));
 					inTable = false;
 					tableLines = [];
 				}
@@ -456,7 +531,7 @@ export function convertMarkdownToTelegraphNodes(
 				// Close any open blocks first
 				flushParagraph();
 				if (inTable) {
-					nodes.push(parseTable(tableLines));
+					nodes.push(parseTable(tableLines, target === "epub"));
 					inTable = false;
 					tableLines = [];
 				}
@@ -486,7 +561,9 @@ export function convertMarkdownToTelegraphNodes(
 
 		// Handle table detection and parsing
 		const isTableLine = line.includes("|") && line.trim() !== "";
-		const isTableSeparator = /^\s*\|?[\s\-|:]+\|?\s*$/.test(line);
+		// Separator must include at least one pipe to avoid catching horizontal rules like '---'
+		const isTableSeparator =
+			line.includes("|") && /^\s*\|?[\s\-|:]+\|?\s*$/.test(line);
 
 		if (isTableLine || isTableSeparator) {
 			if (!inTable) {
@@ -514,7 +591,7 @@ export function convertMarkdownToTelegraphNodes(
 		} else if (inTable) {
 			// End of table
 			flushParagraph();
-			nodes.push(parseTable(tableLines));
+			nodes.push(parseTable(tableLines, target === "epub"));
 			inTable = false;
 			tableLines = [];
 			// Continue processing current line
@@ -608,8 +685,10 @@ export function convertMarkdownToTelegraphNodes(
 		}
 
 		// Handle lists (NOW AFTER HEADINGS)
-		const listItemMatch = line.match(/^(-|\*)\s+(.*)|(\d+)\.\s+(.*)/);
-		if (listItemMatch) {
+		const unorderedMatch = line.match(/^\s*([-*])\s+(.*)/);
+		const orderedMatch = line.match(/^\s*(\d+)\.\s+(.*)/);
+
+		if (unorderedMatch || orderedMatch) {
 			if (!inList) {
 				// If previously in a blockquote, close it first
 				if (inBlockquote) {
@@ -620,16 +699,19 @@ export function convertMarkdownToTelegraphNodes(
 					inBlockquote = false;
 					blockquoteContent = [];
 				}
+				// Flush any buffered paragraph before starting a new list
+				flushParagraph();
+
 				inList = true;
-				currentListTag = listItemMatch[1] ? "ul" : "ol";
+				currentListTag = unorderedMatch ? "ul" : "ol";
 				currentListItems = [];
 			}
-			let textContent = "";
-			if (listItemMatch[2] !== undefined) {
-				textContent = listItemMatch[2];
-			} else if (listItemMatch[4] !== undefined) {
-				textContent = listItemMatch[4];
-			}
+
+			const textContent =
+				(unorderedMatch && unorderedMatch[2]) ||
+				(orderedMatch && orderedMatch[2]) ||
+				"";
+
 			if (textContent) {
 				currentListItems.push({
 					tag: "li",
@@ -654,8 +736,8 @@ export function convertMarkdownToTelegraphNodes(
 			}
 		}
 
-		// Handle horizontal rules (simple check for now)
-		if (line.match(/^[*-]{3,}\s*$/)) {
+		// Handle horizontal rules (---, ***, ___ with optional spaces)
+		if (line.match(/^\s*([-*_])(?:\s*\1){2,}\s*$/)) {
 			// Close any open blocks before adding HR
 			flushParagraph();
 			if (inList) {
@@ -724,7 +806,7 @@ export function convertMarkdownToTelegraphNodes(
 		});
 	}
 	if (inTable) {
-		nodes.push(parseTable(tableLines));
+		nodes.push(parseTable(tableLines, target === "epub"));
 	}
 
 	// Filter out any empty paragraph nodes that might have been created unnecessarily
@@ -745,6 +827,8 @@ function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
 
 	// Define patterns for different inline elements
 	const patterns = [
+		// Images: ![alt](src) – must go BEFORE link pattern to avoid overlap
+		{ regex: /!\[([^[\]]*)\]\(([^()]*)\)/g, tag: "img", isImage: true },
 		{ regex: /\*\*(.*?)\*\*/g, tag: "strong" },
 		{ regex: /__(.*?)__/g, tag: "strong" },
 		{ regex: /\*(.*?)\*/g, tag: "em" },
@@ -760,15 +844,25 @@ function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
 		tag: string;
 		content: string;
 		href?: string;
+		isImage?: boolean;
 	}> = [];
 
-	for (const pattern of patterns) {
+		for (const pattern of patterns as any[]) {
 		pattern.regex.lastIndex = 0; // Reset regex
 		let match: RegExpExecArray | null = null;
 		match = pattern.regex.exec(text);
 		while (match !== null) {
 			if (match.index !== undefined) {
-				if (pattern.isLink) {
+				if (pattern.isImage) {
+					matches.push({
+						index: match.index,
+						length: match[0].length,
+						tag: pattern.tag,
+						content: match[1] || "",
+						href: match[2] || "",
+						isImage: true,
+					});
+				} else if (pattern.isLink) {
 					matches.push({
 						index: match.index,
 						length: match[0].length,
@@ -808,7 +902,13 @@ function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
 		}
 
 		// Add the formatted element
-		if (match.tag === "a" && match.href !== undefined) {
+		if (match.isImage && match.href !== undefined) {
+			result.push({
+				tag: "img",
+				attrs: { src: match.href, alt: match.content },
+				children: [],
+			});
+		} else if (match.tag === "a" && match.href !== undefined) {
 			result.push({
 				tag: "a",
 				attrs: { href: match.href },

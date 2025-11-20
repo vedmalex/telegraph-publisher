@@ -1,0 +1,61 @@
+[
+  {
+    "tag": "p",
+    "children": [
+      "This file represents a second-level dependency originating from\n",
+      {
+        "tag": "code",
+        "children": [
+          "chapter-1a.md"
+        ]
+      },
+      " and indirectly from ",
+      {
+        "tag": "code",
+        "children": [
+          "chapter-1.md"
+        ]
+      },
+      "."
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "It also links sideways and upwards to test cross-link resolution:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "chapter-2a-1.md"
+            },
+            "children": [
+              "Alternate View – 2A.1"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "../level1/chapter-2.md#chapter-2-section-a"
+            },
+            "children": [
+              "Back to Chapter 2 – Section A"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

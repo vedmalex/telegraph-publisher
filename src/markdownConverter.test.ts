@@ -15,7 +15,7 @@ test("should convert simple paragraph to Telegraph node", () => {
 
 test("should convert headings to Telegraph API compatible nodes", () => {
 	const markdown = "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4";
-	const result = convertMarkdownToTelegraphNodes(markdown);
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: true, tocSeparators: false });
 
 	expect(result).toEqual([
 		// ToC should be generated first (4 headings = 2+ requirement met)
@@ -37,7 +37,7 @@ test("should convert headings to Telegraph API compatible nodes", () => {
 
 test("should convert H5/H6 headings to h4 with visual prefixes for anchor support", () => {
 	const markdown = "##### Heading 5\n###### Heading 6";
-	const result = convertMarkdownToTelegraphNodes(markdown);
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: true, tocSeparators: false });
 
 	expect(result).toEqual([
 		// ToC should be generated first (2 headings = 2+ requirement met)
@@ -55,7 +55,7 @@ test("should convert H5/H6 headings to h4 with visual prefixes for anchor suppor
 
 test("should handle all heading levels comprehensively", () => {
 	const markdown = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n####### H7+";
-	const result = convertMarkdownToTelegraphNodes(markdown);
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: true, tocSeparators: false });
 
 	expect(result).toEqual([
 		// ToC should be generated first (7 headings = 2+ requirement met)
@@ -83,7 +83,7 @@ test("should handle all heading levels comprehensively", () => {
 
 test("should preserve inline formatting in H5/H6 with prefixes", () => {
 	const markdown = "##### **Bold** H5 with *italic*\n###### Link [text](url) in H6";
-	const result = convertMarkdownToTelegraphNodes(markdown);
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: true, tocSeparators: false });
 
 	expect(result).toEqual([
 		// ToC should be generated first (2 headings = 2+ requirement met)
@@ -91,8 +91,8 @@ test("should preserve inline formatting in H5/H6 with prefixes", () => {
 		{
 			tag: "ul",
 			children: [
-				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-**Bold**-H5-with-*italic*" }, children: ["> ", { tag: "strong", children: ["Bold"] }, " H5 with ", { tag: "em", children: ["italic"] }] }] },
-				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Link-[text](url)-in-H6" }, children: [">> Link ", { tag: "a", attrs: { href: "url" }, children: ["text"] }, " in H6"] }] }
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>-Bold-H5-with-italic" }, children: ["> ", { tag: "strong", children: ["Bold"] }, " H5 with ", { tag: "em", children: ["italic"] }] }] },
+				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Link-text-in-H6" }, children: [">> Link ", { tag: "a", attrs: { href: "url" }, children: ["text"] }, " in H6"] }] }
 			]
 		},
 		{
@@ -125,7 +125,7 @@ test("should generate proper anchors for H5/H6 headings - integration test", () 
 ##### Мой раздел
 ###### Section with @#$% Special Characters!`;
 
-	const result = convertMarkdownToTelegraphNodes(markdown);
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: true, tocSeparators: false });
 
 	// Should include ToC as first element since there are 5 headings (2+ requirement met)
 	expect(result).toEqual([
@@ -155,7 +155,7 @@ test("should generate Table of Contents for documents with 2+ headings", () => {
 ### Subsection
 #### Details`;
 
-	const result = convertMarkdownToTelegraphNodes(markdown);
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: true, tocSeparators: false });
 
 	// First element should be ToC ul
 	expect(result[0]).toEqual({
@@ -199,7 +199,7 @@ test("should handle ToC with H5/H6 prefixed headings correctly", () => {
 ##### Important Note
 ###### Warning`;
 
-	const result = convertMarkdownToTelegraphNodes(markdown);
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: true, tocSeparators: false });
 
 	// Should generate ToC with prefixed headings
 	expect(result[0]).toEqual({
@@ -216,7 +216,7 @@ test("should handle ToC with Unicode and special characters", () => {
 	const markdown = `# Тест заголовок
 ## Special @#$% Characters!`;
 
-	const result = convertMarkdownToTelegraphNodes(markdown);
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: true, tocSeparators: false });
 
 	// Should preserve Unicode and special characters in ToC anchors
 	expect(result[0]).toEqual({
@@ -483,6 +483,54 @@ test("validateCleanedContent: should pass for content with angle brackets that a
 	expect(() => validateCleanedContent(content)).not.toThrow();
 });
 
+test("should not treat inline numeric references as list items", () => {
+	const markdown = `Если кто-то не может следовать всем 16, то рекомендуется соблюдать по крайней мере 10. Они следующие:
+
+1. First item
+2. Second item`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result[0]).toMatchObject({
+		tag: "p",
+	});
+	const list = result[1];
+	expect(list.tag).toBe("ol");
+	const firstLi = (list as any).children?.[0];
+	expect(firstLi.children?.[0]).toBe("First item");
+});
+
+test("should keep list intro paragraph before ordered list", () => {
+	const markdown = `Intro sentence with intro text.
+
+1. First
+2. Second`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result[0]).toMatchObject({ tag: "p" });
+	expect((result[0] as any).children?.join("")).toContain("Intro sentence");
+	expect(result[1]).toMatchObject({ tag: "ol" });
+});
+
+test("should parse horizontal rules with dashes or asterisks (with padding spaces)", () => {
+	const markdown = `Line 1
+---
+Line 2
+  ***   
+Line 3`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result).toMatchObject([
+		{ tag: "p", children: ["Line 1"] },
+		{ tag: "hr" },
+		{ tag: "p", children: ["Line 2"] },
+		{ tag: "hr" },
+		{ tag: "p", children: ["Line 3"] },
+	]);
+});
+
 test("should convert tables to nested lists", () => {
 	const markdown = `| Название | Значение | Описание |
 |----------|----------|----------|
@@ -503,9 +551,9 @@ test("should convert tables to nested lists", () => {
 						{
 							tag: "ul",
 							children: [
-								{ tag: "li", children: ["Название: Первый"] },
-								{ tag: "li", children: ["Значение: 100"] },
-								{ tag: "li", children: ["Описание: Тест 1"] },
+								{ tag: "li", children: ["Название", ": ", "Первый"] },
+								{ tag: "li", children: ["Значение", ": ", "100"] },
+								{ tag: "li", children: ["Описание", ": ", "Тест 1"] },
 							],
 						},
 					],
@@ -517,9 +565,9 @@ test("should convert tables to nested lists", () => {
 						{
 							tag: "ul",
 							children: [
-								{ tag: "li", children: ["Название: Второй"] },
-								{ tag: "li", children: ["Значение: 200"] },
-								{ tag: "li", children: ["Описание: Тест 2"] },
+								{ tag: "li", children: ["Название", ": ", "Второй"] },
+								{ tag: "li", children: ["Значение", ": ", "200"] },
+								{ tag: "li", children: ["Описание", ": ", "Тест 2"] },
 							],
 						},
 					],
@@ -531,9 +579,9 @@ test("should convert tables to nested lists", () => {
 						{
 							tag: "ul",
 							children: [
-								{ tag: "li", children: ["Название: Третий"] },
-								{ tag: "li", children: ["Значение: 300"] },
-								{ tag: "li", children: ["Описание: Тест 3"] },
+								{ tag: "li", children: ["Название", ": ", "Третий"] },
+								{ tag: "li", children: ["Значение", ": ", "300"] },
+								{ tag: "li", children: ["Описание", ": ", "Тест 3"] },
 							],
 						},
 					],
@@ -541,6 +589,89 @@ test("should convert tables to nested lists", () => {
 			],
 		},
 	]);
+});
+
+test("should convert tables to HTML table nodes in EPUB mode", () => {
+	const markdown = `| Name | Value |
+|------|-------|
+| One  | 1     |
+| Two  | 2     |`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false, target: "epub" });
+
+	// Expect a single table node
+	expect(result).toHaveLength(1);
+	expect(result[0]).toMatchObject({
+		tag: "table",
+	});
+});
+
+test("should preserve tables with links and formatting in EPUB mode", () => {
+	const markdown = `#### Цены и ссылки:
+| Магазин | Цена | Ссылка |
+|---------|------|--------|
+| **Wildberries** | 318-390 ₽ | [https://www.wildberries.ru/catalog/tags/robin-green-dlja-roz](https://www.wildberries.ru/catalog/tags/robin-green-dlja-roz) |
+| **OZON** | ~400 ₽ | [https://www.ozon.ru/category/udobreniya-dlya-roz/](https://www.ozon.ru/category/udobreniya-dlya-roz/) |`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false, target: "epub" });
+
+	expect(result[0]).toMatchObject({ tag: "h4" });
+	const tableNode = result[1] as any;
+	expect(tableNode.tag).toBe("table");
+
+	const tbody = (tableNode.children || []).find(
+		(child: any) => child && typeof child === "object" && child.tag === "tbody",
+	);
+	expect(tbody).toBeDefined();
+
+	const firstRow = (tbody!.children || [])[0] as any;
+	expect(firstRow.tag).toBe("tr");
+
+	const linkCell = (firstRow.children || [])[2] as any;
+	const linkNode = (linkCell.children || []).find(
+		(child: any) => child && typeof child === "object" && child.tag === "a",
+	);
+	expect(linkNode).toBeDefined();
+	expect(linkNode!.attrs?.href).toBe("https://www.wildberries.ru/catalog/tags/robin-green-dlja-roz");
+	expect(linkNode!.children).toContain("https://www.wildberries.ru/catalog/tags/robin-green-dlja-roz");
+});
+
+test("should keep links/bold inside table cells in telegraph mode (legacy ol/ul tables)", () => {
+	const markdown = `| Магазин | Цена | Ссылка |
+|---------|------|--------|
+| **Wildberries** | 1 509 ₽ | [https://www.wildberries.ru/catalog/176621754/detail.aspx](https://www.wildberries.ru/catalog/176621754/detail.aspx) |
+| **OZON** | 1 191 ₽ | [https://www.ozon.ru/product/udobrenie-dlya-roz-1l-npk-7-6-7-asb-greenworld-germaniya-1083142943/](https://www.ozon.ru/product/udobrenie-dlya-roz-1l-npk-7-6-7-asb-greenworld-germaniya-1083142943/) |`;
+
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result[0]).toMatchObject({ tag: "ol" });
+
+	const firstRow = (result[0] as any).children[0];
+	const nestedItems = firstRow.children[1].children;
+
+	const shopItem = nestedItems[0];
+	expect(shopItem.children.some((child: any) => child?.tag === "strong")).toBeTruthy();
+
+	const linkItem = nestedItems[2];
+	expect(linkItem.children.some((child: any) => child?.tag === "a")).toBeTruthy();
+});
+
+test("should convert images to img nodes with src and alt", () => {
+	const markdown = "Intro text ![Alt text](https://example.com/image.png) end.";
+
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result).toHaveLength(1);
+	const node = result[0];
+	expect(node.tag).toBe("p");
+
+	const imgNode = (node.children || []).find(
+		(child) => typeof child === "object" && child && (child as any).tag === "img",
+	) as TelegraphNode | undefined;
+
+	expect(imgNode).toBeDefined();
+	expect(imgNode?.attrs?.src).toBe("https://example.com/image.png");
+	expect(imgNode?.attrs?.alt).toBe("Alt text");
 });
 
 test("should merge multiple lines into a single paragraph block with preserved newlines", () => {
@@ -589,8 +720,8 @@ test("should handle table with empty cells", () => {
 						{
 							tag: "ul",
 							children: [
-								{ tag: "li", children: ["Колонка 1: Значение"] },
-								{ tag: "li", children: ["Колонка 2: "] },
+								{ tag: "li", children: ["Колонка 1", ": ", "Значение"] },
+								{ tag: "li", children: ["Колонка 2", ": ", ""] },
 							],
 						},
 					],
@@ -602,8 +733,8 @@ test("should handle table with empty cells", () => {
 						{
 							tag: "ul",
 							children: [
-								{ tag: "li", children: ["Колонка 1: "] },
-								{ tag: "li", children: ["Колонка 2: Другое"] },
+								{ tag: "li", children: ["Колонка 1", ": ", ""] },
+								{ tag: "li", children: ["Колонка 2", ": ", "Другое"] },
 							],
 						},
 					],

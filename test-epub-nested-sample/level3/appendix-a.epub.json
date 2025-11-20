@@ -1,0 +1,53 @@
+[
+  {
+    "tag": "p",
+    "children": [
+      "This appendix is a third-level dependency, referenced from multiple\nchapters at different levels."
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "It should appear near the end of the EPUB, after the main layered\ncontent, and all links to it should be rewritten to the correct\nchapter-N.html target."
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "Back-links:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "../index.md"
+            },
+            "children": [
+              "Root Index"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "../level1/chapter-2.md#chapter-2-section-b"
+            },
+            "children": [
+              "Chapter 2 – Section B"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

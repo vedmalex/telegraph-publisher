@@ -1,0 +1,78 @@
+[
+  {
+    "tag": "p",
+    "children": [
+      "This chapter introduces the main storyline and links to a more detailed\nsubchapter as well as to Chapter 2."
+    ]
+  },
+  {
+    "tag": "h3",
+    "children": [
+      "Chapter 1 – Overview"
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "The journey begins here. For more details, see:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "chapter-1a.md"
+            },
+            "children": [
+              "Subchapter 1A – Deep Dive"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "chapter-2.md#chapter-2-section-a"
+            },
+            "children": [
+              "Parallel Path – Chapter 2"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "Later in the flow, readers might want to jump directly to:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "chapter-2.md#chapter-2-section-b"
+            },
+            "children": [
+              "Chapter 2 – Section B"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

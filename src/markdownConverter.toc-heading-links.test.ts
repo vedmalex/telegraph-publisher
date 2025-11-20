@@ -1,7 +1,17 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, test } from 'bun:test';
 import { convertMarkdownToTelegraphNodes } from './markdownConverter';
+import { AnchorGenerator } from './utils/AnchorGenerator';
 
-/**
+const findTocList = (nodes: any[]) => {
+	const aside = nodes.find((node) => typeof node === "object" && node.tag === "aside");
+	if (aside && typeof aside === "object" && aside.children) {
+		const ul = aside.children.find((child: any) => child && typeof child === "object" && child.tag === "ul");
+		if (ul) return ul;
+	}
+	return nodes.find((node) => typeof node === "object" && node.tag === "ul");
+};
+
+/** 
  * Test suite for ToC generation with heading-links
  * Validates fix for nested link bug discovered in user report
  */
@@ -19,47 +29,32 @@ More content.`;
 
     const nodes = convertMarkdownToTelegraphNodes(testMarkdown, { generateToc: true });
 
-    // Find the ToC (aside element)
-    const tocAside = nodes.find(node => typeof node === 'object' && node.tag === 'aside');
-    expect(tocAside).toBeDefined();
+    const tocList = findTocList(nodes);
+    expect(tocList).toBeDefined();
+    if (!tocList || !tocList.children) return;
+
+    const listItems = tocList.children;
+    expect(listItems).toHaveLength(2);
     
-    if (tocAside && typeof tocAside === 'object' && tocAside.children) {
-      const ul = tocAside.children[0];
-      expect(ul).toBeDefined();
-      
-      if (typeof ul === 'object' && ul.tag === 'ul' && ul.children) {
-        const listItems = ul.children;
-        expect(listItems).toHaveLength(2);
-        
-        // Test first ToC item: [Аналогии](./аналогии.md)
-        const firstItem = listItems[0];
-        if (typeof firstItem === 'object' && firstItem.children) {
-          const firstLink = firstItem.children[0];
-          if (typeof firstLink === 'object' && firstLink.tag === 'a') {
-            // Verify correct anchor
-            expect(firstLink.attrs?.href).toBe('#Аналогии');
-            
-            // CRITICAL: Verify children contains ONLY plain text (no nested links)
-            expect(firstLink.children).toHaveLength(1);
-            expect(firstLink.children[0]).toBe('Аналогии'); // Plain text only
-            expect(typeof firstLink.children[0]).toBe('string'); // Must be string, not object
-          }
-        }
-        
-        // Test second ToC item: [Домашнее задание](./задание.md) 
-        const secondItem = listItems[1];
-        if (typeof secondItem === 'object' && secondItem.children) {
-          const secondLink = secondItem.children[0];
-          if (typeof secondLink === 'object' && secondLink.tag === 'a') {
-            // Verify correct anchor
-            expect(secondLink.attrs?.href).toBe('#Домашнее-задание');
-            
-            // CRITICAL: Verify children contains ONLY plain text (no nested links)
-            expect(secondLink.children).toHaveLength(1);
-            expect(secondLink.children[0]).toBe('Домашнее задание'); // Plain text only
-            expect(typeof secondLink.children[0]).toBe('string'); // Must be string, not object
-          }
-        }
+    const firstItem = listItems[0];
+    if (typeof firstItem === 'object' && firstItem.children) {
+      const firstLink = firstItem.children[0];
+      if (typeof firstLink === 'object' && firstLink.tag === 'a') {
+        expect(firstLink.attrs?.href).toBe('#Аналогии');
+        expect(firstLink.children).toHaveLength(1);
+        expect(firstLink.children[0]).toBe('Аналогии');
+        expect(typeof firstLink.children[0]).toBe('string');
+      }
+    }
+    
+    const secondItem = listItems[1];
+    if (typeof secondItem === 'object' && secondItem.children) {
+      const secondLink = secondItem.children[0];
+      if (typeof secondLink === 'object' && secondLink.tag === 'a') {
+        expect(secondLink.attrs?.href).toBe('#Домашнее-задание');
+        expect(secondLink.children).toHaveLength(1);
+        expect(secondLink.children[0]).toBe('Домашнее задание');
+        expect(typeof secondLink.children[0]).toBe('string');
       }
     }
   });
@@ -75,53 +70,45 @@ More content.
 
 ## **Bold Heading**
 
-Final content.`;
+    Final content.`;
 
     const nodes = convertMarkdownToTelegraphNodes(testMarkdown, { generateToc: true });
     
-    const tocAside = nodes.find(node => typeof node === 'object' && node.tag === 'aside');
-    expect(tocAside).toBeDefined();
+    const tocList = findTocList(nodes);
+    expect(tocList).toBeDefined();
+    if (!tocList || !tocList.children) return;
+
+    const listItems = tocList.children;
+    expect(listItems).toHaveLength(3);
     
-    if (tocAside && typeof tocAside === 'object' && tocAside.children) {
-      const ul = tocAside.children[0];
-      if (typeof ul === 'object' && ul.tag === 'ul' && ul.children) {
-        const listItems = ul.children;
-        expect(listItems).toHaveLength(3);
-        
-        // Test normal heading
-        const normalItem = listItems[0];
-        if (typeof normalItem === 'object' && normalItem.children) {
-          const normalLink = normalItem.children[0];
-          if (typeof normalLink === 'object' && normalLink.children) {
-            expect(normalLink.children[0]).toBe('Normal Heading');
-            expect(typeof normalLink.children[0]).toBe('string');
-          }
-        }
-        
-        // Test link heading (the critical case)
-        const linkItem = listItems[1];
-        if (typeof linkItem === 'object' && linkItem.children) {
-          const linkLink = linkItem.children[0];
-          if (typeof linkLink === 'object' && linkLink.children) {
-            expect(linkLink.children[0]).toBe('Link Heading'); // Plain text extracted
-            expect(typeof linkLink.children[0]).toBe('string');
-          }
-        }
-        
-        // Test bold heading - should have proper formatting (strong tag)
-        const boldItem = listItems[2];
-        if (typeof boldItem === 'object' && boldItem.children) {
-          const boldLink = boldItem.children[0];
-          if (typeof boldLink === 'object' && boldLink.children) {
-            // Bold heading should be processed into proper strong tag
-            expect(boldLink.children).toHaveLength(1);
-            const strongTag = boldLink.children[0];
-            expect(typeof strongTag).toBe('object');
-            if (typeof strongTag === 'object' && strongTag !== null) {
-              expect(strongTag.tag).toBe('strong');
-              expect(strongTag.children).toEqual(['Bold Heading']);
-            }
-          }
+    const normalItem = listItems[0];
+    if (typeof normalItem === 'object' && normalItem.children) {
+      const normalLink = normalItem.children[0];
+      if (typeof normalLink === 'object' && normalLink.children) {
+        expect(normalLink.children[0]).toBe('Normal Heading');
+        expect(typeof normalLink.children[0]).toBe('string');
+      }
+    }
+    
+    const linkItem = listItems[1];
+    if (typeof linkItem === 'object' && linkItem.children) {
+      const linkLink = linkItem.children[0];
+      if (typeof linkLink === 'object' && linkLink.children) {
+        expect(linkLink.children[0]).toBe('Link Heading');
+        expect(typeof linkLink.children[0]).toBe('string');
+      }
+    }
+    
+    const boldItem = listItems[2];
+    if (typeof boldItem === 'object' && boldItem.children) {
+      const boldLink = boldItem.children[0];
+      if (typeof boldLink === 'object' && boldLink.children) {
+        expect(boldLink.children).toHaveLength(1);
+        const strongTag = boldLink.children[0];
+        expect(typeof strongTag).toBe('object');
+        if (typeof strongTag === 'object' && strongTag !== null) {
+          expect(strongTag.tag).toBe('strong');
+          expect(strongTag.children).toEqual(['Bold Heading']);
         }
       }
     }
@@ -274,5 +261,11 @@ Content here.`;
         }
       }
     }
-  });
+	});
+});
+
+test("TOC anchors strip inline formatting inside headings", () => {
+	const markdown = `### 6. **Bona Forte для роз и хризантем** — С витаминами`;
+	const anchors = AnchorGenerator.extractAnchors(markdown);
+	expect(anchors.has("6.-Bona-Forte-для-роз-и-хризантем-—-С-витаминами")).toBe(true);
 });

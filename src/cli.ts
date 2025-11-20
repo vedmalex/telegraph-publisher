@@ -1,16 +1,10 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { Command } from "commander";
-import { cleanMarkdownFile, cleanMarkdownString } from "./clean_mr";
+import { cleanMarkdownFile } from "./clean_mr";
 import { EnhancedCommands } from "./cli/EnhancedCommands";
-import { ConfigManager } from "./config/ConfigManager";
-import {
-	convertMarkdownToTelegraphNodes,
-	extractTitleAndContent,
-	validateCleanedContent,
-} from "./markdownConverter";
 import { TelegraphPublisher } from "./telegraphPublisher";
 
 // Configuration file name
@@ -64,6 +58,9 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
 const appVersion = packageJson.version;
 
 const program = new Command();
+
+// Print version banner once at startup so it's visible in any command output.
+console.log(`🧾 telegraph-publisher v${appVersion}`);
 
 program
 	.name("telegraph-publisher")

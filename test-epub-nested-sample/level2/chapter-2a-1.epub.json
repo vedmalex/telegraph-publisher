@@ -1,0 +1,61 @@
+[
+  {
+    "tag": "p",
+    "children": [
+      "This chapter is another second-level dependency with cross-links back to\nits siblings and parents."
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "References:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "chapter-1a-1.md"
+            },
+            "children": [
+              "Back to Level 2 – 1A.1"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "../level1/chapter-1a.md"
+            },
+            "children": [
+              "Back to Chapter 1A"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "../level3/appendix-a.md"
+            },
+            "children": [
+              "Appendix A – Reference Notes"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

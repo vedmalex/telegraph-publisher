@@ -42,6 +42,192 @@ export class EpubGenerator {
 	}
 
 	/**
+	 * Transform legacy list-based table representation (ol/li/ul/li "Header: Value")
+	 * into semantic table nodes for EPUB output.
+	 */
+	private transformListTables(nodes: TelegraphNode[]): TelegraphNode[] {
+		const transformNode = (node: TelegraphNode | string): TelegraphNode | string => {
+			if (typeof node === "string") return node;
+
+			if (node.tag === "ol") {
+				const children = node.children || [];
+				const liChildren = children.filter(
+					(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "li",
+				) as TelegraphNode[];
+
+				if (liChildren.length > 0) {
+					let looksLikeTable = true;
+					const rows: string[][] = [];
+
+					for (const li of liChildren) {
+						const liKids = li.children || [];
+						const nestedUl = liKids.find(
+							(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "ul",
+						) as TelegraphNode | undefined;
+
+						if (!nestedUl) {
+							looksLikeTable = false;
+							break;
+						}
+
+						const cellLis = (nestedUl.children || []).filter(
+							(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "li",
+						) as TelegraphNode[];
+
+						if (cellLis.length === 0) {
+							looksLikeTable = false;
+							break;
+						}
+
+						const rowValues: string[] = [];
+						for (const cellLi of cellLis) {
+							const cellChildren = cellLi.children || [];
+							const first = cellChildren[0];
+							if (typeof first !== "string") {
+								looksLikeTable = false;
+								break;
+							}
+							const raw = first;
+							const sepIndex = raw.indexOf(":");
+							if (sepIndex === -1) {
+								looksLikeTable = false;
+								break;
+							}
+							const headerPart = raw.slice(0, sepIndex).trim();
+							const valuePart = raw.slice(sepIndex + 1).trim();
+							rowValues.push(`${headerPart}:${valuePart}`);
+						}
+
+						if (!looksLikeTable) {
+							break;
+						}
+
+						rows.push(rowValues);
+					}
+
+					if (looksLikeTable && rows.length > 0) {
+						const headerRow = rows[0];
+						const headers: string[] = [];
+						for (const cell of headerRow) {
+							const sepIndex = cell.indexOf(":");
+							const headerText =
+								sepIndex !== -1 ? cell.slice(0, sepIndex).trim() : cell.trim();
+							headers.push(headerText);
+						}
+
+						const bodyRows: TelegraphNode[] = rows.map((row) => {
+							const cellNodes: TelegraphNode[] = [];
+							for (let i = 0; i < headers.length; i++) {
+								const cell = row[i] || "";
+								const sepIndex = cell.indexOf(":");
+								const valueText =
+									sepIndex !== -1 ? cell.slice(sepIndex + 1).trim() : cell.trim();
+								cellNodes.push({
+									tag: "td",
+									children: [valueText],
+								});
+							}
+							return {
+								tag: "tr",
+								children: cellNodes,
+							};
+						});
+
+						const headerCells: TelegraphNode[] = headers.map((header) => ({
+							tag: "th",
+							children: [header],
+						}));
+
+						return {
+							tag: "table",
+							children: [
+								{
+									tag: "thead",
+									children: [
+										{
+											tag: "tr",
+											children: headerCells,
+										},
+									],
+								},
+								{
+									tag: "tbody",
+									children: bodyRows,
+								},
+							],
+						};
+					}
+				}
+			}
+
+			if (node.children) {
+				node.children = node.children.map((child) => transformNode(child));
+			}
+			return node;
+		};
+
+		return nodes.map((n) => transformNode(n) as TelegraphNode | string) as TelegraphNode[];
+	}
+
+	/**
+	 * Debug helper: log basic statistics about tables and list-based
+	 * table fallbacks for a given chapter. Enabled only when this.debug
+	 * is true to avoid noisy output in normal runs.
+	 */
+	private debugLogTableSummary(sourcePath: string, nodes: TelegraphNode[]): void {
+		if (!this.debug) return;
+
+		let tableCount = 0;
+		let olAsTableCount = 0;
+
+		const visit = (node: TelegraphNode | string): void => {
+			if (typeof node === "string") return;
+			if (node.tag === "table") {
+				tableCount++;
+			}
+			if (node.tag === "ol") {
+				// Heuristic: ol where each li contains a nested ul with "header: value"
+				const children = node.children || [];
+				const liChildren = children.filter(
+					(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "li",
+				) as TelegraphNode[];
+
+				if (liChildren.length > 0) {
+					let looksLikeTable = true;
+					for (const li of liChildren) {
+						const liKids = li.children || [];
+						const nestedUl = liKids.find(
+							(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "ul",
+						) as TelegraphNode | undefined;
+						if (!nestedUl) {
+							looksLikeTable = false;
+							break;
+						}
+					}
+					if (looksLikeTable) {
+						olAsTableCount++;
+					}
+				}
+			}
+
+			if (node.children) {
+				for (const child of node.children) {
+					visit(child);
+				}
+			}
+		};
+
+		for (const n of nodes) {
+			visit(n);
+		}
+
+		const fileName = basename(sourcePath);
+		console.log(
+			`[EPUB DEBUG] ${fileName}: tables=${tableCount}, ol-as-table=${olAsTableCount}`,
+		);
+	}
+
+	/**
 	 * Provide an explicit mapping between source markdown files and their
 	 * corresponding chapter HTML filenames (e.g. /abs/path.md -> chapter-3.html).
 	 * This allows internal links to be rewritten correctly even when the
@@ -84,11 +270,18 @@ export class EpubGenerator {
 		);
 
 		// Convert markdown to TelegraphNode[] (reusing the same converter and ToC options)
-		const nodes = convertMarkdownToTelegraphNodes(contentWithoutDuplicateTitle, {
+		const nodesRaw = convertMarkdownToTelegraphNodes(contentWithoutDuplicateTitle, {
 			generateToc: options.generateToc !== false, // Default to true if not explicitly disabled
 			tocTitle: options.tocTitle,
 			tocSeparators: options.tocSeparators !== false,
+			target: "epub",
 		});
+
+		// Transform legacy list-based tables into semantic tables for EPUB
+		const nodes = this.transformListTables(nodesRaw);
+
+		// Debug summary for table detection/parsing
+		this.debugLogTableSummary(filePath, nodes);
 
 		// Optional debug: save raw TelegraphNode JSON for EPUB content,
 		// similar to publish debug mode, but with .epub.json suffix for clarity.

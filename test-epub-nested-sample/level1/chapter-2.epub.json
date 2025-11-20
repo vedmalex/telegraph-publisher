@@ -1,0 +1,135 @@
+[
+  {
+    "tag": "hr"
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "#Chapter-2-–-Section-A-{#chapter-2-section-a}"
+            },
+            "children": [
+              "Chapter 2 – Section A {#chapter-2-section-a}"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "#Chapter-2-–-Section-B-{#chapter-2-section-b}"
+            },
+            "children": [
+              "Chapter 2 – Section B {#chapter-2-section-b}"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag": "hr"
+  },
+  {
+    "tag": "p",
+    "children": [
+      "This chapter is a sibling to Chapter 1 and has its own internal sections\nand cross-links to deeper levels."
+    ]
+  },
+  {
+    "tag": "h3",
+    "children": [
+      "Chapter 2 – Section A {#chapter-2-section-a}"
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "Section A introduces a parallel storyline."
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "See also:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "chapter-1.md"
+            },
+            "children": [
+              "Back to Chapter 1"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "../level2/chapter-1a-1.md"
+            },
+            "children": [
+              "Level 2 – 1A.1 Details"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag": "h3",
+    "children": [
+      "Chapter 2 – Section B {#chapter-2-section-b}"
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "Section B dives deeper into the consequences introduced in Section A."
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "Related references:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "../level3/appendix-a.md"
+            },
+            "children": [
+              "Appendix A – Reference Notes"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

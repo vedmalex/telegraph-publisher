@@ -1,5 +1,5 @@
 {
-  "defaultUsername": "Мукунда датта дас",
+  "defaultUsername": "Test Author",
   "autoPublishDependencies": true,
   "replaceLinksinContent": true,
   "maxDependencyDepth": 20,
@@ -15,6 +15,5 @@
     "cooldownPeriodMs": 60000,
     "enableAdaptiveThrottling": true
   },
-  "customFields": {},
-  "accessToken": "c696bf43d7d13f79bf4798c7c6a3aa9dc0bf4f107b2ae45c226474a225af"
+  "customFields": {}
 }

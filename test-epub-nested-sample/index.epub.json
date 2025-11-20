@@ -1,0 +1,102 @@
+[
+  {
+    "tag": "p",
+    "children": [
+      "This is a synthetic structure for testing EPUB generation with multiple\nlevels of nested dependencies and cross-links between chapters."
+    ]
+  },
+  {
+    "tag": "h3",
+    "children": [
+      "Contents"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "level1/chapter-1.md"
+            },
+            "children": [
+              "Chapter 1: The Journey Begins"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "level1/chapter-2.md"
+            },
+            "children": [
+              "Chapter 2: Parallel Path"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "level3/appendix-a.md"
+            },
+            "children": [
+              "Appendix A: Reference Notes"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "Some inline references:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          "See also ",
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "level1/chapter-1a.md"
+            },
+            "children": [
+              "Chapter 1A Deep Dive"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          "Jump directly to ",
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "level1/chapter-2.md#chapter-2-section-b"
+            },
+            "children": [
+              "Chapter 2 – Section B"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

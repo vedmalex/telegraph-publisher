@@ -1,0 +1,78 @@
+[
+  {
+    "tag": "p",
+    "children": [
+      "This subchapter expands on the concepts from Chapter 1 and links further\ninto level 2 content."
+    ]
+  },
+  {
+    "tag": "h3",
+    "children": [
+      "Chapter 1A – Details"
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "Additional material can be found in:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "../level2/chapter-1a-1.md"
+            },
+            "children": [
+              "Level 2 – 1A.1 Extended Explanation"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "../level2/chapter-2a-1.md"
+            },
+            "children": [
+              "Level 2 – 2A.1 Alternate View"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag": "p",
+    "children": [
+      "For context, you may want to re-read:"
+    ]
+  },
+  {
+    "tag": "ul",
+    "children": [
+      {
+        "tag": "li",
+        "children": [
+          {
+            "tag": "a",
+            "attrs": {
+              "href": "chapter-1.md#chapter-1-overview"
+            },
+            "children": [
+              "Chapter 1 Overview"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

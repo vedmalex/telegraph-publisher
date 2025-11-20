@@ -146,8 +146,8 @@ H5 with link in heading.`;
       expect(directAnchors.has('Title-with-brackets>-and->arrows')).toBe(true); // < removed, > preserved
       expect(directAnchors.has('>->-Already-Prefixed-H5')).toBe(true); // > preserved in H5
       expect(directAnchors.has('>>->>-Already-Prefixed-H6')).toBe(true); // >> preserved in H6
-      expect(directAnchors.has('**Bold-Title**')).toBe(true); // Markdown preserved
-      expect(directAnchors.has('`Code-Title`')).toBe(true); // Code formatting preserved
+      expect(directAnchors.has('Bold-Title')).toBe(true); // Markdown formatting stripped
+      expect(directAnchors.has('Code-Title')).toBe(true); // Code formatting stripped
       expect(directAnchors.has('Title-with----multiple-----spaces')).toBe(true); // Multiple spaces to hyphens
       expect(directAnchors.has('>-Complex-Link')).toBe(true); // H5 link text extraction
       expect(directAnchors.has('>>-Тест-заголовка-с-кириллицей')).toBe(true); // Unicode support
@@ -265,5 +265,11 @@ No headings at all.`;
       expect(anchors.has('Valid-Heading')).toBe(true);
       expect(anchors.has('Another-Valid')).toBe(true);
     });
+  });
+
+  test("anchors strip inline formatting (bold/italic) from headings", () => {
+    const content = "### 6. **Bona Forte для роз и хризантем** — С витаминами";
+    const anchors = AnchorGenerator.extractAnchors(content);
+    expect(anchors.has("6.-Bona-Forte-для-роз-и-хризантем-—-С-витаминами")).toBe(true);
   });
 });

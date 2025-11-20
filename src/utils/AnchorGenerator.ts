@@ -274,7 +274,7 @@ export class AnchorGenerator {
       case 4:
         return {
           displayText,
-          textForAnchor,
+          textForAnchor: this.stripInlineMarkdown(textForAnchor),
           hasPrefix: false,
           prefixType: 'none'
         };
@@ -287,7 +287,7 @@ export class AnchorGenerator {
         
         return {
           displayText: h5Display,
-          textForAnchor: h5Anchor,
+          textForAnchor: this.stripInlineMarkdown(h5Anchor),
           hasPrefix: true,
           prefixType: 'h5'
         };
@@ -300,7 +300,7 @@ export class AnchorGenerator {
         
         return {
           displayText: h6Display,
-          textForAnchor: h6Anchor,
+          textForAnchor: this.stripInlineMarkdown(h6Anchor),
           hasPrefix: true,
           prefixType: 'h6'
         };
@@ -315,11 +315,29 @@ export class AnchorGenerator {
         
         return {
           displayText: extendedDisplay,
-          textForAnchor: extendedAnchor,
+          textForAnchor: this.stripInlineMarkdown(extendedAnchor),
           hasPrefix: true,
           prefixType: 'extended'
         };
     }
+  }
+
+  /**
+   * Removes inline markdown formatting (links, bold/italic, code) for anchor text.
+   */
+  private static stripInlineMarkdown(text: string): string {
+    let sanitized = text;
+
+    // Replace links with their text
+    sanitized = sanitized.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    sanitized = sanitized.replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1');
+
+    // Bold / italic / code
+    sanitized = sanitized.replace(/(\*\*|__)(.*?)\1/g, '$2');
+    sanitized = sanitized.replace(/(\*|_)(.*?)\1/g, '$2');
+    sanitized = sanitized.replace(/`([^`]*)`/g, '$1');
+
+    return sanitized;
   }
 
   /**
