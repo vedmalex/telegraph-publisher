@@ -209,7 +209,7 @@ function parseTable(tableLines: string[], asHtmlTable: boolean = false): Telegra
  * @param heading The heading object with text and display information
  * @returns Array of TelegraphNode children for the ToC link
  */
-function createTocChildren(heading: { level: number; text: string; displayText: string; textForAnchor: string }): TelegraphNode[] {
+function createTocChildren(heading: { level: number; text: string; displayText: string; textForAnchor: string }): (string | TelegraphNode)[] {
 	// Check if this is a heading-link (e.g., "## [Link Text](./file.md)")
 	const linkInHeadingMatch = heading.text.match(/^\[(.*?)\]\((.*?)\)$/);
 	if (linkInHeadingMatch) {
@@ -227,7 +227,7 @@ function createTocChildren(heading: { level: number; text: string; displayText: 
  * @param headingInfo The HeadingInfo object from AnchorGenerator.
  * @returns Array of TelegraphNode elements for the link content.
  */
-function createTocChildrenFromHeadingInfo(headingInfo: HeadingInfo): TelegraphNode[] {
+function createTocChildrenFromHeadingInfo(headingInfo: HeadingInfo): (string | TelegraphNode)[] {
 	// Check if this is a heading-link using metadata
 	if (headingInfo.metadata.hasLink && headingInfo.linkInfo) {
 		// For heading-links, use only the plain text to avoid nested links
@@ -464,7 +464,9 @@ export function convertMarkdownToTelegraphNodes(
 			// Extract TOC elements from aside and add them separately for better Telegram compatibility
 			if (tocAside.children) {
 				for (const child of tocAside.children) {
-					nodes.push(child);
+					if (typeof child !== 'string') {
+						nodes.push(child);
+					}
 				}
 			}
 			
@@ -642,9 +644,13 @@ export function convertMarkdownToTelegraphNodes(
 				inBlockquote = false;
 				blockquoteContent = [];
 			}
-			const level = headingMatch[1].length;
-			const originalText = headingMatch[2] || "";
-			let displayText = originalText;
+
+			// Use unified AnchorGenerator for consistent heading processing and ID generation
+			const headingInfo = AnchorGenerator.extractHeadingInfo(headingMatch);
+			const anchorId = AnchorGenerator.generateAnchor(headingInfo);
+			
+			const level = headingInfo.level;
+			const displayText = headingInfo.displayText;
 			let tag: 'h3' | 'h4' = 'h3';
 
 			// Map headings to Telegraph API compatible tags with visual hierarchy preservation
@@ -655,32 +661,22 @@ export function convertMarkdownToTelegraphNodes(
 				case 3:
 					// H1, H2, H3 → h3 (highest available level in Telegraph API)
 					tag = 'h3';
-					displayText = originalText;
 					break;
 				case 4:
-					// H4 → h4 (direct mapping, supported by Telegraph API)
-					tag = 'h4';
-					displayText = originalText;
-					break;
 				case 5:
-					// H5 → h4 with visual prefix to preserve hierarchy and enable anchors
-					tag = 'h4';
-					displayText = `> ${originalText}`;
-					break;
 				case 6:
-					// H6 → h4 with double visual prefix to preserve hierarchy and enable anchors
-					tag = 'h4';
-					displayText = `>> ${originalText}`;
-					break;
 				default:
-					// Handle edge case: levels > 6 as h4 with triple visual prefix
+					// H4 and below → h4
 					tag = 'h4';
-					displayText = `>>> ${originalText}`;
 					break;
 			}
 
 			const processedChildren = processInlineMarkdown(displayText);
-			nodes.push({ tag, children: processedChildren });
+			nodes.push({ 
+				tag, 
+				attrs: { id: anchorId },
+				children: processedChildren 
+			});
 			continue;
 		}
 

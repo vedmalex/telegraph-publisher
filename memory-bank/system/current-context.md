@@ -1,21 +1,14 @@
-# Current Context - Memory Bank 2.0 No-Git
+# Current Context - Memory Bank 3.0
 
-**Current Date:** 2025-08-08_10-30
-**Active Task:** 2025-08-08_TASK-012_multi-file-cli-option
-**Current Phase:** IMPLEMENT
+**Current Date:** 2025-11-29
+**Active Task:** 2025-11-29_TASK-BUG-EPUB-LINKS
+**Current Phase:** VAN
 
 ## Active Task Summary
-**Multi-file support for --file CLI option**
+**Fix EPUB link generation and TOC issues**
 
-Goal: Allow passing multiple files to the --file option and process them sequentially with all options applied per file.
+Goal: Investigate and fix why links are not created in text and TOC is incorrect in generated EPUBs.
 
 ## Current Status
-- ✅ Fast-track evaluation complete (spec is implementation-ready)
-- ✅ Artifacts initialized (requirements, phase context, traceability)
-- 🟡 IMPLEMENT phase in progress
-- 🔴 QA not started
-
-## Notes
-- Commander variadic option `--file <path...>`
-- Sequential processing with per-file config loading and same flags
-- Token handling preserved; debug implies dry-run
+- 🟡 VAN phase in progress
+- 🔍 Analyzing codebase
