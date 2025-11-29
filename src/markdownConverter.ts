@@ -672,11 +672,24 @@ export function convertMarkdownToTelegraphNodes(
 			}
 
 			const processedChildren = processInlineMarkdown(displayText);
-			nodes.push({ 
+			
+			// Only add ID attribute if target is EPUB
+			// Telegraph API does not support ID attributes on headings
+			const attrs: Record<string, string> = {};
+			if (target === 'epub') {
+				attrs.id = anchorId;
+			}
+			
+			const node: TelegraphNode = { 
 				tag, 
-				attrs: { id: anchorId },
 				children: processedChildren 
-			});
+			};
+			
+			if (Object.keys(attrs).length > 0) {
+				node.attrs = attrs;
+			}
+			
+			nodes.push(node);
 			continue;
 		}
 

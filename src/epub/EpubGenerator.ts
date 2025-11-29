@@ -4,6 +4,7 @@ import type { TelegraphNode } from "../telegraphPublisher";
 import { ContentProcessor } from "../content/ContentProcessor";
 import { MetadataManager } from "../metadata/MetadataManager";
 import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
+import { AnchorGenerator, type HeadingInfo } from "../utils/AnchorGenerator";
 import { DependencyManager } from "../dependencies/DependencyManager";
 import { LinkResolver } from "../links/LinkResolver";
 import { PathResolver } from "../utils/PathResolver";
@@ -20,7 +21,13 @@ export class EpubGenerator {
 	private identifier: string;
 	private cover?: string;
 	private debug?: boolean;
-	private chapters: Array<{ title: string; content: TelegraphNode[]; id: string; sourcePath: string }> = [];
+	private chapters: Array<{ 
+		title: string; 
+		content: TelegraphNode[]; 
+		id: string; 
+		sourcePath: string; 
+		headings: HeadingInfo[];
+	}> = [];
 	private chapterPathMap: Map<string, string> = new Map();
 
 	constructor(options: {
@@ -250,6 +257,8 @@ export class EpubGenerator {
 		tocTitle?: string;
 		tocSeparators?: boolean;
 	} = {}): Promise<void> {
+		if (this.debug) console.log(`[EPUB DEBUG] Processing chapter file: ${filePath}`);
+		
 		// Reuse the same processing pipeline as Telegraph publication:
 		// - parse metadata
 		// - remove front-matter
@@ -268,6 +277,13 @@ export class EpubGenerator {
 			contentWithoutMetadata,
 			chapterTitle
 		);
+
+		// Extract headings using AnchorGenerator for TOC generation
+		// We use contentWithoutDuplicateTitle to avoid duplicating the chapter title in TOC
+		const headings = AnchorGenerator.parseHeadingsFromContent(contentWithoutDuplicateTitle);
+		if (this.debug) {
+			console.log(`[EPUB DEBUG] Headings found in ${basename(filePath)}:`, headings.length);
+		}
 
 		// Convert markdown to TelegraphNode[] (reusing the same converter and ToC options)
 		const nodesRaw = convertMarkdownToTelegraphNodes(contentWithoutDuplicateTitle, {
@@ -306,6 +322,7 @@ export class EpubGenerator {
 			content: resolvedNodes,
 			id: chapterId,
 			sourcePath: resolve(filePath),
+			headings: headings,
 		});
 	}
 
@@ -707,22 +724,89 @@ ${guideSection}
 	 * Generate toc.ncx (navigation)
 	 */
 	private generateNcx(): string {
-		const navPoints = this.chapters
-			.map(
-				(chapter, index) => `		<navPoint id="nav-${index + 1}" playOrder="${index + 1}">
+		let playOrder = 1;
+		let navPointsXml = "";
+
+		for (const chapter of this.chapters) {
+			// 1. Create root navPoint for the chapter
+			const chapterNavPoint = `		<navPoint id="nav-${playOrder}" playOrder="${playOrder}">
 			<navLabel>
 				<text>${this.escapeHtml(chapter.title)}</text>
 			</navLabel>
-			<content src="${chapter.id}.html"/>
-		</navPoint>`
-			)
-			.join("\n");
+			<content src="${chapter.id}.html"/>`;
+			playOrder++;
+
+			// 2. Build nested structure for internal headings
+			let nestedNavPoints = "";
+			if (chapter.headings && chapter.headings.length > 0) {
+				interface NavNode {
+					label: string;
+					src: string;
+					children: NavNode[];
+				}
+
+				// Root of the current chapter's tree
+				const root: NavNode = { label: chapter.title, src: `${chapter.id}.html`, children: [] };
+				
+				// Stack stores the node and its effective level (Chapter is level 0)
+				const stack: { node: NavNode; level: number }[] = [{ node: root, level: 0 }];
+
+				for (const heading of chapter.headings) {
+					// Find parent in stack
+					// We pop while the top of stack is deeper or equal level
+					// Logic:
+					// If heading.level > stack.top.level -> child of stack.top
+					// If heading.level <= stack.top.level -> sibling of stack.top (so parent is stack.pop)
+					
+					while (stack.length > 1 && stack[stack.length - 1].level >= heading.level) {
+						stack.pop();
+					}
+
+					const parent = stack[stack.length - 1];
+					const anchor = AnchorGenerator.generateAnchor(heading);
+					const newNode: NavNode = {
+						label: heading.textForAnchor,
+						src: `${chapter.id}.html#${anchor}`,
+						children: []
+					};
+
+					parent.node.children.push(newNode);
+					stack.push({ node: newNode, level: heading.level });
+				}
+
+				// Serialize the children of the root (we already added the root as chapterNavPoint)
+				const serializeNodes = (nodes: NavNode[], indent: string): string => {
+					let result = "";
+					for (const node of nodes) {
+						result += `\n${indent}<navPoint id="nav-${playOrder}" playOrder="${playOrder}">
+${indent}	<navLabel>
+${indent}		<text>${this.escapeHtml(node.label)}</text>
+${indent}	</navLabel>
+${indent}	<content src="${node.src}"/>`;
+						playOrder++;
+						
+						if (node.children.length > 0) {
+							result += serializeNodes(node.children, indent + "\t");
+						}
+						
+						result += `\n${indent}</navPoint>`;
+					}
+					return result;
+				};
+
+				nestedNavPoints = serializeNodes(root.children, "\t\t\t");
+			}
+
+			navPointsXml += chapterNavPoint;
+			navPointsXml += nestedNavPoints;
+			navPointsXml += `\n		</navPoint>\n`;
+		}
 
 		return `<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
 	<head>
 		<meta name="dtb:uid" content="${this.identifier}"/>
-		<meta name="dtb:depth" content="1"/>
+		<meta name="dtb:depth" content="4"/>
 		<meta name="dtb:totalPageCount" content="0"/>
 		<meta name="dtb:maxPageNumber" content="0"/>
 	</head>
@@ -730,7 +814,7 @@ ${guideSection}
 		<text>${this.escapeHtml(this.title)}</text>
 	</docTitle>
 	<navMap>
-${navPoints}
+${navPointsXml}
 	</navMap>
 </ncx>`;
 	}

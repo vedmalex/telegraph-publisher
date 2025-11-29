@@ -28,10 +28,10 @@ test("should convert headings to Telegraph API compatible nodes", () => {
 				{ tag: "li", children: [{ tag: "a", attrs: { href: "#Heading-4" }, children: ["Heading 4"] }] }
 			]
 		},
-		{ tag: "h3", attrs: { id: "Heading-1" }, children: ["Heading 1"] }, // H1 → h3
-		{ tag: "h3", attrs: { id: "Heading-2" }, children: ["Heading 2"] }, // H2 → h3
-		{ tag: "h3", attrs: { id: "Heading-3" }, children: ["Heading 3"] }, // H3 → h3
-		{ tag: "h4", attrs: { id: "Heading-4" }, children: ["Heading 4"] }, // H4 → h4
+		{ tag: "h3", children: ["Heading 1"] }, // H1 → h3
+		{ tag: "h3", children: ["Heading 2"] }, // H2 → h3
+		{ tag: "h3", children: ["Heading 3"] }, // H3 → h3
+		{ tag: "h4", children: ["Heading 4"] }, // H4 → h4
 	]);
 });
 
@@ -48,8 +48,8 @@ test("should convert H5/H6 headings to h4 with visual prefixes for anchor suppor
 				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>-Heading-6" }, children: [">> Heading 6"] }] }
 			]
 		},
-		{ tag: "h4", attrs: { id: ">-Heading-5" }, children: ["> Heading 5"] }, // H5 → h4 with > prefix
-		{ tag: "h4", attrs: { id: ">>-Heading-6" }, children: [">> Heading 6"] }, // H6 → h4 with >> prefix
+		{ tag: "h4", children: ["> Heading 5"] }, // H5 → h4 with > prefix
+		{ tag: "h4", children: [">> Heading 6"] }, // H6 → h4 with >> prefix
 	]);
 });
 
@@ -71,13 +71,13 @@ test("should handle all heading levels comprehensively", () => {
 				{ tag: "li", children: [{ tag: "a", attrs: { href: "#>>>-H7+" }, children: [">>> H7+"] }] }
 			]
 		},
-		{ tag: "h3", attrs: { id: "H1" }, children: ["H1"] },
-		{ tag: "h3", attrs: { id: "H2" }, children: ["H2"] },
-		{ tag: "h3", attrs: { id: "H3" }, children: ["H3"] },
-		{ tag: "h4", attrs: { id: "H4" }, children: ["H4"] },
-		{ tag: "h4", attrs: { id: ">-H5" }, children: ["> H5"] },
-		{ tag: "h4", attrs: { id: ">>-H6" }, children: [">> H6"] },
-		{ tag: "h4", attrs: { id: ">>>-H7+" }, children: [">>> H7+"] }, // Edge case: H7+ → h4 with >>> prefix
+		{ tag: "h3", children: ["H1"] },
+		{ tag: "h3", children: ["H2"] },
+		{ tag: "h3", children: ["H3"] },
+		{ tag: "h4", children: ["H4"] },
+		{ tag: "h4", children: ["> H5"] },
+		{ tag: "h4", children: [">> H6"] },
+		{ tag: "h4", children: [">>> H7+"] }, // Edge case: H7+ → h4 with >>> prefix
 	]);
 });
 
@@ -97,7 +97,6 @@ test("should preserve inline formatting in H5/H6 with prefixes", () => {
 		},
 		{
 			tag: "h4",
-			attrs: { id: ">-Bold-H5-with-italic" },
 			children: [
 				"> ",
 				{ tag: "strong", children: ["Bold"] },
@@ -107,7 +106,6 @@ test("should preserve inline formatting in H5/H6 with prefixes", () => {
 		},
 		{
 			tag: "h4",
-			attrs: { id: ">>-Link-text-in-H6" },
 			children: [
 				">> Link ",
 				{ tag: "a", attrs: { href: "url" }, children: ["text"] },
@@ -143,11 +141,11 @@ test("should generate proper anchors for H5/H6 headings - integration test", () 
 			]
 		},
 		// Then the actual headings
-		{ tag: "h3", attrs: { id: "Regular-Heading" }, children: ["Regular Heading"] }, // Should generate anchor: "Regular-Heading"
-		{ tag: "h4", attrs: { id: ">-Important-Section" }, children: ["> Important Section"] }, // Should generate anchor: ">-Important-Section"
-		{ tag: "h4", attrs: { id: ">>-Sub-Important-Section" }, children: [">> Sub Important Section"] }, // Should generate anchor: ">>-Sub-Important-Section"
-		{ tag: "h4", attrs: { id: ">-Мой-раздел" }, children: ["> Мой раздел"] }, // Should generate anchor: ">-Мой-раздел"
-		{ tag: "h4", attrs: { id: ">>-Section-with-@#$%-Special-Characters!" }, children: [">> Section with @#$% Special Characters!"] }, // Should generate anchor: ">>-Section-with-@#$%-Special-Characters!"
+		{ tag: "h3", children: ["Regular Heading"] }, // Should generate anchor: "Regular-Heading"
+		{ tag: "h4", children: ["> Important Section"] }, // Should generate anchor: ">-Important-Section"
+		{ tag: "h4", children: [">> Sub Important Section"] }, // Should generate anchor: ">>-Sub-Important-Section"
+		{ tag: "h4", children: ["> Мой раздел"] }, // Should generate anchor: ">-Мой-раздел"
+		{ tag: "h4", children: [">> Section with @#$% Special Characters!"] }, // Should generate anchor: ">>-Section-with-@#$%-Special-Characters!"
 	]);
 });
 
@@ -187,7 +185,7 @@ No headings at all.`;
 	// Should not include ToC (no aside element) and should treat
 	// consecutive non-empty lines as a single paragraph block.
 	expect(resultOne).toEqual([
-		{ tag: "h3", attrs: { id: "Single-Heading" }, children: ["Single Heading"] },
+		{ tag: "h3", children: ["Single Heading"] },
 		{ tag: "p", children: ["Some content here."] }
 	]);
 
@@ -743,5 +741,23 @@ test("should handle table with empty cells", () => {
 				},
 			],
 		},
+	]);
+});
+
+test("should add ID attributes to headings only when target is 'epub'", () => {
+	const markdown = "# Chapter 1\n## Section 1";
+	
+	// Test default (Telegraph) target - NO IDs expected
+	const resultTelegraph = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+	expect(resultTelegraph).toEqual([
+		{ tag: "h3", children: ["Chapter 1"] },
+		{ tag: "h3", children: ["Section 1"] }
+	]);
+	
+	// Test EPUB target - IDs expected
+	const resultEpub = convertMarkdownToTelegraphNodes(markdown, { target: "epub", generateToc: false });
+	expect(resultEpub).toEqual([
+		{ tag: "h3", attrs: { id: "Chapter-1" }, children: ["Chapter 1"] },
+		{ tag: "h3", attrs: { id: "Section-1" }, children: ["Section 1"] }
 	]);
 });
