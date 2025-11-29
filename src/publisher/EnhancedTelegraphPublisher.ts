@@ -1,6 +1,8 @@
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, resolve, join } from "node:path";
+import { basename, dirname, extname, resolve, join } from "node:path";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 
 import type { PagesCacheManager } from "../cache/PagesCacheManager";
 import { PagesCacheManager as PagesCacheManagerClass } from "../cache/PagesCacheManager";
@@ -423,7 +425,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const title = ContentProcessor.extractTitle(processedWithLinks) || 'Untitled';
 
       // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, tocTitle, tocSeparators });
+      const telegraphNodes = await this.resolveAndUploadImages(
+        convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, tocTitle, tocSeparators }),
+        filePath,
+        { dryRun }
+      );
 
       // Save debug JSON if requested
       if (debug && dryRun) {
@@ -715,7 +721,11 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       const title = ContentProcessor.extractTitle(processedWithLinks) || existingMetadata.title || 'Untitled';
 
       // Convert to Telegraph nodes
-      const telegraphNodes = convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, tocTitle, tocSeparators });
+      const telegraphNodes = await this.resolveAndUploadImages(
+        convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, tocTitle, tocSeparators }),
+        filePath,
+        { dryRun }
+      );
 
       // Save debug JSON if requested
       if (debug && dryRun) {
@@ -1119,6 +1129,229 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
     }
 
     return ContentProcessor.replaceLinksInContent(processed, resolvedToUrl);
+  }
+
+  /**
+   * Resolve local image src paths, upload them to telegra.ph, and rewrite src to absolute URLs.
+   * Telegraph only renders images that are reachable via HTTP(S); relative filesystem paths are ignored.
+   */
+  private async resolveAndUploadImages(
+    nodes: TelegraphNode[],
+    filePath: string,
+    options: { dryRun?: boolean } = {}
+  ): Promise<TelegraphNode[]> {
+    const pathResolver = PathResolver.getInstance();
+    const uploadedCache = new Map<string, string>();
+
+    const processNode = async (node: TelegraphNode): Promise<TelegraphNode> => {
+      if (!node || typeof node !== "object") {
+        return node;
+      }
+
+      let updatedNode = node;
+
+      if (node.tag === "img" && node.attrs?.src) {
+        const src = node.attrs.src;
+
+        // Skip already absolute/telegraph URLs
+        if (!this.isExternalUrl(src) && !src.startsWith("/file/") && !src.startsWith("https://telegra.ph/")) {
+          const absolutePath = pathResolver.resolve(filePath, src);
+
+          if (!existsSync(absolutePath)) {
+            throw new Error(`Image file not found: ${src} (resolved to ${absolutePath})`);
+          }
+
+          let uploadedUrl = uploadedCache.get(absolutePath);
+
+          if (!uploadedUrl && !options.dryRun) {
+            try {
+              uploadedUrl = await this.uploadImage(absolutePath);
+              uploadedCache.set(absolutePath, uploadedUrl);
+            } catch (error) {
+              console.warn(
+                `⚠️ Telegraph image upload failed for ${absolutePath}: ${
+                  error instanceof Error ? error.message : String(error)
+                }. Keeping original src (${src}).`
+              );
+              uploadedUrl = undefined;
+            }
+          }
+
+          if (uploadedUrl) {
+            updatedNode = {
+              ...node,
+              attrs: { ...node.attrs, src: uploadedUrl }
+            };
+          }
+        }
+      }
+
+      if (node.children && node.children.length > 0) {
+        const updatedChildren = await Promise.all(
+          node.children.map(async (child) =>
+            typeof child === "string" ? child : await processNode(child as TelegraphNode)
+          )
+        );
+        if (updatedChildren !== node.children) {
+          updatedNode = { ...updatedNode, children: updatedChildren };
+        }
+      }
+
+      return updatedNode;
+    };
+
+    const transformed: TelegraphNode[] = [];
+    for (const node of nodes) {
+      transformed.push(await processNode(node));
+    }
+    return transformed;
+  }
+
+  private isExternalUrl(src: string): boolean {
+    return /^(https?:)?\/\//i.test(src) || src.startsWith("data:");
+  }
+
+  /**
+   * Upload a local image to telegra.ph and return the absolute URL.
+   */
+  private async uploadImage(absolutePath: string): Promise<string> {
+    let uploadPath = absolutePath;
+    let cleanupTemp = false;
+    let mimeType = this.getMimeType(extname(absolutePath).toLowerCase());
+
+    // Telegraph does not accept SVG; convert to PNG via ImageMagick if available
+    if (mimeType === "image/svg+xml") {
+      const tempFile = join(
+        tmpdir(),
+        `telegraph-upload-${Date.now()}-${Math.random().toString(16).slice(2)}.png`
+      );
+      try {
+        execFileSync("convert", [absolutePath, tempFile], { stdio: "ignore" });
+        uploadPath = tempFile;
+        cleanupTemp = true;
+        mimeType = "image/png";
+      } catch (error) {
+        throw new Error(
+          `Failed to convert SVG to PNG for telegraph upload: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    const buffer = readFileSync(uploadPath);
+
+    try {
+      const imgurClientId = process.env.IMGUR_CLIENT_ID;
+      if (imgurClientId) {
+        const imgurUrl = await this.uploadImageToImgur(buffer, mimeType, imgurClientId);
+        return imgurUrl;
+      }
+    } finally {
+      if (cleanupTemp) {
+        try {
+          unlinkSync(uploadPath);
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    }
+
+    // Legacy telegraph upload attempt (may fail since uploads are now disabled server-side)
+    const form = new FormData();
+    const blob = new Blob([buffer], { type: mimeType });
+    form.append("file", blob, basename(uploadPath));
+
+    const endpoints = ["https://telegra.ph/upload", "https://te.legra.ph/upload"];
+    let lastError: string | null = null;
+
+    for (const endpoint of endpoints) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        body: form
+      });
+      
+      if (!response.ok) {
+        const bodyText = await response.text();
+        lastError = `${endpoint}: ${response.status} ${response.statusText} - ${bodyText || "no body"}`;
+        continue;
+      }
+
+      const jsonText = await response.text();
+      let json: any;
+      try {
+        json = JSON.parse(jsonText);
+      } catch {
+        lastError = `${endpoint}: non-JSON response: ${jsonText}`;
+        continue;
+      }
+
+      if (Array.isArray(json) && json[0]?.src) {
+        // Endpoint determines base URL
+        const base = endpoint.replace(/\/upload$/, '');
+        return `${base}${json[0].src}`;
+      }
+
+      const errorMessage = typeof json?.error === "string" ? json.error : "Unknown upload error";
+      lastError = `${endpoint}: ${errorMessage}`;
+    }
+
+    throw new Error(
+      `Failed to upload image (Telegraph now blocks uploads). ` +
+      `Set IMGUR_CLIENT_ID env to enable Imgur upload. Last error: ${lastError || "Unknown error"}`
+    );
+  }
+
+  private getMimeType(ext: string): string {
+    switch (ext) {
+      case ".jpg":
+      case ".jpeg":
+        return "image/jpeg";
+      case ".png":
+        return "image/png";
+      case ".gif":
+        return "image/gif";
+      case ".webp":
+        return "image/webp";
+      case ".svg":
+        return "image/svg+xml";
+      default:
+        return "application/octet-stream";
+    }
+  }
+
+  /**
+   * Upload image to Imgur (requires IMGUR_CLIENT_ID env)
+   */
+  private async uploadImageToImgur(buffer: Buffer, mimeType: string, clientId: string): Promise<string> {
+    const form = new FormData();
+    const blob = new Blob([buffer], { type: mimeType });
+    form.append("image", blob);
+
+    const response = await fetch("https://api.imgur.com/3/upload", {
+      method: "POST",
+      headers: {
+        Authorization: `Client-ID ${clientId}`
+      },
+      body: form
+    });
+
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`Imgur upload failed: ${response.status} ${response.statusText} - ${text}`);
+    }
+
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`Imgur upload returned non-JSON: ${text}`);
+    }
+
+    if (json?.success && json?.data?.link) {
+      return json.data.link as string;
+    }
+
+    throw new Error(`Imgur upload failed: ${json?.data?.error || "Unknown error"}`);
   }
 
   /**

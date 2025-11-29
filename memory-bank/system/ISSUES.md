@@ -3,6 +3,7 @@
 ## 🐛 Bugs
 - [ ] [BUG-001] EPUB chapter ordering does not respect CLI file list when dependencies are involved - Location: src/cli/EnhancedCommands.ts:1013 - Priority: Medium
 - [ ] [BUG-002] Markdown converter splits multi-line paragraphs into multiple <p> nodes - Location: src/markdownConverter.ts:520 - Priority: Medium
+- [ ] [BUG-003] Telegraph publish leaves local images unresolved (image markdown not treated as dependency; src stays relative and images are missing on telegra.ph) - Location: src/links/LinkResolver.ts (no image handling), src/markdownConverter.ts (img nodes keep relative src) - Priority: High
 
 ## ⚡ Must-Have Items
 - [ ] [MH-001] Ensure EPUB TOC (`toc.ncx`) matches reading order and de-duplicates files - Priority: High
@@ -11,7 +12,7 @@
 ## 🔄 LEVER Opportunities
 - Reuse existing `DependencyManager.orderDependencies` logic for EPUB chapter ordering instead of re-implementing dependency sorting.
 - Extend existing block-handling in `convertMarkdownToTelegraphNodes` (code blocks, lists, blockquotes) with a paragraph buffer instead of introducing a separate parsing pass.
+- Reuse EPUB asset resolution (PathResolver) to convert local image paths and a shared uploader to telegra.ph before injecting image URLs into Telegraph nodes.
 
 ## 📊 Statistics
-- Total Issues: 4 (2 bugs, 2 must-haves) | Open: 4 | Closed: 0
-
+- Total Issues: 5 (3 bugs, 2 must-haves) | Open: 5 | Closed: 0
