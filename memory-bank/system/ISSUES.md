@@ -5,6 +5,7 @@
 - [ ] [BUG-002] Markdown converter splits multi-line paragraphs into multiple <p> nodes - Location: src/markdownConverter.ts:520 - Priority: Medium
 - [ ] [BUG-003] Telegraph publish leaves local images unresolved (image markdown not treated as dependency; src stays relative and images are missing on telegra.ph) - Location: src/links/LinkResolver.ts (no image handling), src/markdownConverter.ts (img nodes keep relative src) - Priority: High
 - [x] [BUG-004] EPUB navigation fails because headings lack ID attributes, breaking TOC and internal links - Location: src/markdownConverter.ts - ✅ Fixed: 2025-11-29
+- [x] [BUG-005] Markdown parser fails to process links inside bold/italic text (nested formatting) - Location: src/markdownConverter.ts - ✅ Fixed: 2025-12-15
 
 ## ⚡ Must-Have Items
 - [ ] [MH-001] Ensure EPUB TOC (`toc.ncx`) matches reading order and de-duplicates files - Priority: High

@@ -921,12 +921,17 @@ function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
 			result.push({
 				tag: "a",
 				attrs: { href: match.href },
+				children: processInlineMarkdown(match.content),
+			});
+		} else if (match.tag === "code") {
+			result.push({
+				tag: match.tag,
 				children: [match.content],
 			});
 		} else {
 			result.push({
 				tag: match.tag,
-				children: [match.content],
+				children: processInlineMarkdown(match.content),
 			});
 		}
 

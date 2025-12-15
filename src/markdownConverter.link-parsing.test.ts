@@ -240,7 +240,10 @@ describe('markdownConverter - Link Parsing Fix', () => {
         {
           tag: 'a',
           attrs: { href: 'url' },
-          children: ['**bold link**']
+          children: [{
+            tag: 'strong',
+            children: ['bold link']
+          }]
         },
         ' plus ',
         {

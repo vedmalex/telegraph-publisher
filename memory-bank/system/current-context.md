@@ -1,14 +1,13 @@
 # Current Context - Memory Bank 3.0
 
 **Current Date:** 2025-11-29
-**Active Task:** 2025-11-29_TASK-VERIFY-PUBLISH
-**Current Phase:** VAN
+**Active Task:** 2025-11-29_TASK-EPUB-NESTED-TOC
+**Current Phase:** PLAN
 
 ## Active Task Summary
-**Verify Telegraph Publish Compatibility**
+**EPUB Nested TOC**
 
-Goal: Ensure that adding `id` attributes to headings for EPUB support does not break the standard `publish` command to Telegra.ph.
+Goal: Update `EpubGenerator` to parse headings from chapter content and include them in the generated `toc.ncx` as nested navigation points.
 
 ## Current Status
-- 🟡 VAN phase in progress
-- 🔍 Verifying API specs
+- 🟡 PLAN phase in progress
