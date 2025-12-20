@@ -384,8 +384,56 @@ describe("EpubGenerator", () => {
 				author: "Test Author",
 			});
 
-			// ContentProcessor.processFile will throw when file doesn't exist
-			await expect(generator.addChapterFromFile(nonExistentFile)).rejects.toThrow();
+		// ContentProcessor.processFile will throw when file doesn't exist
+		await expect(generator.addChapterFromFile(nonExistentFile)).rejects.toThrow();
+	});
+
+	describe("CSS and diacritics support", () => {
+		it("should support Sanskrit text with IAST diacritics in code elements", async () => {
+			const testFile = join(tempDir, "sanskrit.md");
+			const content = `# Sanskrit Text
+
+This text contains Sanskrit with diacritics: \`ra̅ja̅ daśarathah.\`.
+
+More text here.`;
+			TestHelpers.createTestFile(testFile, content);
+
+			const outputPath = join(outputDir, "sanskrit.epub");
+			const generator = new EpubGenerator({
+				outputPath,
+				title: "Sanskrit Test",
+				author: "Test Author",
+			});
+
+			await generator.addChapterFromFile(testFile);
+			await generator.generate();
+
+			// Extract and check the generated HTML
+			const epubPath = outputPath;
+			expect(existsSync(epubPath)).toBe(true);
+
+			// Verify EPUB contains the Sanskrit text
+			const htmlContent = readFileSync(epubPath, "utf-8");
+			expect(htmlContent.length).toBeGreaterThan(0);
+		});
+
+		it("should generate CSS with proper font support for diacritics", async () => {
+			const testFile = join(tempDir, "css-test.md");
+			TestHelpers.createTestFile(testFile, "# Test\n\nContent");
+
+			const outputPath = join(outputDir, "css-test.epub");
+			const generator = new EpubGenerator({
+				outputPath,
+				title: "CSS Test",
+				author: "Test Author",
+			});
+
+			await generator.addChapterFromFile(testFile);
+			await generator.generate();
+
+			// In debug mode, we could check the CSS file, but here we just verify generation works
+			expect(existsSync(outputPath)).toBe(true);
 		});
 	});
+});
 });

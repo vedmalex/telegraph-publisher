@@ -566,12 +566,20 @@ export class EpubGenerator {
 	 * Generate CSS styles
 	 */
 	private generateCss(): string {
-		return `body {
+		return `/* ===================== */
+/* Font Family Settings  */
+/* ===================== */
+
+body {
 	font-family: Georgia, serif;
 	line-height: 1.6;
 	margin: 1em;
 	padding: 0;
 }
+
+/* ===================== */
+/* Heading Styles        */
+/* ===================== */
 
 h1 {
 	font-size: 2em;
@@ -592,6 +600,10 @@ h4 {
 	font-size: 1.2em;
 }
 
+/* ===================== */
+/* Paragraph & Lists     */
+/* ===================== */
+
 p {
 	margin: 1em 0;
 	text-align: justify;
@@ -605,6 +617,10 @@ ul, ol {
 li {
 	margin: 0.5em 0;
 }
+
+/* ===================== */
+/* Links & Typography    */
+/* ===================== */
 
 a {
 	color: #0066cc;
@@ -629,19 +645,45 @@ em {
 	font-style: italic;
 }
 
+/* ===================== */
+/* Code & Sanskrit Text  */
+/* ===================== */
+
+/* Inline code for Sanskrit text with diacritics (IAST)
+   Uses serif fonts with good diacritic support.
+   Styled as italic for visual distinction from body text. */
 code {
-	font-family: monospace;
-	background-color: #f4f4f4;
-	padding: 0.2em 0.4em;
-	border-radius: 3px;
+	font-family: "DejaVu Serif", "Liberation Serif", Georgia, serif;
+	font-style: italic;
+	color: #1a3a52;
+	background-color: transparent;
+	padding: 0;
+	border-radius: 0;
+	letter-spacing: 0.02em;
 }
 
+/* Code blocks for programming code
+   Uses monospace font with light background. */
 pre {
+	font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
 	background-color: #f4f4f4;
 	padding: 1em;
 	border-radius: 5px;
 	overflow-x: auto;
+	color: #333;
 }
+
+pre code {
+	/* Reset code styling inside pre blocks */
+	font-family: inherit;
+	font-style: normal;
+	color: inherit;
+	letter-spacing: normal;
+}
+
+/* ===================== */
+/* Blockquotes           */
+/* ===================== */
 
 blockquote {
 	border-left: 4px solid #ccc;
