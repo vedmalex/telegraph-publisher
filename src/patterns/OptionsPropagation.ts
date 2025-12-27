@@ -14,6 +14,7 @@ export class OptionsPropagationChain {
       debug: cliOptions.debug || false,
       force: cliOptions.force || false, // Unified force flag
       generateAside: cliOptions.aside !== false,
+      inlineToC: cliOptions.inlineToc !== false, // Default to true
       tocTitle: cliOptions.tocTitle || '',
       tocSeparators: cliOptions.tocSeparators !== false
     };
@@ -53,6 +54,7 @@ export class OptionsPropagationChain {
     dryRun: boolean;
     debug: boolean;
     generateAside: boolean;
+    inlineToC: boolean;
     tocTitle: string;
     tocSeparators: boolean;
   } {
@@ -62,6 +64,7 @@ export class OptionsPropagationChain {
       dryRun: options.dryRun,
       debug: options.debug,
       generateAside: options.generateAside,
+      inlineToC: options.inlineToC,
       tocTitle: options.tocTitle,
       tocSeparators: options.tocSeparators
     };
@@ -86,6 +89,7 @@ export class LayerIntegrationPattern {
       dryRun: cliOptions.dryRun || false,
       debug: cliOptions.debug || false,
       generateAside: cliOptions.aside !== false,
+      inlineToC: cliOptions.inlineToc !== false, // Default to true
       tocTitle: cliOptions.tocTitle || '',
       tocSeparators: cliOptions.tocSeparators !== false
     };
@@ -113,6 +117,7 @@ export class LayerIntegrationPattern {
         dryRun: workflowOptions.dryRun,
         debug: workflowOptions.debug,
         generateAside: workflowOptions.generateAside,
+        inlineToC: workflowOptions.inlineToC,
         tocTitle: workflowOptions.tocTitle,
         tocSeparators: workflowOptions.tocSeparators
       },
@@ -137,7 +142,7 @@ export class CrossLayerValidation {
     }
 
     // Validate boolean flags
-    const booleanFlags = ['force', 'debug', 'dryRun', 'aside', 'tocSeparators'];
+    const booleanFlags = ['force', 'debug', 'dryRun', 'aside', 'inlineToc', 'tocSeparators'];
     for (const flag of booleanFlags) {
       if (options[flag] !== undefined && typeof options[flag] !== 'boolean') {
         errors.push(`Flag '${flag}' must be a boolean`);

@@ -34,6 +34,9 @@ export interface PublishDependenciesOptions {
   /** Generate table of contents (aside block) at article start */
   generateAside?: boolean;
   
+  /** Render table of contents inline within the article text */
+  inlineToC?: boolean;
+  
   /** Custom title for the table of contents section */
   tocTitle?: string;
   
@@ -59,6 +62,7 @@ export class PublishOptionsValidator {
     debug: false,
     force: false,
     generateAside: true,
+    inlineToC: true,
     tocTitle: 'Содержание',
     tocSeparators: true
   };
@@ -88,12 +92,14 @@ export class PublishOptionsValidator {
   static toLegacyParameters(options: ValidatedPublishDependenciesOptions): {
     dryRun: boolean;
     generateAside: boolean;
+    inlineToC: boolean;
     tocTitle: string;
     tocSeparators: boolean;
   } {
     return {
       dryRun: options.dryRun,
       generateAside: options.generateAside,
+      inlineToC: options.inlineToC,
       tocTitle: options.tocTitle,
       tocSeparators: options.tocSeparators
     };
@@ -125,6 +131,11 @@ export class PublishOptionsBuilder {
 
   force(enabled: boolean = true): this {
     this.options.force = enabled;
+    return this;
+  }
+
+  inlineToC(enabled: boolean = true): this {
+    this.options.inlineToC = enabled;
     return this;
   }
 

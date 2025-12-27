@@ -254,6 +254,7 @@ export class EpubGenerator {
 	 */
 	async addChapterFromFile(filePath: string, options: {
 		generateToc?: boolean;
+		inlineToC?: boolean;
 		tocTitle?: string;
 		tocSeparators?: boolean;
 	} = {}): Promise<void> {
@@ -288,6 +289,7 @@ export class EpubGenerator {
 		// Convert markdown to TelegraphNode[] (reusing the same converter and ToC options)
 		const nodesRaw = convertMarkdownToTelegraphNodes(contentWithoutDuplicateTitle, {
 			generateToc: options.generateToc !== false, // Default to true if not explicitly disabled
+			inlineToC: options.inlineToC === true, // Default to false for EPUB, true only if explicitly enabled
 			tocTitle: options.tocTitle,
 			tocSeparators: options.tocSeparators !== false,
 			target: "epub",
@@ -662,23 +664,29 @@ code {
 	letter-spacing: 0.02em;
 }
 
-/* Code blocks for programming code
-   Uses monospace font with light background. */
+/* Code blocks for Sanskrit text with diacritics (IAST)
+   Styled same as inline code but with left border for visual distinction.
+   Use triple backticks for text blocks in Markdown. */
 pre {
-	font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
-	background-color: #f4f4f4;
+	font-family: "DejaVu Serif", "Liberation Serif", Georgia, serif;
+	font-style: italic;
+	color: #1a3a52;
+	background-color: transparent;
 	padding: 1em;
-	border-radius: 5px;
+	border-left: 4px solid #1a3a52;
+	margin: 1em 0;
 	overflow-x: auto;
-	color: #333;
+	letter-spacing: 0.02em;
 }
 
 pre code {
-	/* Reset code styling inside pre blocks */
+	/* Code inside pre blocks inherits pre styling */
 	font-family: inherit;
-	font-style: normal;
+	font-style: inherit;
 	color: inherit;
-	letter-spacing: normal;
+	background-color: transparent;
+	padding: 0;
+	letter-spacing: inherit;
 }
 
 /* ===================== */

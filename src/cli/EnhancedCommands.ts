@@ -188,6 +188,8 @@ export class EnhancedCommands {
       .option("--no-auto-repair", "Disable automatic link repair (publication will fail if broken links are found)")
       .option("--aside", "Automatically generate a Table of Contents (aside block) at the start of the article (default: true)")
       .option("--no-aside", "Disable automatic generation of the Table of Contents")
+      .option("--inline-toc", "Render Table of Contents inline in the article text (default: true)")
+      .option("--no-inline-toc", "Generate ToC but don't render it inline (useful for EPUB and other formats)")
       .option("--toc-title <title>", "Title for the Table of Contents section (default: 'Содержание')")
       .option("--toc-separators", "Add horizontal separators (HR) before and after Table of Contents (default: true)")
       .option("--no-toc-separators", "Disable horizontal separators around Table of Contents")
@@ -987,6 +989,8 @@ export class EnhancedCommands {
       .option("--debug", "Keep temporary files for debugging (don't delete temp directory)")
       .option("--with-dependencies", "Automatically include linked local files (default: true)")
       .option("--no-with-dependencies", "Skip automatic dependency inclusion")
+      .option("--inline-toc", "Render Table of Contents inline in each chapter (default: false for EPUB)")
+      .option("--no-inline-toc", "Don't render ToC inline - only use EPUB navigation (default for EPUB)")
       .option("--toc-title <title>", "Title for the Table of Contents section (default: 'Содержание')")
       .option("--toc-separators", "Add horizontal separators (HR) before and after Table of Contents (default: true)")
       .option("--no-toc-separators", "Disable horizontal separators around Table of Contents")
@@ -1189,6 +1193,7 @@ export class EnhancedCommands {
       ProgressIndicator.showStatus(`   Processing: ${basename(filePath)}`, "info");
       await epubGenerator.addChapterFromFile(filePath, {
         generateToc: true, // Generate TOC for each chapter (independent of dependency processing)
+        inlineToC: options.inlineToc === true, // Default to false for EPUB, true only if explicitly enabled with --inline-toc
         tocTitle: options.tocTitle,
         tocSeparators: options.tocSeparators !== false,
       });

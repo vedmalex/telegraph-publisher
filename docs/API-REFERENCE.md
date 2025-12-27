@@ -24,6 +24,9 @@ interface PublishDependenciesOptions {
   /** Generate table of contents (aside block) at article start */
   generateAside?: boolean;
   
+  /** Render table of contents inline within the article text */
+  inlineToC?: boolean;
+  
   /** Custom title for the table of contents section */
   tocTitle?: string;
   
@@ -40,6 +43,7 @@ interface PublishDependenciesOptions {
 | `debug` | `boolean` | `false` | Save Telegraph JSON artifacts (implies `dryRun`) |
 | `force` | `boolean` | `false` | Force republication and bypass link verification |
 | `generateAside` | `boolean` | `true` | Generate table of contents at article start |
+| `inlineToC` | `boolean` | `true` | Render table of contents inline within the article text |
 | `tocTitle` | `string` | `'Содержание'` | Title for the table of contents section |
 | `tocSeparators` | `boolean` | `true` | Add horizontal separators around ToC |
 
@@ -47,6 +51,7 @@ interface PublishDependenciesOptions {
 
 - **Debug Mode**: When `debug: true` and `dryRun` is not explicitly set, `dryRun` will be automatically set to `true`
 - **Force Flag**: Combines functionality of legacy `--force` and `--force-republish` flags
+- **ToC Inline**: When `inlineToC: false`, table of contents is generated for EPUB navigation but not rendered inline in text
 - **ToC Generation**: When `generateAside: false`, `tocTitle` and `tocSeparators` are ignored
 
 ### ValidatedPublishDependenciesOptions
@@ -135,6 +140,7 @@ import { PublishOptionsBuilder } from 'telegraph-publisher';
 const options = PublishOptionsBuilder.create()
   .force(true)
   .debug(true)
+  .inlineToC(false)  // For EPUB: don't render ToC inline
   .tableOfContents({
     enabled: true,
     title: 'Table of Contents',
@@ -273,26 +279,28 @@ const result = await publisher.publishDependencies(
     force: true,
     debug: true,
     generateAside: true,
+    inlineToC: true,  // Render ToC inline (default for Telegraph)
     tocTitle: 'Table of Contents'
   }
 );
 
-// Using builder pattern
-const options = PublishOptionsBuilder.create()
+// For EPUB: Generate ToC but don't render inline
+const epubOptions = PublishOptionsBuilder.create()
   .force(true)
+  .inlineToC(false)  // Don't render ToC inline for EPUB navigation
   .tableOfContents({ title: 'Contents', separators: false })
   .build();
 
 const result = await publisher.publishDependencies(
   'article.md',
   'author', 
-  options
+  epubOptions
 );
 ```
 
-### publishWithMetadata (Unchanged)
+### publishWithMetadata (Enhanced)
 
-Main publishing method maintains existing signature for backward compatibility.
+Main publishing method now includes `inlineToC` option.
 
 ```typescript
 async publishWithMetadata(
@@ -304,6 +312,7 @@ async publishWithMetadata(
     debug?: boolean;
     forceRepublish?: boolean;
     generateAside?: boolean;
+    inlineToC?: boolean;
     tocTitle?: string;
     tocSeparators?: boolean;
   } = {}

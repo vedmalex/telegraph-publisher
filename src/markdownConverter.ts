@@ -411,6 +411,7 @@ export function convertMarkdownToTelegraphNodes(
 	markdown: string,
 	options: {
 		generateToc?: boolean;
+		inlineToC?: boolean;
 		tocTitle?: string;
 		tocSeparators?: boolean;
 		/**
@@ -421,7 +422,7 @@ export function convertMarkdownToTelegraphNodes(
 		target?: "telegraph" | "epub";
 	} = {},
 ): TelegraphNode[] {
-	const { generateToc = true, tocTitle, tocSeparators = true, target = "telegraph" } = options;
+	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph" } = options;
 
 	const nodes: TelegraphNode[] = [];
 	let currentParagraphLines: string[] = [];
@@ -446,7 +447,9 @@ export function convertMarkdownToTelegraphNodes(
 	};
 	
 	// Generate and add Table of Contents if enabled and there are 2+ headings
-	if (generateToc) {
+	// Note: inlineToC controls whether ToC is rendered inline in the content
+	// generateToc controls whether ToC generation should be attempted at all
+	if (generateToc && inlineToC) {
 		// Feature flag: Use unified AnchorGenerator for consistent anchor generation
 		const USE_UNIFIED_ANCHORS = process.env.USE_UNIFIED_ANCHORS === 'true' || 
 									process.env.NODE_ENV !== 'production';

@@ -281,12 +281,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       dryRun?: boolean;
       debug?: boolean;
       generateAside?: boolean;
+      inlineToC?: boolean;
       tocTitle?: string;
       tocSeparators?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, forceRepublish = false, dryRun = false, debug = false, generateAside = true, tocTitle = '', tocSeparators = true } = options;
+      const { withDependencies = true, forceRepublish = false, dryRun = false, debug = false, generateAside = true, inlineToC = true, tocTitle = '', tocSeparators = true } = options;
 
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -357,7 +358,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
           }
         }
 
-        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug, generateAside, forceRepublish, tocTitle, tocSeparators });
+        return await this.editWithMetadata(filePath, username, { withDependencies, dryRun, debug, generateAside, inlineToC, forceRepublish, tocTitle, tocSeparators });
       }
 
       // Process dependencies if requested
@@ -369,6 +370,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
             debug, 
             force: forceRepublish, 
             generateAside, 
+            inlineToC,
             tocTitle, 
             tocSeparators 
           })
@@ -426,7 +428,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       // Convert to Telegraph nodes
       const telegraphNodes = await this.resolveAndUploadImages(
-        convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, tocTitle, tocSeparators }),
+        convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, inlineToC, tocTitle, tocSeparators }),
         filePath,
         { dryRun }
       );
@@ -542,12 +544,13 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
       debug?: boolean;
       forceRepublish?: boolean;
       generateAside?: boolean;
+      inlineToC?: boolean;
       tocTitle?: string;
       tocSeparators?: boolean;
     } = {}
   ): Promise<PublicationResult> {
     try {
-      const { withDependencies = true, dryRun = false, debug = false, generateAside = true, forceRepublish = false, tocTitle = '', tocSeparators = true } = options;
+      const { withDependencies = true, dryRun = false, debug = false, generateAside = true, inlineToC = true, forceRepublish = false, tocTitle = '', tocSeparators = true } = options;
       
       // Initialize cache manager for this directory
       this.initializeCacheManager(filePath);
@@ -585,6 +588,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
             debug, 
             force: forceRepublish, 
             generateAside, 
+            inlineToC,
             tocTitle, 
             tocSeparators 
           })
@@ -722,7 +726,7 @@ export class EnhancedTelegraphPublisher extends TelegraphPublisher {
 
       // Convert to Telegraph nodes
       const telegraphNodes = await this.resolveAndUploadImages(
-        convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, tocTitle, tocSeparators }),
+        convertMarkdownToTelegraphNodes(contentForPublication, { generateToc: generateAside, inlineToC, tocTitle, tocSeparators }),
         filePath,
         { dryRun }
       );
