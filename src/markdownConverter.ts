@@ -418,8 +418,9 @@ export function convertMarkdownToTelegraphNodes(
 		 * Target rendering environment:
 		 * - "telegraph" (default) – optimize for Telegra.ph API (no tables)
 		 * - "epub" – allow richer structures like <table>
+		 * - "svg" – simplified for SVG image generation
 		 */
-		target?: "telegraph" | "epub";
+		target?: "telegraph" | "epub" | "svg";
 	} = {},
 ): TelegraphNode[] {
 	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph" } = options;

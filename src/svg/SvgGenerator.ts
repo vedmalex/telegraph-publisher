@@ -1,8 +1,8 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import type { TelegraphNode } from "../telegraphPublisher";
+import puppeteer, { Browser } from "puppeteer-core";
 import { ContentProcessor } from "../content/ContentProcessor";
-import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
+import { convertMarkdownToHtml } from "../markdownHtmlConverter";
 
 /**
  * Paper size presets in millimeters
@@ -18,98 +18,53 @@ export const PAPER_PRESETS: Record<string, { width: number; height: number }> = 
  * SVG Generator options
  */
 export interface SvgGeneratorOptions {
-  /** Output file path */
   outputPath: string;
-  /** Paper width in mm (default: 57) */
   width?: number;
-  /** Page height in mm (default: 105) */
   pageHeight?: number;
-  /** Page orientation: portrait or landscape */
   orientation?: "portrait" | "landscape";
-  /** Paper preset: a4, a5, a5-half, thermal-57, custom */
   paper?: string;
-  /** Margin from edges in mm (default: 3) */
   margin?: number;
-  /** Font size in pt (default: 10) */
   fontSize?: number;
-  /** Line height multiplier (default: 1.5) */
   lineHeight?: number;
-  /** Show cut marks (default: true) */
   cutMarks?: boolean;
-  /** Debug mode */
   debug?: boolean;
-}
-
-interface RenderWord {
-  text: string;
-  fs: number;
-  weight: string;
-  style: string;
-  font: string;
-  width: number;
-  isSpace: boolean;
-  isCode?: boolean;
-  textWidth?: number;
+  chromePath?: string;
 }
 
 /**
- * Internal rendering state
- */
-interface RenderState {
-  y: number;
-  x: number;
-  page: number;
-  elements: string[];
-  lineHeight: number;
-  weight: string;
-  style: string;
-  font: string;
-  fs: number;
-  lineBuffer: RenderWord[];
-  justify: boolean; // Control justification globally for current block
-}
-
-/**
- * SVG Generator for thermal printer output
- * Converts Markdown to black-and-white SVG with 203 DPI precision
+ * SVG Generator using Puppeteer for accurate HTML to SVG rendering
  */
 export class SvgGenerator {
-  private readonly MM_TO_PX = 8;
-  private readonly PT_TO_PX = 8 / 2.83465;
-
+  private readonly MM_TO_PX = 8; // 203 DPI
+  
   private outputPath: string;
   private physicalWidthMm: number;
   private physicalPageHeightMm: number;
   private marginPx: number;
-  private baseFontSizePx: number;
+  private fontSizePt: number;
   private cutMarks: boolean;
-  private debug: boolean;
   private orientation: "portrait" | "landscape";
-  private lineHeightMultiplier: number;
-
+  private lineHeight: number;
+  private chromePath?: string;
+  private debug: boolean;
+  
   private renderWidthPx: number;
   private renderHeightPx: number;
-  private contentWidthPx: number;
-
-  private readonly fontFamily = "Georgia, serif";
-  private readonly codeFontFamily = "'DejaVu Serif', 'Liberation Serif', Georgia, serif";
 
   constructor(options: SvgGeneratorOptions) {
     this.outputPath = resolve(options.outputPath);
     this.orientation = options.orientation || "portrait";
-    this.debug = options.debug || false;
     this.cutMarks = options.cutMarks !== false;
-    this.lineHeightMultiplier = options.lineHeight || 1.5;
+    this.lineHeight = options.lineHeight || 1.5;
+    this.chromePath = options.chromePath;
+    this.debug = options.debug || false;
 
     let wMm = options.width || 57;
     let hMm = options.pageHeight || 105;
 
     if (options.paper && options.paper !== "custom") {
       const preset = PAPER_PRESETS[options.paper];
-      if (preset) {
-        wMm = preset.width;
-        hMm = preset.height;
-      }
+      if (preset) { wMm = preset.width; hMm = preset.height; }
     }
 
     this.physicalWidthMm = wMm;
@@ -124,8 +79,7 @@ export class SvgGenerator {
     }
 
     this.marginPx = (options.margin ?? 5) * this.MM_TO_PX;
-    this.baseFontSizePx = (options.fontSize || 10) * this.PT_TO_PX;
-    this.contentWidthPx = this.renderWidthPx - (this.marginPx * 2);
+    this.fontSizePt = options.fontSize || 10;
   }
 
   async generateFromFile(filePath: string): Promise<void> {
@@ -133,405 +87,390 @@ export class SvgGenerator {
     const processedContent = ContentProcessor.processFile(resolvedPath);
     
     let title = ContentProcessor.extractTitle(processedContent) || basename(filePath, ".md");
-    
     let markdownContent = processedContent.contentWithoutMetadata;
+    
+    // Remove duplicate title if first line matches
     const lines = markdownContent.split('\n');
-    if (lines.length > 0) {
-      const firstLine = lines[0].trim();
-      if (firstLine.replace(/^#+\s*/, '') === title) {
-        markdownContent = lines.slice(1).join('\n');
-      }
+    const firstLine = lines[0];
+    if (firstLine && firstLine.trim().replace(/^#+\s*/, '') === title) {
+      markdownContent = lines.slice(1).join('\n');
     }
 
-    const nodes = convertMarkdownToTelegraphNodes(markdownContent, {
-      generateToc: false,
-      inlineToC: false,
-      target: "svg",
-    });
-
-    const svg = this.generateSvg(title, nodes);
+    const svg = await this.generateSvg(title, markdownContent);
     writeFileSync(this.outputPath, svg, "utf-8");
   }
 
-  generateFromMarkdown(markdown: string, title?: string): string {
-    const nodes = convertMarkdownToTelegraphNodes(markdown, {
-      generateToc: false,
-      inlineToC: false,
-      target: "svg",
-    });
-    return this.generateSvg(title || "Untitled", nodes);
+  async generateFromMarkdown(markdown: string, title?: string): Promise<string> {
+    return this.generateSvg(title || "Untitled", markdown);
   }
 
-  private generateSvg(title: string, nodes: TelegraphNode[]): string {
-    const state: RenderState = {
-      y: this.marginPx + this.baseFontSizePx * 0.8,
-      x: this.marginPx,
-      page: 0,
-      elements: [],
-      lineHeight: this.baseFontSizePx * this.lineHeightMultiplier,
-      weight: "normal",
-      style: "normal",
-      font: this.fontFamily,
-      fs: this.baseFontSizePx,
-      lineBuffer: [],
-      justify: false,
-    };
-
-    state.fs = this.baseFontSizePx * 1.4;
-    state.weight = "bold";
-    state.justify = false;
-    this.renderWrappedText(title, state);
-    this.flushLine(state, false);
-    state.y += state.lineHeight * 0.5;
+  private async generateSvg(title: string, markdownContent: string): Promise<string> {
+    // Convert markdown to HTML
+    const htmlBody = convertMarkdownToHtml(markdownContent);
     
-    state.fs = this.baseFontSizePx;
-    state.weight = "normal";
-    state.x = this.marginPx;
-
-    for (const node of nodes) {
-      this.renderNode(node, state);
+    // Build complete HTML document with styles
+    const html = this.buildHtmlDocument(title, htmlBody);
+    
+    if (this.debug) {
+      writeFileSync(this.outputPath.replace(/\.svg$/, ".debug.html"), html, "utf-8");
     }
-    this.flushLine(state, false);
 
-    const totalPages = state.page + 1;
-    const totalPhysicalHeightPx = totalPages * (this.physicalPageHeightMm * this.MM_TO_PX);
-    const totalPhysicalWidthPx = this.physicalWidthMm * this.MM_TO_PX;
+    // Find Chrome/Chromium path
+    const executablePath = this.chromePath || await this.findChromePath();
+    
+    if (!executablePath) {
+      throw new Error(
+        "Chrome/Chromium not found. Please install Chrome or specify path with --chrome-path option.\n" +
+        "On macOS: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome\n" +
+        "On Linux: /usr/bin/google-chrome or /usr/bin/chromium-browser"
+      );
+    }
 
-    let content = "";
+    // Launch browser and render
+    const browser = await puppeteer.launch({
+      executablePath,
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: "networkidle0" });
+      
+      // Get actual content height (runs in browser context)
+      const bodyHeight = (await page.evaluate("document.body.scrollHeight")) as number;
+      
+      // Calculate pages
+      const totalPages = Math.ceil(bodyHeight / this.renderHeightPx);
+      const totalHeight = Math.max(totalPages * this.renderHeightPx, bodyHeight) as number;
+      
+      // Set viewport and get screenshot as SVG-compatible data
+      await page.setViewport({
+        width: this.renderWidthPx,
+        height: totalHeight,
+        deviceScaleFactor: 1,
+      });
+
+      // Take screenshot as PNG and embed in SVG
+      const screenshot = await page.screenshot({
+        type: "png",
+        fullPage: true,
+        omitBackground: false,
+      });
+
+      // Build SVG with embedded image
+      let svg = this.buildSvgDocument(screenshot as Buffer, totalHeight, totalPages);
+
+      return svg;
+    } finally {
+      await browser.close();
+    }
+  }
+
+  private buildHtmlDocument(title: string, bodyHtml: string): string {
+    const contentWidth = this.renderWidthPx - (this.marginPx * 2);
+    // Cut margin - safe zone for cutting (5mm on top and bottom of each page)
+    const cutMarginPx = 5 * this.MM_TO_PX;
+    // Effective page height for content (minus top and bottom cut margins)
+    const effectivePageHeight = this.renderHeightPx - (cutMarginPx * 2);
+    
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page {
+      size: ${this.renderWidthPx}px ${this.renderHeightPx}px;
+      margin: ${cutMarginPx}px ${this.marginPx}px;
+    }
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    html, body {
+      width: ${this.renderWidthPx}px;
+      background: white;
+      font-family: "Georgia", "DejaVu Serif", "Liberation Serif", serif;
+      font-size: ${this.fontSizePt}pt;
+      line-height: ${this.lineHeight};
+      color: black;
+      -webkit-font-smoothing: antialiased;
+    }
+    
+    body {
+      padding: ${cutMarginPx}px ${this.marginPx}px;
+    }
+    
+    /* Page break simulation - create visual pages with margins */
+    .page {
+      width: ${this.renderWidthPx - (this.marginPx * 2)}px;
+      min-height: ${effectivePageHeight}px;
+      padding-bottom: ${cutMarginPx}px;
+      page-break-after: always;
+      page-break-inside: avoid;
+    }
+    
+    h1, h2, h3, h4, h5, h6 {
+      font-weight: bold;
+      margin-top: 0.5em;
+      margin-bottom: 0.3em;
+      page-break-after: avoid;
+      page-break-inside: avoid;
+    }
+    
+    h1 { font-size: 1.4em; }
+    h2 { font-size: 1.25em; }
+    h3 { font-size: 1.1em; }
+    h4 { font-size: 1em; }
+    
+    p {
+      margin-bottom: 0.6em;
+      text-align: justify;
+      hyphens: auto;
+      -webkit-hyphens: auto;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      page-break-inside: avoid;
+      orphans: 3;
+      widows: 3;
+    }
+    
+    ul, ol {
+      margin-left: 1.5em;
+      margin-bottom: 0.5em;
+      page-break-inside: avoid;
+    }
+    
+    li {
+      margin-bottom: 0.2em;
+      page-break-inside: avoid;
+    }
+    
+    code {
+      font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+      font-style: italic;
+      border: 1px solid black;
+      border-radius: 2px;
+      padding: 0 2px;
+    }
+    
+    pre {
+      font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+      font-style: italic;
+      margin-left: 8px;
+      margin-bottom: 0.5em;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      page-break-inside: avoid;
+    }
+    
+    blockquote {
+      border-left: 2px solid black;
+      padding-left: 10px;
+      margin-left: 5px;
+      margin-bottom: 0.5em;
+    }
+    
+    hr {
+      border: none;
+      border-bottom: 1px solid black;
+      margin: 0.5em 0;
+    }
+    
+    strong, b {
+      font-weight: bold;
+    }
+    
+    em, i {
+      font-style: italic;
+    }
+    
+    table {
+      border-collapse: collapse;
+      margin-bottom: 0.5em;
+      width: 100%;
+    }
+    
+    th, td {
+      border: 1px solid black;
+      padding: 4px;
+      text-align: left;
+    }
+    
+    th {
+      font-weight: bold;
+    }
+    
+    .title {
+      font-size: 1.4em;
+      font-weight: bold;
+      margin-bottom: 1em;
+    }
+  </style>
+</head>
+<body>
+  <div class="title">${this.escapeHtml(title)}</div>
+  ${bodyHtml}
+</body>
+</html>`;
+  }
+
+  private buildSvgDocument(pngBuffer: Buffer, totalHeight: number, totalPages: number): string {
+    const base64 = pngBuffer.toString("base64");
+    
+    if (this.orientation === "landscape") {
+      // In landscape mode:
+      // - Physical tape width stays the same (57mm)
+      // - Content is rendered with swapped dimensions (width=pageHeight, height=tapeWidth per page)
+      // - Each page is rotated 90 degrees
+      // - Pages stack vertically on the tape
+      
+      // Content was rendered with:
+      // - renderWidthPx = pageHeight * MM_TO_PX (e.g., 105mm * 8 = 840px)
+      // - renderHeightPx = tapeWidth * MM_TO_PX (e.g., 57mm * 8 = 456px) per page
+      const pageContentWidth = this.renderWidthPx;  // 840px for 105mm
+      const pageContentHeight = this.renderHeightPx; // 456px for 57mm per page
+      
+      // Output dimensions after rotation:
+      // - Output width = tape width = 57mm = 456px
+      // - Each rotated page height = content width = 105mm = 840px
+      const outputWidth = this.physicalWidthMm * this.MM_TO_PX; // 456px
+      const outputPageHeight = this.physicalPageHeightMm * this.MM_TO_PX; // 840px (the rotated content width)
+      const outputTotalHeight = totalPages * outputPageHeight;
+      const physicalHeightMm = outputTotalHeight / this.MM_TO_PX;
+      
+      let svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="${this.physicalWidthMm}mm" 
+     height="${physicalHeightMm}mm" 
+     viewBox="0 0 ${outputWidth} ${outputTotalHeight}">
+  <defs>
+    <image id="fullContent" width="${pageContentWidth}" height="${totalHeight}" 
+           xlink:href="data:image/png;base64,${base64}"/>
+  </defs>`;
+      
+      // Render each page rotated
+      for (let p = 0; p < totalPages; p++) {
+        const sourceY = p * pageContentHeight;
+        const destY = p * outputPageHeight;
+        
+        // For each page:
+        // 1. Translate to destination position on tape
+        // 2. Rotate 90 degrees (pivot at top-left, then translate to correct position)
+        // 3. Clip to show only current page from source content
+        svg += `
+  <g transform="translate(0, ${destY})">
+    <g transform="translate(${outputWidth}, 0) rotate(90)">
+      <g transform="translate(0, ${-sourceY})">
+        <use xlink:href="#fullContent"/>
+      </g>
+    </g>
+  </g>`;
+      }
+      
+      // Add cut marks for landscape
+      if (this.cutMarks && totalPages > 1) {
+        svg += this.generateCutMarksLandscape(totalPages, outputWidth, outputPageHeight);
+      }
+      
+      svg += "\n</svg>";
+      return svg;
+      
+    } else {
+      // Portrait mode - simple case
+      const physicalHeightMm = totalHeight / this.MM_TO_PX;
+      
+      let svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="${this.physicalWidthMm}mm" 
+     height="${physicalHeightMm}mm" 
+     viewBox="0 0 ${this.renderWidthPx} ${totalHeight}">
+  <image width="${this.renderWidthPx}" height="${totalHeight}" 
+         xlink:href="data:image/png;base64,${base64}"/>`;
+      
+      // Add cut marks
+      if (this.cutMarks && totalPages > 1) {
+        svg += this.generateCutMarks(totalPages);
+      }
+      
+      svg += "\n</svg>";
+      return svg;
+    }
+  }
+  
+  private generateCutMarksLandscape(totalPages: number, pageWidth: number, pageHeight: number): string {
+    const len = 5 * this.MM_TO_PX;
+    
+    const marks: string[] = [];
     for (let p = 0; p < totalPages; p++) {
-      const prefix = `<!--P${p}-->`;
-      const pageElements = state.elements
-        .filter(el => el.startsWith(prefix))
-        .map(el => el.substring(prefix.length))
-        .join("\n");
-
-      const offsetY = p * (this.physicalPageHeightMm * this.MM_TO_PX);
-      if (this.orientation === "landscape") {
-        content += `  <g transform="translate(${totalPhysicalWidthPx}, ${offsetY}) rotate(90)">\n${pageElements}\n  </g>\n`;
-      } else {
-        content += `  <g transform="translate(0, ${offsetY})">\n${pageElements}\n  </g>\n`;
-      }
+      const y = p * pageHeight;
+      // Corner marks only (no dashed lines)
+      // Top-left and top-right of page
+      marks.push(`<line x1="0" y1="${y}" x2="0" y2="${y + len}" stroke="black" stroke-width="1"/>`);
+      marks.push(`<line x1="${pageWidth}" y1="${y}" x2="${pageWidth}" y2="${y + len}" stroke="black" stroke-width="1"/>`);
+      // Bottom-left and bottom-right of page
+      marks.push(`<line x1="0" y1="${(p + 1) * pageHeight - len}" x2="0" y2="${(p + 1) * pageHeight}" stroke="black" stroke-width="1"/>`);
+      marks.push(`<line x1="${pageWidth}" y1="${(p + 1) * pageHeight - len}" x2="${pageWidth}" y2="${(p + 1) * pageHeight}" stroke="black" stroke-width="1"/>`);
     }
-
-    const cutMarks = this.cutMarks ? this.generateCutMarks(totalPages) : "";
-    return this.buildSvgDocument(totalPhysicalWidthPx, totalPhysicalHeightPx, content, cutMarks);
-  }
-
-  private renderNode(node: TelegraphNode | string, state: RenderState): void {
-    if (typeof node === "string") {
-      this.renderWrappedText(node, state);
-      return;
-    }
-
-    const oldWeight = state.weight;
-    const oldStyle = state.style;
-    const oldFs = state.fs;
-    const oldFont = state.font;
-    const oldJustify = state.justify;
-
-    switch (node.tag) {
-      case "h3":
-        this.flushLine(state, false);
-        state.fs = this.baseFontSizePx * 1.25;
-        state.weight = "bold";
-        state.justify = false;
-        state.y += state.lineHeight * 0.3;
-        this.renderNodeChildren(node, state);
-        this.flushLine(state, false);
-        break;
-      case "h4":
-        this.flushLine(state, false);
-        state.fs = this.baseFontSizePx * 1.1;
-        state.weight = "bold";
-        state.justify = false;
-        state.y += state.lineHeight * 0.2;
-        this.renderNodeChildren(node, state);
-        this.flushLine(state, false);
-        break;
-      case "p":
-        state.justify = true;
-        this.renderNodeChildren(node, state);
-        this.flushLine(state, false); // Last line of paragraph: NEVER justify
-        state.y += state.lineHeight * 0.4;
-        break;
-      case "strong":
-      case "b":
-        state.weight = "bold";
-        this.renderNodeChildren(node, state);
-        break;
-      case "em":
-      case "i":
-        state.style = "italic";
-        this.renderNodeChildren(node, state);
-        break;
-      case "code":
-        this.renderCodeInline(node, state);
-        break;
-      case "br":
-        this.flushLine(state, false);
-        break;
-      case "hr":
-        this.flushLine(state, false);
-        this.renderHr(state);
-        break;
-      case "ul":
-      case "ol":
-        this.flushLine(state, false);
-        this.renderList(node, state, node.tag === "ol");
-        break;
-      case "blockquote":
-        this.flushLine(state, false);
-        this.renderBlockquote(node, state);
-        break;
-      case "pre":
-        this.flushLine(state, false);
-        state.font = this.codeFontFamily;
-        state.justify = false;
-        this.renderPre(node, state);
-        this.flushLine(state, false);
-        break;
-      default:
-        this.renderNodeChildren(node, state);
-    }
-
-    state.weight = oldWeight;
-    state.style = oldStyle;
-    state.fs = oldFs;
-    state.font = oldFont;
-    state.justify = oldJustify;
-  }
-
-  private renderNodeChildren(node: TelegraphNode, state: RenderState): void {
-    if (node.children) {
-      for (const child of node.children) {
-        this.renderNode(child, state);
-      }
-    }
-  }
-
-  private renderCodeInline(node: TelegraphNode, state: RenderState): void {
-    const text = this.extractText(node);
-    this.addWordToBuffer(text, state, false, true);
-  }
-
-  private renderHr(state: RenderState): void {
-    this.checkPageBreak(state, 10);
-    const y = state.y - (state.page * this.renderHeightPx);
-    state.elements.push(
-      `<!--P${state.page}-->  <line x1="${this.marginPx}" y1="${y}" x2="${this.renderWidthPx - this.marginPx}" y2="${y}" stroke="black" stroke-width="1"/>`
-    );
-    state.y += state.lineHeight;
-  }
-
-  private renderList(node: TelegraphNode, state: RenderState, ordered: boolean): void {
-    if (!node.children) return;
-    let idx = 1;
-    for (const child of node.children) {
-      if (typeof child === "object" && child.tag === "li") {
-        state.x = this.marginPx;
-        const bullet = ordered ? `${idx++}. ` : "• ";
-        this.renderWrappedText(bullet, state);
-        this.renderNodeChildren(child, state);
-        this.flushLine(state, false); // Last line of list item: NEVER justify
-        state.y += state.lineHeight * 0.1;
-      }
-    }
-  }
-
-  private renderBlockquote(node: TelegraphNode, state: RenderState): void {
-    const startY = state.y;
-    const oldMargin = this.marginPx;
-    this.marginPx += 15;
-    state.x = this.marginPx;
-    this.renderNodeChildren(node, state);
-    this.flushLine(state, false); // Last line of blockquote: NEVER justify
-    this.marginPx = oldMargin;
-    const endY = state.y;
     
-    const p = state.page; 
-    const y1 = startY - (p * this.renderHeightPx) - state.fs * 0.8;
-    const y2 = endY - (p * this.renderHeightPx) - state.lineHeight;
-    state.elements.push(
-      `<!--P${p}-->  <line x1="${this.marginPx + 6}" y1="${y1}" x2="${this.marginPx + 6}" y2="${y2}" stroke="black" stroke-width="2"/>`
-    );
-  }
-
-  private renderPre(node: TelegraphNode, state: RenderState): void {
-    const text = this.extractText(node);
-    const lines = text.split("\n");
-    for (const line of lines) {
-      state.x = this.marginPx + 8;
-      this.renderWrappedText(line, state);
-      this.flushLine(state, false);
-    }
-  }
-
-  private isPunctuation(text: string): boolean {
-    return /^[.,;:!?…—–\-()«»"']+$/.test(text);
-  }
-
-  private renderWrappedText(text: string, state: RenderState): void {
-    const words = text.split(/(\s+)/);
-    const maxWidth = this.renderWidthPx - this.marginPx;
-
-    for (let i = 0; i < words.length; i++) {
-      let wordText = words[i];
-      if (wordText === "") continue;
-      if (wordText === "\n") { this.flushLine(state, false); continue; }
-
-      const isSpace = /^\s+$/.test(wordText);
-      let w = this.estimateWidth(wordText, state.fs);
-
-      // Rule: punctuation should stay with previous word
-      if (!isSpace && this.isPunctuation(wordText) && state.x + w > maxWidth && state.x > this.marginPx) {
-        let lastWordIdx = state.lineBuffer.length - 1;
-        while (lastWordIdx >= 0 && state.lineBuffer[lastWordIdx].isSpace) lastWordIdx--;
-        if (lastWordIdx >= 0) {
-          const removed: RenderWord[] = [];
-          while (state.lineBuffer.length > lastWordIdx) removed.unshift(state.lineBuffer.pop()!);
-          state.x = this.marginPx + state.lineBuffer.reduce((sum, w) => sum + w.width, 0);
-          this.flushLine(state, state.justify);
-          for (const rw of removed) { state.lineBuffer.push(rw); state.x += rw.width; }
-        }
-      }
-
-      if (state.x + w > maxWidth && state.x > this.marginPx) {
-        // Hyphenation: prefer split at existing hyphen
-        const hIdx = wordText.indexOf("-");
-        if (hIdx > 1 && hIdx < wordText.length - 2) {
-           const pre = wordText.substring(0, hIdx + 1);
-           const post = wordText.substring(hIdx + 1);
-           if (state.x + this.estimateWidth(pre, state.fs) <= maxWidth) {
-              this.addWordToBuffer(pre, state, false);
-              this.flushLine(state, state.justify);
-              words[i] = post; i--; continue;
-           }
-        }
-
-        // Rule: at least 2 LETTERS before hyphen and 2 LETTERS after
-        if (!isSpace && wordText.length >= 4 && !this.isPunctuation(wordText)) {
-          const available = maxWidth - state.x;
-          let splitIdx = 0; let currentW = 0;
-          for (let k = 0; k < wordText.length; k++) {
-              const charW = this.estimateWidth(wordText[k], state.fs);
-              if (currentW + charW > available) break;
-              currentW += charW; splitIdx = k;
-          }
-          const p1 = wordText.substring(0, splitIdx); const p2 = wordText.substring(splitIdx);
-          const l1 = p1.replace(/[^a-zа-яё]/gi, "").length;
-          const l2 = p2.replace(/[^a-zа-яё]/gi, "").length;
-          if (l1 >= 2 && l2 >= 2) {
-            this.addWordToBuffer(p1 + "-", state, false);
-            this.flushLine(state, state.justify);
-            words[i] = p2; i--; continue;
-          }
-        }
-        this.flushLine(state, state.justify);
-        w = this.estimateWidth(wordText, state.fs);
-      }
-
-      this.addWordToBuffer(wordText, state, isSpace);
-    }
-  }
-
-  private addWordToBuffer(text: string, state: RenderState, isSpace: boolean, isInlineCode = false): void {
-    const textWidth = this.estimateWidth(text, state.fs);
-    const padding = isInlineCode ? 2 : 0;
-    const width = textWidth + padding;
-    state.lineBuffer.push({
-      text, fs: state.fs, weight: state.weight, style: isInlineCode ? "italic" : state.style,
-      font: isInlineCode ? this.codeFontFamily : state.font, width, isSpace, isCode: isInlineCode, textWidth
-    });
-    state.x += width;
-  }
-
-  private flushLine(state: RenderState, justify: boolean): void {
-    if (state.lineBuffer.length === 0) { state.x = this.marginPx; return; }
-    if (state.lineBuffer[state.lineBuffer.length - 1].isSpace) state.lineBuffer.pop();
-
-    const totalWidth = state.lineBuffer.reduce((sum, w) => sum + w.width, 0);
-    const maxWidth = this.renderWidthPx - (this.marginPx * 2);
-    const extraSpace = maxWidth - totalWidth;
-    
-    let spaceBonus = 0;
-    const spaceCount = state.lineBuffer.filter(w => w.isSpace).length;
-    // Justification only for full lines, within tolerance
-    if (justify && spaceCount > 0 && extraSpace > 0 && extraSpace < maxWidth * 0.25) {
-      spaceBonus = extraSpace / spaceCount;
-    }
-
-    this.checkPageBreak(state, state.lineHeight);
-    const y = state.y - (state.page * this.renderHeightPx);
-    let currentX = this.marginPx;
-
-    for (const word of state.lineBuffer) {
-      if (word.isSpace) { currentX += word.width + spaceBonus; continue; }
-      const weightAttr = word.weight === "bold" ? ' font-weight="bold"' : "";
-      const styleAttr = word.style === "italic" ? ' font-style="italic"' : "";
-      if (word.isCode) {
-         const tw = word.textWidth || word.width;
-         const p = 1; // 1px padding
-         state.elements.push(`<!--P${state.page}-->  <rect x="${currentX}" y="${y - word.fs * 0.72}" width="${tw + p * 2}" height="${word.fs * 0.85}" fill="none" stroke="black" stroke-width="0.5" rx="1"/>`);
-         state.elements.push(`<!--P${state.page}-->  <text x="${currentX + p}" y="${y}" font-size="${word.fs}px"${weightAttr}${styleAttr} font-family="${word.font}" fill="black" xml:space="preserve">${this.escapeXml(word.text)}</text>`);
-      } else {
-        state.elements.push(`<!--P${state.page}-->  <text x="${currentX}" y="${y}" font-size="${word.fs}px"${weightAttr}${styleAttr} font-family="${word.font}" fill="black" xml:space="preserve">${this.escapeXml(word.text)}</text>`);
-      }
-      currentX += word.width;
-    }
-    state.lineBuffer = []; state.x = this.marginPx; state.y += state.lineHeight;
-  }
-
-  private estimateWidth(text: string, fontSizePx: number): number {
-    let width = 0;
-    for (const char of text) {
-      const code = char.charCodeAt(0);
-      if (code >= 0x0300 && code <= 0x036F || code >= 0x1DC0 && code <= 0x1DFF || code >= 0x20D0 && code <= 0x20FF || code >= 0xFE20 && code <= 0xFE2F) continue;
-      if (/[A-ZА-ЯЁ]/.test(char)) width += fontSizePx * 0.85;
-      else if (/[a-zа-яё]/.test(char)) width += fontSizePx * 0.65;
-      else if (/\s/.test(char)) width += fontSizePx * 0.35;
-      else if (/[!.,;:?]/.test(char)) width += fontSizePx * 0.4;
-      else width += fontSizePx * 0.65;
-    }
-    return width;
-  }
-
-  private checkPageBreak(state: RenderState, requiredHeight: number): void {
-    const curY = state.y - (state.page * this.renderHeightPx);
-    if (curY + requiredHeight > this.renderHeightPx - this.marginPx) {
-      state.page++; state.y = state.page * this.renderHeightPx + this.marginPx + state.fs * 0.8; state.x = this.marginPx;
-    }
-  }
-
-  private extractText(node: TelegraphNode | string): string {
-    if (typeof node === "string") return node;
-    return (node.children || []).map(c => this.extractText(c)).join("");
+    return "\n  " + marks.join("\n  ");
   }
 
   private generateCutMarks(totalPages: number): string {
-    const marks: string[] = []; const len = 5 * this.MM_TO_PX;
-    const w = this.physicalWidthMm * this.MM_TO_PX; const h = this.physicalPageHeightMm * this.MM_TO_PX;
-    for (let p = 0; p <= totalPages; p++) {
-      const y = p * h; marks.push(`  <line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="black" stroke-width="0.5" stroke-dasharray="4,4"/>`);
-      if (p < totalPages) {
-        const top = p * h; const bot = (p + 1) * h;
-        marks.push(`  <line x1="0" y1="${top}" x2="0" y2="${top + len}" stroke="black" stroke-width="1"/>`);
-        marks.push(`  <line x1="${w}" y1="${top}" x2="${w}" y2="${top + len}" stroke="black" stroke-width="1"/>`);
-        marks.push(`  <line x1="0" y1="${bot - len}" x2="0" y2="${bot}" stroke="black" stroke-width="1"/>`);
-        marks.push(`  <line x1="${w}" y1="${bot - len}" x2="${w}" y2="${bot}" stroke="black" stroke-width="1"/>`);
+    const len = 5 * this.MM_TO_PX;
+    const w = this.renderWidthPx;
+    const h = this.renderHeightPx;
+    
+    const marks: string[] = [];
+    for (let p = 0; p < totalPages; p++) {
+      const y = p * h;
+      // Corner marks only (no dashed lines)
+      // Top-left and top-right of page
+      marks.push(`<line x1="0" y1="${y}" x2="0" y2="${y + len}" stroke="black" stroke-width="1"/>`);
+      marks.push(`<line x1="${w}" y1="${y}" x2="${w}" y2="${y + len}" stroke="black" stroke-width="1"/>`);
+      // Bottom-left and bottom-right of page
+      marks.push(`<line x1="0" y1="${(p + 1) * h - len}" x2="0" y2="${(p + 1) * h}" stroke="black" stroke-width="1"/>`);
+      marks.push(`<line x1="${w}" y1="${(p + 1) * h - len}" x2="${w}" y2="${(p + 1) * h}" stroke="black" stroke-width="1"/>`);
+    }
+    
+    return "\n  " + marks.join("\n  ");
+  }
+
+  private async findChromePath(): Promise<string | undefined> {
+    const possiblePaths = [
+      // macOS
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      // Linux
+      "/usr/bin/google-chrome",
+      "/usr/bin/chromium-browser",
+      "/usr/bin/chromium",
+      // Windows
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    ];
+
+    const { existsSync } = await import("node:fs");
+    for (const path of possiblePaths) {
+      if (existsSync(path)) {
+        return path;
       }
     }
-    return marks.join("\n");
+
+    return undefined;
   }
 
-  private buildSvgDocument(wPx: number, hPx: number, content: string, cutMarks: string): string {
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${this.physicalWidthMm}mm" height="${(hPx / this.MM_TO_PX)}mm" viewBox="0 0 ${wPx} ${hPx}">
-  <rect x="0" y="0" width="${wPx}" height="${hPx}" fill="white"/>
-${cutMarks}${content}
-</svg>`;
-  }
-
-  private escapeXml(text: string): string {
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 }

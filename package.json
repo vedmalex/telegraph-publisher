@@ -26,7 +26,10 @@
 		"typescript": "^5.0.0"
 	},
 	"dependencies": {
-		"commander": "^14.0.0"
+		"@puppeteer/browsers": "^2.11.0",
+		"commander": "^14.0.0",
+		"marked": "^17.0.1",
+		"puppeteer-core": "^24.34.0"
 	},
 	"version": "1.5.0"
 }

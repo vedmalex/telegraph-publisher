@@ -79,6 +79,7 @@ EnhancedCommands.addCheckLinksCommand(program);
 EnhancedCommands.addCacheValidateCommand(program);
 EnhancedCommands.addEpubCommand(program);
 EnhancedCommands.addSvgCommand(program);
+EnhancedCommands.addPdfCommand(program);
 
 // Keep original publish command as legacy support with enhanced workflow
 program
