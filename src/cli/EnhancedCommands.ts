@@ -19,6 +19,7 @@ import { ProgressIndicator } from "./ProgressIndicator";
 import { DeprecatedFlagError, UserFriendlyErrorReporter } from "../errors/DeprecatedFlagError";
 import { AutoRegistrationManager } from "../publisher/AutoRegistrationManager";
 import { EpubGenerator } from "../epub/EpubGenerator";
+import { SvgGenerator, PAPER_PRESETS } from "../svg/SvgGenerator";
 
 /**
  * Enhanced CLI commands with metadata management
@@ -1204,6 +1205,119 @@ export class EnhancedCommands {
     await epubGenerator.generate();
 
     ProgressIndicator.showStatus(`✅ EPUB generated successfully: ${outputPath}`, "success");
+  }
+
+  /**
+   * Add SVG generation command for thermal printer output
+   * @param program Commander program instance
+   */
+  static addSvgCommand(program: Command): void {
+    program
+      .command("svg")
+      .description("Generate SVG file from Markdown for thermal printer (black & white, with cut marks)")
+      .option("-f, --file <path>", "Path to the Markdown file (required)")
+      .option("-o, --output <path>", "Output SVG file path (default: output.svg)")
+      .option("-w, --width <mm>", "Paper width in mm (default: 57)")
+      .option("--page-height <mm>", "Page height in mm (default: 105)")
+      .option("--orientation <type>", "Orientation: portrait or landscape (default: portrait)")
+      .option("--paper <size>", "Paper preset: a4, a5, a5-half, thermal-57, custom (default: custom)")
+      .option("--margin <mm>", "Margin from edges in mm (default: 3)")
+      .option("--font-size <pt>", "Font size in pt: 6 (min), 8 (normal), 10 (good) (default: 10)")
+      .option("--line-height <multiplier>", "Line height multiplier (default: 1.5)")
+      .option("--cut-marks", "Show cut marks at page boundaries (default: true)")
+      .option("--no-cut-marks", "Hide cut marks")
+      .option("--debug", "Enable debug output")
+      .option("-v, --verbose", "Show detailed progress information")
+      .action(async (options) => {
+        try {
+          await EnhancedCommands.handleSvgCommand(options);
+        } catch (error) {
+          ProgressIndicator.showStatus(
+            `SVG generation failed: ${error instanceof Error ? error.message : String(error)}`,
+            "error"
+          );
+          process.exit(1);
+        }
+      });
+  }
+
+  /**
+   * Handle SVG generation command
+   * @param options Command options
+   */
+  private static async handleSvgCommand(options: any): Promise<void> {
+    if (!options.file) {
+      throw new Error("File is required. Use -f or --file to specify a Markdown file.");
+    }
+
+    const filePath = resolve(options.file);
+    if (!existsSync(filePath)) {
+      throw new Error(`File not found: ${filePath}`);
+    }
+
+    const fileDirectory = dirname(filePath);
+
+    // Determine output path
+    const outputPath = options.output || resolve(fileDirectory, "output.svg");
+
+    // Parse numeric options
+    const width = options.width ? parseFloat(options.width) : undefined;
+    const pageHeight = options.pageHeight ? parseFloat(options.pageHeight) : undefined;
+    const margin = options.margin ? parseFloat(options.margin) : undefined;
+    const fontSize = options.fontSize ? parseFloat(options.fontSize) : undefined;
+    const lineHeight = options.lineHeight ? parseFloat(options.lineHeight) : undefined;
+
+    // Validate font size
+    if (fontSize && fontSize < 6) {
+      throw new Error(`Font size must be at least 6pt.`);
+    }
+    let orientation: "portrait" | "landscape" | undefined;
+    if (options.orientation) {
+      if (options.orientation === "portrait" || options.orientation === "landscape") {
+        orientation = options.orientation;
+      } else {
+        throw new Error(`Invalid orientation: ${options.orientation}. Use 'portrait' or 'landscape'.`);
+      }
+    }
+
+    // Validate paper preset
+    if (options.paper && options.paper !== "custom" && !PAPER_PRESETS[options.paper]) {
+      const validPresets = Object.keys(PAPER_PRESETS).join(", ");
+      throw new Error(`Invalid paper preset: ${options.paper}. Valid options: ${validPresets}, custom`);
+    }
+
+    ProgressIndicator.showStatus(`🖨️ Generating SVG for thermal printer...`, "info");
+    ProgressIndicator.showStatus(`   Input: ${filePath}`, "info");
+    ProgressIndicator.showStatus(`   Output: ${outputPath}`, "info");
+
+    if (options.paper && options.paper !== "custom") {
+      ProgressIndicator.showStatus(`   Paper: ${options.paper}`, "info");
+    } else {
+      ProgressIndicator.showStatus(`   Width: ${width || 57}mm, Page height: ${pageHeight || 105}mm`, "info");
+    }
+
+    if (orientation) {
+      ProgressIndicator.showStatus(`   Orientation: ${orientation}`, "info");
+    }
+
+    // Create SVG generator
+    const svgGenerator = new SvgGenerator({
+      outputPath,
+      width,
+      pageHeight,
+      orientation,
+      paper: options.paper,
+      margin,
+      fontSize,
+      lineHeight,
+      cutMarks: options.cutMarks !== false,
+      debug: options.debug || options.verbose,
+    });
+
+    // Generate SVG
+    await svgGenerator.generateFromFile(filePath);
+
+    ProgressIndicator.showStatus(`✅ SVG generated successfully: ${outputPath}`, "success");
   }
 
   /**
