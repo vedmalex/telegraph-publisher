@@ -257,11 +257,20 @@ export class SvgGenerator {
       padding: 0 2px;
     }
     
+    /* Remove border from code inside pre (block has its own border) */
+    pre code {
+      border: none;
+      padding: 0;
+      border-radius: 0;
+    }
+    
     pre {
       font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
       font-style: italic;
-      margin-left: 8px;
       margin-bottom: 0.5em;
+      padding: 8px;
+      border: 1px solid black;
+      border-radius: 3px;
       white-space: pre-wrap;
       word-wrap: break-word;
       page-break-inside: avoid;
@@ -350,20 +359,30 @@ export class SvgGenerator {
      viewBox="0 0 ${outputWidth} ${outputTotalHeight}">
   <defs>
     <image id="fullContent" width="${pageContentWidth}" height="${totalHeight}" 
-           xlink:href="data:image/png;base64,${base64}"/>
+           xlink:href="data:image/png;base64,${base64}"/>`;
+      
+      // Add clip paths for each page
+      for (let p = 0; p < totalPages; p++) {
+        svg += `
+    <clipPath id="pageClip${p}">
+      <rect x="0" y="0" width="${outputWidth}" height="${outputPageHeight}"/>
+    </clipPath>`;
+      }
+      
+      svg += `
   </defs>`;
       
-      // Render each page rotated
+      // Render each page rotated with clipping
       for (let p = 0; p < totalPages; p++) {
         const sourceY = p * pageContentHeight;
         const destY = p * outputPageHeight;
         
         // For each page:
         // 1. Translate to destination position on tape
-        // 2. Rotate 90 degrees (pivot at top-left, then translate to correct position)
-        // 3. Clip to show only current page from source content
+        // 2. Apply clip path to show only this page area
+        // 3. Rotate 90 degrees and position content
         svg += `
-  <g transform="translate(0, ${destY})">
+  <g transform="translate(0, ${destY})" clip-path="url(#pageClip${p})">
     <g transform="translate(${outputWidth}, 0) rotate(90)">
       <g transform="translate(0, ${-sourceY})">
         <use xlink:href="#fullContent"/>

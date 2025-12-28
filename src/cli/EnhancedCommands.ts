@@ -1258,9 +1258,10 @@ export class EnhancedCommands {
     }
 
     const fileDirectory = dirname(filePath);
+    const fileBaseName = basename(filePath, ".md");
 
-    // Determine output path
-    const outputPath = options.output || resolve(fileDirectory, "output.svg");
+    // Determine output path (default: same name as input with .svg extension)
+    const outputPath = options.output || resolve(fileDirectory, `${fileBaseName}.svg`);
 
     // Parse numeric options
     const width = options.width ? parseFloat(options.width) : undefined;
@@ -1371,9 +1372,10 @@ export class EnhancedCommands {
     }
 
     const fileDirectory = dirname(filePath);
+    const fileBaseName = basename(filePath, ".md");
 
-    // Determine output path
-    const outputPath = options.output || resolve(fileDirectory, "output.pdf");
+    // Determine output path (default: same name as input with .pdf extension)
+    const outputPath = options.output || resolve(fileDirectory, `${fileBaseName}.pdf`);
 
     // Parse numeric options
     const width = options.width ? parseFloat(options.width) : undefined;

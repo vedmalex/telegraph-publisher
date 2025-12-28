@@ -226,11 +226,20 @@ export class PdfGenerator {
       padding: 0 2px;
     }
     
+    /* Remove border from code inside pre (block has its own border) */
+    pre code {
+      border: none;
+      padding: 0;
+      border-radius: 0;
+    }
+    
     pre {
       font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
       font-style: italic;
-      margin-left: 8px;
       margin-bottom: 0.5em;
+      padding: 8px;
+      border: 1px solid black;
+      border-radius: 3px;
       white-space: pre-wrap;
       word-wrap: break-word;
       page-break-inside: avoid;
