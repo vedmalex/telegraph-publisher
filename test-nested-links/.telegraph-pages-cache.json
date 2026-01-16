@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastUpdated": "2025-08-07T19:58:19.990Z",
+  "lastUpdated": "2025-12-30T19:55:21.056Z",
   "accessTokenHash": "4c5dc9b7708905f7",
   "pages": {
     "undefined": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-nested-links/section2/page1.md",
@@ -9,8 +9,8 @@
       "editPath": "page1",
       "title": "Page 1 Title",
       "authorName": "Test Author",
-      "publishedAt": "2025-08-07T19:58:19.989Z",
-      "lastUpdated": "2025-08-07T19:58:19.989Z",
+      "publishedAt": "2025-12-30T19:55:21.055Z",
+      "lastUpdated": "2025-12-30T19:55:21.055Z",
       "views": 0,
       "localFilePath": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-nested-links/section1/page1.md"
     },
@@ -19,8 +19,8 @@
       "editPath": "page2",
       "title": "Page 2 Title",
       "authorName": "Test Author",
-      "publishedAt": "2025-08-07T19:58:19.990Z",
-      "lastUpdated": "2025-08-07T19:58:19.990Z",
+      "publishedAt": "2025-12-30T19:55:21.056Z",
+      "lastUpdated": "2025-12-30T19:55:21.056Z",
       "views": 0,
       "localFilePath": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-nested-links/section2/page1.md"
     }

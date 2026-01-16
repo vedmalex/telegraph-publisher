@@ -308,6 +308,196 @@ test("should convert ordered lists to ol nodes", () => {
 	]);
 });
 
+test("should merge ordered list items separated by empty lines into single ol", () => {
+	// This is a common pattern in long documents where each list item is separated by blank line
+	const markdown = "1. First item\n\n2. Second item\n\n3. Third item";
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	// Should be a single <ol> with 3 <li> elements, NOT 3 separate <ol> elements
+	expect(result).toEqual([
+		{
+			tag: "ol",
+			children: [
+				{ tag: "li", children: ["First item"] },
+				{ tag: "li", children: ["Second item"] },
+				{ tag: "li", children: ["Third item"] },
+			],
+		},
+	]);
+});
+
+test("should merge unordered list items separated by empty lines into single ul", () => {
+	const markdown = "- First item\n\n- Second item\n\n- Third item";
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	// Should be a single <ul> with 3 <li> elements
+	expect(result).toEqual([
+		{
+			tag: "ul",
+			children: [
+				{ tag: "li", children: ["First item"] },
+				{ tag: "li", children: ["Second item"] },
+				{ tag: "li", children: ["Third item"] },
+			],
+		},
+	]);
+});
+
+test("should close list when different content follows after empty line", () => {
+	const markdown = "1. First item\n2. Second item\n\nThis is a paragraph.";
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result).toEqual([
+		{
+			tag: "ol",
+			children: [
+				{ tag: "li", children: ["First item"] },
+				{ tag: "li", children: ["Second item"] },
+			],
+		},
+		{
+			tag: "p",
+			children: ["This is a paragraph."],
+		},
+	]);
+});
+
+test("should handle multiple empty lines between list items", () => {
+	const markdown = "1. First\n\n\n2. Second\n\n\n\n3. Third";
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result).toEqual([
+		{
+			tag: "ol",
+			children: [
+				{ tag: "li", children: ["First"] },
+				{ tag: "li", children: ["Second"] },
+				{ tag: "li", children: ["Third"] },
+			],
+		},
+	]);
+});
+
+test("should handle nested ordered list inside ordered list", () => {
+	const markdown = "1. First item\n   1. Nested item 1\n   2. Nested item 2\n2. Second item";
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result).toEqual([
+		{
+			tag: "ol",
+			children: [
+				{
+					tag: "li",
+					children: [
+						"First item",
+						{
+							tag: "ol",
+							children: [
+								{ tag: "li", children: ["Nested item 1"] },
+								{ tag: "li", children: ["Nested item 2"] },
+							],
+						},
+					],
+				},
+				{ tag: "li", children: ["Second item"] },
+			],
+		},
+	]);
+});
+
+test("should handle nested unordered list inside unordered list", () => {
+	const markdown = "- First item\n  - Nested item 1\n  - Nested item 2\n- Second item";
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result).toEqual([
+		{
+			tag: "ul",
+			children: [
+				{
+					tag: "li",
+					children: [
+						"First item",
+						{
+							tag: "ul",
+							children: [
+								{ tag: "li", children: ["Nested item 1"] },
+								{ tag: "li", children: ["Nested item 2"] },
+							],
+						},
+					],
+				},
+				{ tag: "li", children: ["Second item"] },
+			],
+		},
+	]);
+});
+
+test("should handle mixed nested lists (UL in OL)", () => {
+	const markdown = "1. First item\n   - Nested bullet 1\n   - Nested bullet 2\n2. Second item";
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result).toEqual([
+		{
+			tag: "ol",
+			children: [
+				{
+					tag: "li",
+					children: [
+						"First item",
+						{
+							tag: "ul",
+							children: [
+								{ tag: "li", children: ["Nested bullet 1"] },
+								{ tag: "li", children: ["Nested bullet 2"] },
+							],
+						},
+					],
+				},
+				{ tag: "li", children: ["Second item"] },
+			],
+		},
+	]);
+});
+
+test("should handle 3-level deep nested lists", () => {
+	const markdown = "1. Level 1\n   1. Level 2\n      1. Level 3 - i\n      2. Level 3 - ii\n   2. Level 2 - B\n2. Level 1 - Second";
+	const result = convertMarkdownToTelegraphNodes(markdown, { generateToc: false });
+
+	expect(result).toEqual([
+		{
+			tag: "ol",
+			children: [
+				{
+					tag: "li",
+					children: [
+						"Level 1",
+						{
+							tag: "ol",
+							children: [
+								{
+									tag: "li",
+									children: [
+										"Level 2",
+										{
+											tag: "ol",
+											children: [
+												{ tag: "li", children: ["Level 3 - i"] },
+												{ tag: "li", children: ["Level 3 - ii"] },
+											],
+										},
+									],
+								},
+								{ tag: "li", children: ["Level 2 - B"] },
+							],
+						},
+					],
+				},
+				{ tag: "li", children: ["Level 1 - Second"] },
+			],
+		},
+	]);
+});
+
 test("should convert inline code to code nodes", () => {
 	const markdown = "This is `inline code` in text.";
 	const result = convertMarkdownToTelegraphNodes(markdown);

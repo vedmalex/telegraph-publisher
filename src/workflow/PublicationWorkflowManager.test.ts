@@ -93,7 +93,10 @@ describe('PublicationWorkflowManager', () => {
         forceRepublish: false,
         dryRun: false,
         debug: false,
-        generateAside: true
+        generateAside: true,
+        inlineToC: true,
+        tocSeparators: true,
+        tocTitle: ''
       });
 
       // Verify success message was logged

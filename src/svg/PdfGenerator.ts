@@ -94,7 +94,12 @@ export class PdfGenerator {
     await this.generatePdf(title, markdownContent);
   }
 
-  async generateFromMarkdown(markdown: string, title?: string): Promise<Buffer> {
+  async generateFromMarkdown(markdown: string, title?: string): Promise<void> {
+    const pdfBuffer = await this.generatePdfBuffer(title || "Untitled", markdown);
+    writeFileSync(this.outputPath, pdfBuffer);
+  }
+
+  async generateFromMarkdownBuffer(markdown: string, title?: string): Promise<Buffer> {
     return this.generatePdfBuffer(title || "Untitled", markdown);
   }
 

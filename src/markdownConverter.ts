@@ -486,9 +486,46 @@ export function convertMarkdownToTelegraphNodes(
 	let inCodeBlock = false;
 	let codeBlockContent: string[] = [];
 
-	let inList = false;
-	let currentListTag: "ul" | "ol" | "" = "";
-	let currentListItems: TelegraphNode[] = [];
+	// Nested list support: stack-based approach
+	// Each stack item contains: { tag: "ul"|"ol", items: TelegraphNode[], indent: number }
+	type ListStackItem = { tag: "ul" | "ol"; items: TelegraphNode[]; indent: number };
+	let listStack: ListStackItem[] = [];
+	
+	// Helper to get indentation level (number of leading spaces/tabs)
+	const getIndentLevel = (line: string): number => {
+		const match = line.match(/^(\s*)/);
+		if (!match || !match[1]) return 0;
+		// Normalize: treat 1 tab as 2 spaces, count spaces
+		return match[1].replace(/\t/g, '  ').length;
+	};
+	
+	// Helper to flush the list stack into a single nested structure
+	const flushListStack = (): TelegraphNode | null => {
+		if (listStack.length === 0) return null;
+		
+		// Build from bottom to top
+		while (listStack.length > 1) {
+			const child = listStack.pop();
+			if (!child) break;
+			
+			const parent = listStack[listStack.length - 1];
+			if (!parent) break;
+			
+			const childList: TelegraphNode = { tag: child.tag, children: child.items };
+			
+			// Append child list to the last item of parent
+			if (parent.items.length > 0) {
+				const lastItem = parent.items[parent.items.length - 1];
+				if (lastItem && lastItem.children) {
+					lastItem.children.push(childList);
+				}
+			}
+		}
+		
+		const root = listStack.pop();
+		if (!root) return null;
+		return { tag: root.tag, children: root.items };
+	};
 
 	let inBlockquote = false;
 	let blockquoteContent: string[] = [];
@@ -510,10 +547,9 @@ export function convertMarkdownToTelegraphNodes(
 					inTable = false;
 					tableLines = [];
 				}
-				if (inList) {
-					nodes.push({ tag: currentListTag, children: currentListItems });
-					inList = false;
-					currentListItems = [];
+				if (listStack.length > 0) {
+					const closedList = flushListStack();
+					if (closedList) nodes.push(closedList);
 				}
 				if (inBlockquote) {
 					nodes.push({
@@ -541,10 +577,9 @@ export function convertMarkdownToTelegraphNodes(
 					inTable = false;
 					tableLines = [];
 				}
-				if (inList) {
-					nodes.push({ tag: currentListTag, children: currentListItems });
-					inList = false;
-					currentListItems = [];
+				if (listStack.length > 0) {
+					const closedList = flushListStack();
+					if (closedList) nodes.push(closedList);
 				}
 				if (inBlockquote) {
 					nodes.push({
@@ -575,10 +610,9 @@ export function convertMarkdownToTelegraphNodes(
 			if (!inTable) {
 				// Close any open blocks first
 				flushParagraph();
-				if (inList) {
-					nodes.push({ tag: currentListTag, children: currentListItems });
-					inList = false;
-					currentListItems = [];
+				if (listStack.length > 0) {
+					const closedList = flushListStack();
+					if (closedList) nodes.push(closedList);
 				}
 				if (inBlockquote) {
 					nodes.push({
@@ -608,10 +642,9 @@ export function convertMarkdownToTelegraphNodes(
 			if (!inBlockquote) {
 				// If previously in a list, close it first
 				flushParagraph();
-				if (inList) {
-					nodes.push({ tag: currentListTag, children: currentListItems });
-					inList = false;
-					currentListItems = [];
+				if (listStack.length > 0) {
+					const closedList = flushListStack();
+					if (closedList) nodes.push(closedList);
 				}
 				inBlockquote = true;
 				blockquoteContent = [];
@@ -635,10 +668,9 @@ export function convertMarkdownToTelegraphNodes(
 		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
 			// Close any open blocks before adding a heading
 			flushParagraph();
-			if (inList) {
-				nodes.push({ tag: currentListTag, children: currentListItems });
-				inList = false;
-				currentListItems = [];
+			if (listStack.length > 0) {
+				const closedList = flushListStack();
+				if (closedList) nodes.push(closedList);
 			}
 			if (inBlockquote) {
 				nodes.push({
@@ -697,13 +729,13 @@ export function convertMarkdownToTelegraphNodes(
 			continue;
 		}
 
-		// Handle lists (NOW AFTER HEADINGS)
-		const unorderedMatch = line.match(/^\s*([-*])\s+(.*)/);
-		const orderedMatch = line.match(/^\s*(\d+)\.\s+(.*)/);
+		// Handle lists (NOW AFTER HEADINGS) with nested list support
+		const unorderedMatch = line.match(/^(\s*)([-*])\s+(.*)/);
+		const orderedMatch = line.match(/^(\s*)(\d+)\.\s+(.*)/);
 
 		if (unorderedMatch || orderedMatch) {
-			if (!inList) {
-				// If previously in a blockquote, close it first
+			// Close any open blocks before starting/continuing list
+			if (listStack.length === 0) {
 				if (inBlockquote) {
 					nodes.push({
 						tag: "blockquote",
@@ -712,39 +744,105 @@ export function convertMarkdownToTelegraphNodes(
 					inBlockquote = false;
 					blockquoteContent = [];
 				}
-				// Flush any buffered paragraph before starting a new list
 				flushParagraph();
-
-				inList = true;
-				currentListTag = unorderedMatch ? "ul" : "ol";
-				currentListItems = [];
 			}
 
-			const textContent =
-				(unorderedMatch && unorderedMatch[2]) ||
-				(orderedMatch && orderedMatch[2]) ||
-				"";
+			const currentIndent = getIndentLevel(line);
+			const listType: "ul" | "ol" = unorderedMatch ? "ul" : "ol";
+			const textContent = (unorderedMatch?.[3] || orderedMatch?.[3] || "").trim();
 
-			if (textContent) {
-				currentListItems.push({
-					tag: "li",
-					children: processInlineMarkdown(textContent.trim()),
-				});
+			if (listStack.length === 0) {
+				// Start a new root list
+				listStack.push({ tag: listType, items: [], indent: currentIndent });
+			} else {
+				const topStack = listStack[listStack.length - 1];
+				
+				if (!topStack) {
+					// Safety check: start new list if stack is somehow corrupted
+					listStack.push({ tag: listType, items: [], indent: currentIndent });
+				} else if (currentIndent > topStack.indent) {
+					// Nested list: create new level
+					listStack.push({ tag: listType, items: [], indent: currentIndent });
+				} else if (currentIndent < topStack.indent) {
+					// Dedent: close nested lists until we find the right level
+					while (listStack.length > 1) {
+						const currentTop = listStack[listStack.length - 1];
+						if (!currentTop || currentTop.indent <= currentIndent) break;
+						
+						const child = listStack.pop();
+						if (!child) break;
+						
+						const parent = listStack[listStack.length - 1];
+						if (!parent) break;
+						
+						const childList: TelegraphNode = { tag: child.tag, children: child.items };
+						
+						// Append child list to the last item of parent
+						if (parent.items.length > 0) {
+							const lastItem = parent.items[parent.items.length - 1];
+							if (lastItem && lastItem.children) {
+								lastItem.children.push(childList);
+							}
+						}
+					}
+					
+					// Check if current list type matches after dedent
+					const newTop = listStack[listStack.length - 1];
+					if (newTop && newTop.tag !== listType) {
+						// Different list type at same level: close current and start new
+						const closedList = flushListStack();
+						if (closedList) nodes.push(closedList);
+						listStack.push({ tag: listType, items: [], indent: currentIndent });
+					}
+				} else {
+					// Same indent level: check if list type changed
+					if (topStack.tag !== listType) {
+						// Different list type at same level: close current stack and start new
+						const closedList = flushListStack();
+						if (closedList) nodes.push(closedList);
+						listStack.push({ tag: listType, items: [], indent: currentIndent });
+					}
+				}
+			}
+
+			// Add list item to current (top) stack level
+			if (textContent && listStack.length > 0) {
+				const currentLevel = listStack[listStack.length - 1];
+				if (currentLevel) {
+					currentLevel.items.push({
+						tag: "li",
+						children: processInlineMarkdown(textContent),
+					});
+				}
 			}
 			continue;
-		} else if (inList) {
-			// If not a list item, but was in a list, close it
+		} else if (listStack.length > 0) {
+			// Not a list item, but we have an active list
 			if (line.trim() === "") {
-				// Empty line closes a list
-				nodes.push({ tag: currentListTag, children: currentListItems });
-				inList = false;
-				currentListItems = [];
-				continue; // Don't add empty paragraph for the empty line
+				// Empty line: look ahead to see if the list continues after empty line(s)
+				let nextNonEmptyIdx = i + 1;
+				while (nextNonEmptyIdx < lines.length && (lines[nextNonEmptyIdx]?.trim() || "") === "") {
+					nextNonEmptyIdx++;
+				}
+				
+				const nextLine = lines[nextNonEmptyIdx] || "";
+				// Check if next non-empty line is any list item
+				const nextUnorderedMatch = nextLine.match(/^(\s*)([-*])\s+(.*)/);
+				const nextOrderedMatch = nextLine.match(/^(\s*)(\d+)\.\s+(.*)/);
+				
+				if (nextUnorderedMatch || nextOrderedMatch) {
+					// List continues after empty line(s), don't close it yet
+					continue;
+				} else {
+					// List ends here, flush the stack
+					const closedList = flushListStack();
+					if (closedList) nodes.push(closedList);
+					continue; // Don't add empty paragraph for the empty line
+				}
 			} else {
 				// New content, close list and process as new paragraph
-				nodes.push({ tag: currentListTag, children: currentListItems });
-				inList = false;
-				currentListItems = [];
+				const closedList = flushListStack();
+				if (closedList) nodes.push(closedList);
 				// Process current line as a new element (paragraph)
 			}
 		}
@@ -753,10 +851,9 @@ export function convertMarkdownToTelegraphNodes(
 		if (line.match(/^\s*([-*_])(?:\s*\1){2,}\s*$/)) {
 			// Close any open blocks before adding HR
 			flushParagraph();
-			if (inList) {
-				nodes.push({ tag: currentListTag, children: currentListItems });
-				inList = false;
-				currentListItems = [];
+			if (listStack.length > 0) {
+				const closedList = flushListStack();
+				if (closedList) nodes.push(closedList);
 			}
 			if (inBlockquote) {
 				nodes.push({
@@ -773,7 +870,7 @@ export function convertMarkdownToTelegraphNodes(
 		// Handle empty lines or plain paragraphs
 		if (line.trim() === "") {
 			// Empty line ends the current paragraph (if any)
-			if (!inList && !inBlockquote && !inCodeBlock && !inTable) {
+			if (listStack.length === 0 && !inBlockquote && !inCodeBlock && !inTable) {
 				flushParagraph();
 			}
 			continue;
@@ -781,10 +878,9 @@ export function convertMarkdownToTelegraphNodes(
 
 		// If we reach here, it's a plain paragraph line
 		// Close any open blocks (lists, blockquotes) if this line is not part of them
-		if (inList) {
-			nodes.push({ tag: currentListTag, children: currentListItems });
-			inList = false;
-			currentListItems = [];
+		if (listStack.length > 0) {
+			const closedList = flushListStack();
+			if (closedList) nodes.push(closedList);
 		}
 		if (inBlockquote) {
 			nodes.push({
@@ -809,8 +905,9 @@ export function convertMarkdownToTelegraphNodes(
 			],
 		}); // Trim end for final code block
 	}
-	if (inList) {
-		nodes.push({ tag: currentListTag, children: currentListItems });
+	if (listStack.length > 0) {
+		const closedList = flushListStack();
+		if (closedList) nodes.push(closedList);
 	}
 	if (inBlockquote) {
 		nodes.push({

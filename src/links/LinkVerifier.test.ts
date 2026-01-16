@@ -1329,21 +1329,21 @@ describe('LinkVerifier', () => {
       expect(result.brokenLinks[0].link.href).toBe('./target.md#Bold-Titel');
     });
 
-    test('should work with cyrillic headings with formatting preserved', async () => {
+    test('should work with cyrillic headings with formatting stripped', async () => {
       const targetFile = join(testDir, 'target.md');
       const sourceFile = join(testDir, 'source.md');
 
       // Create target file with cyrillic bold heading
       writeFileSync(targetFile, '# **Тема 1: Введение: Практические наставления и сиддханта**\n\nСодержимое');
-      // Updated: anchor should preserve asterisks as per Telegra.ph behavior
-      writeFileSync(sourceFile, '[Ссылка](./target.md#**Тема-1:-Введение:-Практические-наставления-и-сиддханта**)');
+      // Anchor should have formatting stripped (textForAnchor removes ** for clean anchors)
+      writeFileSync(sourceFile, '[Ссылка](./target.md#Тема-1:-Введение:-Практические-наставления-и-сиддханта)');
 
       const link: MarkdownLink = {
         text: 'Ссылка',
-        href: './target.md#**Тема-1:-Введение:-Практические-наставления-и-сиддханта**',
+        href: './target.md#Тема-1:-Введение:-Практические-наставления-и-сиддханта',
         lineNumber: 1,
         columnStart: 0,
-        columnEnd: 87
+        columnEnd: 83
       };
 
       const scanResult: FileScanResult = {

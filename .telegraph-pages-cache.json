@@ -1,23 +1,24 @@
 {
   "version": "1.0.0",
-  "lastUpdated": "2025-08-22T22:12:33.101Z",
-  "accessTokenHash": "06f360c128e439d5",
+  "lastUpdated": "2025-12-30T19:55:41.568Z",
+  "accessTokenHash": "4c5dc9b7708905f7",
   "pages": {
-    "https://telegra.ph/Novyj-testovyj-fajl-08-22": {
-      "telegraphUrl": "https://telegra.ph/Novyj-testovyj-fajl-08-22",
-      "editPath": "Novyj-testovyj-fajl-08-22",
-      "localFilePath": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-new-file.md",
-      "title": "Новый тестовый файл",
-      "authorName": "Anonymous",
-      "publishedAt": "2025-08-22T22:11:21.733Z",
-      "lastUpdated": "2025-08-22T22:12:33.101Z",
-      "contentHash": "5f2e5d723a337cb80a75346d9bf00725c11c928fb88ab6070996d343855e67e5"
+    "https://telegra.ph/test-page-01-01": {
+      "telegraphUrl": "https://telegra.ph/test-page-01-01",
+      "editPath": "test-page-01-01",
+      "localFilePath": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-metadata-preservation.md",
+      "title": "Test Page",
+      "authorName": "testuser",
+      "publishedAt": "2025-12-30T19:50:53.382Z",
+      "lastUpdated": "2025-12-30T19:55:41.568Z",
+      "contentHash": "eb3ea244fc201b681f033362a20efb9f55ff3127f96e6f6c508d59553b8ce2cd",
+      "accessToken": "test-token"
     }
   },
   "localToTelegraph": {
-    "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-new-file.md": "https://telegra.ph/Novyj-testovyj-fajl-08-22"
+    "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-metadata-preservation.md": "https://telegra.ph/test-page-01-01"
   },
   "telegraphToLocal": {
-    "https://telegra.ph/Novyj-testovyj-fajl-08-22": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-new-file.md"
+    "https://telegra.ph/test-page-01-01": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-metadata-preservation.md"
   }
 }

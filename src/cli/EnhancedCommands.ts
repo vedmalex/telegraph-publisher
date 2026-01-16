@@ -1099,7 +1099,7 @@ export class EnhancedCommands {
 
     if (!depsEnabled) {
       // Без зависимостей: только явно переданные файлы
-      filePaths.forEach((filePath, index) => {
+      filePaths.forEach((filePath: string, index: number) => {
         const resolvedPath = resolve(filePath);
         if (!existsSync(resolvedPath)) {
           throw new Error(`File not found: ${resolvedPath}`);
@@ -1112,7 +1112,7 @@ export class EnhancedCommands {
     } else {
       // С зависимостями: BFS по дереву ссылок
       // 1. Инициализируем очередь корневыми файлами (слой 0)
-      filePaths.forEach((filePath, index) => {
+      filePaths.forEach((filePath: string, index: number) => {
         const resolvedPath = resolve(filePath);
         if (!existsSync(resolvedPath)) {
           throw new Error(`File not found: ${resolvedPath}`);
@@ -1129,6 +1129,8 @@ export class EnhancedCommands {
       while (queueIndex < bfsQueue.length) {
         const current = bfsQueue[queueIndex];
         queueIndex++;
+
+        if (!current) continue;
 
         const currentPath = current.filePath;
         let content: string;
@@ -1331,18 +1333,22 @@ export class EnhancedCommands {
   static addPdfCommand(program: Command): void {
     program
       .command("pdf")
-      .description("Generate PDF file from Markdown for thermal printer (recommended - proper page breaks)")
-      .option("-f, --file <path>", "Path to the Markdown file (required)")
-      .option("-o, --output <path>", "Output PDF file path (default: output.pdf)")
-      .option("-w, --width <mm>", "Paper width in mm (default: 57)")
-      .option("--page-height <mm>", "Page height in mm (default: 105)")
+      .description("Generate PDF file from Markdown file(s), following links like EPUB/Publish modes")
+      .option("-f, --file <path...>", "Path(s) to the Markdown file(s) (required)")
+      .option("-o, --output <path>", "Output PDF file path (default: book.pdf)")
+      .option("-t, --title <title>", "Document title (optional, extracted from first file if not provided)")
+      .option("-w, --width <mm>", "Paper width in mm (default: 210 for A4)")
+      .option("--page-height <mm>", "Page height in mm (default: 297 for A4)")
       .option("--orientation <type>", "Orientation: portrait or landscape (default: portrait)")
-      .option("--paper <size>", "Paper preset: a4, a5, a5-half, thermal-57, thermal-80, custom (default: custom)")
-      .option("--margin <mm>", "Margin from edges in mm (default: 5)")
-      .option("--font-size <pt>", "Font size in pt: 6 (min), 8 (normal), 10 (good) (default: 10)")
-      .option("--line-height <multiplier>", "Line height multiplier (default: 1.5)")
+      .option("--paper <size>", "Paper preset: a4, a5, a5-half, thermal-57, thermal-80, custom (default: a4)")
+      .option("--margin <mm>", "Margin from edges in mm (default: 15)")
+      .option("--font-size <pt>", "Font size in pt: 6 (min), 8 (normal), 10 (good), 12 (default: 12)")
+      .option("--line-height <multiplier>", "Line height multiplier (default: 1.6)")
       .option("--chrome-path <path>", "Path to Chrome/Chromium executable")
-      .option("--debug", "Enable debug output")
+      .option("--with-dependencies", "Automatically include linked local files (default: true)")
+      .option("--no-with-dependencies", "Skip automatic dependency inclusion")
+      .option("--save-merged", "Save merged markdown as _pdf.md file before PDF generation")
+      .option("--debug", "Enable debug output (keep temp files)")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
         try {
@@ -1359,25 +1365,246 @@ export class EnhancedCommands {
 
   /**
    * Handle PDF generation command
+   * Follows the same link-following pattern as EPUB for multi-file support
    * @param options Command options
    */
   private static async handlePdfCommand(options: any): Promise<void> {
-    if (!options.file) {
-      throw new Error("File is required. Use -f or --file to specify a Markdown file.");
+    if (!options.file || options.file.length === 0) {
+      throw new Error("At least one file is required. Use -f or --file to specify Markdown file(s).");
     }
 
-    const filePath = resolve(options.file);
-    if (!existsSync(filePath)) {
-      throw new Error(`File not found: ${filePath}`);
+    const filePaths = Array.isArray(options.file) ? options.file : [options.file];
+    const firstFilePath = resolve(filePaths[0]);
+    const fileDirectory = dirname(firstFilePath);
+
+    // Validate first file exists
+    if (!existsSync(firstFilePath)) {
+      throw new Error(`File not found: ${firstFilePath}`);
     }
 
-    const fileDirectory = dirname(filePath);
-    const fileBaseName = basename(filePath, ".md");
+    // Extract title from first file if not provided
+    let documentTitle = options.title;
+    if (!documentTitle) {
+      const firstFileContent = readFileSync(firstFilePath, "utf-8");
+      const contentWithoutMetadata = MetadataManager.removeMetadata(firstFileContent);
+      const headingLine = contentWithoutMetadata
+        .split(/\r?\n/)
+        .find((line: string) => /^#{1,6}\s+.+/.test(line));
 
-    // Determine output path (default: same name as input with .pdf extension)
-    const outputPath = options.output || resolve(fileDirectory, `${fileBaseName}.pdf`);
+      if (headingLine) {
+        const extractedTitle = headingLine.replace(/^#{1,6}\s+/, "").trim();
+        if (extractedTitle) {
+          documentTitle = extractedTitle;
+        }
+      }
 
-    // Parse numeric options
+      if (!documentTitle) {
+        const metadata = MetadataManager.parseMetadata(firstFileContent);
+        documentTitle = metadata?.title || basename(firstFilePath, ".md");
+      }
+    }
+
+    // Determine output path
+    const defaultOutputName = filePaths.length > 1 ? "book.pdf" : `${basename(firstFilePath, ".md")}.pdf`;
+    const outputPath = options.output || resolve(fileDirectory, defaultOutputName);
+
+    ProgressIndicator.showStatus(`📄 Generating PDF: ${documentTitle}`, "info");
+    ProgressIndicator.showStatus(`   Output: ${outputPath}`, "info");
+
+    // ============================================
+    // BFS: Collect files following links (like EPUB)
+    // ============================================
+    const orderedFilesToProcess: string[] = [];
+    const visitedFiles = new Map<string, { level: number; order: number }>();
+    let bfsQueue: Array<{ filePath: string; level: number }> = [];
+
+    const depsEnabled = options.withDependencies !== false;
+
+    if (!depsEnabled) {
+      // Without dependencies: only explicitly passed files
+      filePaths.forEach((filePath: string, index: number) => {
+        const resolvedPath = resolve(filePath);
+        if (!existsSync(resolvedPath)) {
+          throw new Error(`File not found: ${resolvedPath}`);
+        }
+        if (!visitedFiles.has(resolvedPath)) {
+          visitedFiles.set(resolvedPath, { level: 0, order: index });
+          orderedFilesToProcess.push(resolvedPath);
+        }
+      });
+    } else {
+      // With dependencies: BFS through link tree
+      // 1. Initialize queue with root files (layer 0)
+      filePaths.forEach((filePath: string, index: number) => {
+        const resolvedPath = resolve(filePath);
+        if (!existsSync(resolvedPath)) {
+          throw new Error(`File not found: ${resolvedPath}`);
+        }
+        if (!visitedFiles.has(resolvedPath)) {
+          visitedFiles.set(resolvedPath, { level: 0, order: index });
+          bfsQueue.push({ filePath: resolvedPath, level: 0 });
+          orderedFilesToProcess.push(resolvedPath);
+        }
+      });
+
+      // 2. BFS: for each file, find local markdown links and add new files
+      let queueIndex = 0;
+      while (queueIndex < bfsQueue.length) {
+        const current = bfsQueue[queueIndex];
+        queueIndex++;
+
+        if (!current) continue;
+
+        const currentPath = current.filePath;
+        let content: string;
+        try {
+          content = readFileSync(currentPath, "utf-8");
+        } catch {
+          continue;
+        }
+
+        const contentWithoutMetadata = MetadataManager.removeMetadata(content);
+
+        // Find all local links
+        const localLinks = LinkResolver.findLocalLinks(
+          contentWithoutMetadata,
+          currentPath,
+        );
+
+        for (const link of localLinks) {
+          const resolvedWithAnchor = link.resolvedPath;
+          const anchorIndex = resolvedWithAnchor.indexOf("#");
+          const resolvedPath =
+            anchorIndex !== -1
+              ? resolvedWithAnchor.substring(0, anchorIndex)
+              : resolvedWithAnchor;
+
+          // Only process markdown files
+          if (
+            !resolvedPath.toLowerCase().endsWith(".md") &&
+            !resolvedPath.toLowerCase().endsWith(".markdown")
+          ) {
+            continue;
+          }
+
+          if (!existsSync(resolvedPath)) {
+            continue;
+          }
+
+          if (!visitedFiles.has(resolvedPath)) {
+            const level = current.level + 1;
+            visitedFiles.set(resolvedPath, {
+              level,
+              order: orderedFilesToProcess.length,
+            });
+            bfsQueue.push({ filePath: resolvedPath, level });
+            orderedFilesToProcess.push(resolvedPath);
+          }
+        }
+      }
+    }
+
+    ProgressIndicator.showStatus(`   Found ${orderedFilesToProcess.length} file(s) to process`, "info");
+
+    // ============================================
+    // Create anchor mapping for internal links
+    // ============================================
+    const fileToAnchorMap: Record<string, string> = {};
+    orderedFilesToProcess.forEach((filePath, index) => {
+      if (!filePath) return;
+      const abs = resolve(filePath);
+      // Create unique section anchor using relative path from first file's directory
+      // This ensures uniqueness for files with same name in different directories
+      const relativePath = abs.startsWith(fileDirectory) 
+        ? abs.substring(fileDirectory.length + 1) 
+        : basename(abs);
+      const pathWithoutExt = relativePath.replace(/\.(md|markdown)$/i, "");
+      // Convert path separators and non-alphanumeric chars to hyphens
+      const anchorId = `section-${pathWithoutExt.toLowerCase().replace(/[\/\\]/g, "-").replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-")}`;
+      fileToAnchorMap[abs] = anchorId;
+    });
+
+    // ============================================
+    // Merge all files into single markdown with link rewriting
+    // ============================================
+    const mergedContentParts: string[] = [];
+    
+    for (let i = 0; i < orderedFilesToProcess.length; i++) {
+      const filePathItem = orderedFilesToProcess[i];
+      if (!filePathItem) continue;
+      
+      const absolutePath = resolve(filePathItem);
+      const anchorId = fileToAnchorMap[absolutePath];
+
+      if (options.verbose) {
+        ProgressIndicator.showStatus(`   Processing: ${basename(filePathItem)}`, "info");
+      }
+
+      let content: string;
+      try {
+        content = readFileSync(filePathItem, "utf-8");
+      } catch (error) {
+        ProgressIndicator.showStatus(`   Warning: Could not read ${basename(filePathItem)}`, "warning");
+        continue;
+      }
+
+      // Remove metadata
+      let processedContent = MetadataManager.removeMetadata(content);
+
+      // Rewrite local markdown links to anchors
+      const localLinks = LinkResolver.findLocalLinks(processedContent, filePathItem);
+      
+      // Sort by position descending to replace from end to start (preserve positions)
+      const sortedLinks = [...localLinks].sort((a, b) => b.startIndex - a.startIndex);
+      
+      for (const link of sortedLinks) {
+        const resolvedWithAnchor = link.resolvedPath;
+        const anchorIndex = resolvedWithAnchor.indexOf("#");
+        const resolvedPath = anchorIndex !== -1
+          ? resolvedWithAnchor.substring(0, anchorIndex)
+          : resolvedWithAnchor;
+        const originalAnchor = anchorIndex !== -1
+          ? resolvedWithAnchor.substring(anchorIndex)
+          : "";
+
+        // Check if this file is in our processed files
+        const targetAnchor = fileToAnchorMap[resolvedPath];
+        if (targetAnchor) {
+          // Rewrite link to internal anchor
+          const newHref = originalAnchor ? `#${targetAnchor}${originalAnchor.replace("#", "-")}` : `#${targetAnchor}`;
+          const newLink = `[${link.text}](${newHref})`;
+          processedContent = 
+            processedContent.substring(0, link.startIndex) + 
+            newLink + 
+            processedContent.substring(link.endIndex);
+        }
+      }
+
+      // Add section anchor at the beginning of content
+      const sectionHeader = `<a id="${anchorId}"></a>\n\n`;
+      
+      // Add horizontal rule between sections (except first)
+      if (i > 0) {
+        mergedContentParts.push("\n\n---\n\n");
+      }
+      
+      mergedContentParts.push(sectionHeader + processedContent);
+    }
+
+    const mergedMarkdown = mergedContentParts.join("");
+
+    // ============================================
+    // Optionally save merged markdown file
+    // ============================================
+    if (options.saveMerged || options.debug) {
+      const mergedFilePath = outputPath.replace(/\.pdf$/i, "_pdf.md");
+      writeFileSync(mergedFilePath, mergedMarkdown, "utf-8");
+      ProgressIndicator.showStatus(`   Saved merged markdown: ${mergedFilePath}`, "info");
+    }
+
+    // ============================================
+    // Parse numeric options and generate PDF
+    // ============================================
     const width = options.width ? parseFloat(options.width) : undefined;
     const pageHeight = options.pageHeight ? parseFloat(options.pageHeight) : undefined;
     const margin = options.margin ? parseFloat(options.margin) : undefined;
@@ -1404,14 +1631,12 @@ export class EnhancedCommands {
       throw new Error(`Invalid paper preset: ${options.paper}. Valid options: ${validPresets}, custom`);
     }
 
-    ProgressIndicator.showStatus(`📄 Generating PDF for thermal printer...`, "info");
-    ProgressIndicator.showStatus(`   Input: ${filePath}`, "info");
-    ProgressIndicator.showStatus(`   Output: ${outputPath}`, "info");
-
-    if (options.paper && options.paper !== "custom") {
-      ProgressIndicator.showStatus(`   Paper: ${options.paper}`, "info");
+    // Show paper info
+    const paperPreset = options.paper || "a4";
+    if (paperPreset !== "custom") {
+      ProgressIndicator.showStatus(`   Paper: ${paperPreset}`, "info");
     } else {
-      ProgressIndicator.showStatus(`   Width: ${width || 57}mm, Page height: ${pageHeight || 105}mm`, "info");
+      ProgressIndicator.showStatus(`   Width: ${width || 210}mm, Page height: ${pageHeight || 297}mm`, "info");
     }
 
     if (orientation) {
@@ -1424,16 +1649,16 @@ export class EnhancedCommands {
       width,
       pageHeight,
       orientation,
-      paper: options.paper,
-      margin,
-      fontSize,
-      lineHeight,
+      paper: paperPreset,
+      margin: margin ?? 15,
+      fontSize: fontSize ?? 12,
+      lineHeight: lineHeight ?? 1.6,
       debug: options.debug || options.verbose,
       chromePath: options.chromePath,
     });
 
-    // Generate PDF
-    await pdfGenerator.generateFromFile(filePath);
+    // Generate PDF from merged content
+    await pdfGenerator.generateFromMarkdown(mergedMarkdown, documentTitle);
 
     ProgressIndicator.showStatus(`✅ PDF generated successfully: ${outputPath}`, "success");
   }
