@@ -6,6 +6,7 @@ import { TestHelpers } from "../test-utils/TestHelpers";
 import type { DependencyNode, MetadataConfig } from "../types/metadata";
 import { PublicationStatus } from "../types/metadata";
 import { PathResolver } from "../utils/PathResolver";
+import type { ExecResult } from "../dst/DstIO";
 import { DependencyManager } from "./DependencyManager";
 
 describe("DependencyManager", () => {
@@ -471,6 +472,103 @@ originalFilename: "corrupted.md"
       expect(tree.dependencies).toHaveLength(1);
       expect(tree.dependencies[0]?.status).toBe(PublicationStatus.METADATA_CORRUPTED);
     });
+  });
+});
+
+describe("DstIO injection", () => {
+  let mockIO: ReturnType<typeof createMockIO>;
+
+  function createMockIO() {
+    const files = new Map<string, string>();
+    return {
+      readFile(path: string): string {
+        const content = files.get(path);
+        if (!content) throw new Error(`ENOENT: ${path}`);
+        return content;
+      },
+      readFileBuffer(path: string): Uint8Array {
+        const content = files.get(path);
+        if (!content) throw new Error(`ENOENT: ${path}`);
+        return new TextEncoder().encode(content);
+      },
+      writeFile(path: string, content: string): void { files.set(path, content); },
+      writeFileBuffer(path: string, data: Uint8Array): void { files.set(path, new TextDecoder().decode(data)); },
+      exists(path: string): boolean { return files.has(path); },
+      mkdir(): void {},
+      readdir(): string[] { return [...files.keys()]; },
+      stat(path: string) { return this.lstat(path); },
+      lstat(_path: string) { return { isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false, size: 0, mtimeMs: 0 }; },
+      unlink(path: string): void { files.delete(path); },
+      copyFile(src: string, dest: string): void {
+        const c = files.get(src);
+        if (c) files.set(dest, c);
+      },
+      rm(path: string): void { files.delete(path); },
+      watch(): { close(): void } { return { close() {} }; },
+      fetch(): Promise<Response> { return Promise.resolve(new Response()); },
+      exec(): Promise<ExecResult> { return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }); },
+      now(): number { return 0; },
+      timestamp(): string { return "1970-01-01T00:00:00.000Z"; },
+      random(): number { return 0.5; },
+      randomId(): string { return "00000000-0000-0000-0000-000000000000"; },
+      hash(_algo: string, data: string): string { return data; },
+      getEnv(): string | undefined { return undefined; },
+      setEnv(): void {},
+      addFile(path: string, content: string): void { files.set(path, content); },
+      addHttpHandler(): void {},
+      addExecHandler(): void {},
+      triggerWatch(): void {},
+      tick(): void {},
+      reset(): void { files.clear(); },
+      get ops() { return [] as const; },
+    };
+  }
+
+  beforeEach(() => {
+    mockIO = createMockIO();
+  });
+
+  it("should route readFile through DstIO when injected", () => {
+    const config = TestHelpers.createTestConfig({ maxDependencyDepth: 10 });
+    const pathResolver = PathResolver.getInstance();
+    const dm = new DependencyManager(config, pathResolver, mockIO as any);
+
+    mockIO.addFile("/test/file.md", "# Hello\nNo links");
+    expect(() => dm.buildDependencyTree("/test/file.md")).not.toThrow();
+  });
+
+  it("should resolve dependencies through DstIO", () => {
+    const config = TestHelpers.createTestConfig({ maxDependencyDepth: 10 });
+    const pathResolver = PathResolver.getInstance();
+    const dm = new DependencyManager(config, pathResolver, mockIO as any);
+
+    mockIO.addFile("/test/main.md", "# Main\nLink to [dep](./dep.md)");
+    mockIO.addFile("/test/dep.md", "# Dep\nNo links");
+
+    const tree = dm.buildDependencyTree("/test/main.md");
+    expect(tree.filePath).toBe("/test/main.md");
+    expect(tree.dependencies).toHaveLength(1);
+    expect(tree.dependencies[0]!.filePath).toBe("/test/dep.md");
+  });
+
+  it("should handle missing files via DstIO", () => {
+    const config = TestHelpers.createTestConfig({ maxDependencyDepth: 10 });
+    const pathResolver = PathResolver.getInstance();
+    const dm = new DependencyManager(config, pathResolver, mockIO as any);
+
+    const tree = dm.buildDependencyTree("/test/nonexistent.md");
+    expect(tree.filePath).toBe("/test/nonexistent.md");
+  });
+
+  it("should fall back to real fs when DstIO is not injected", () => {
+    const tempDir = TestHelpers.createTempDir("dst-test");
+    const config = TestHelpers.createTestConfig({ maxDependencyDepth: 10 });
+    const pathResolver = PathResolver.getInstance();
+    const dm = new DependencyManager(config, pathResolver);
+
+    TestHelpers.createTestFile(join(tempDir, "test.md"), "# Real\nNo links");
+    const tree = dm.buildDependencyTree(join(tempDir, "test.md"));
+    expect(tree.filePath).toBe(join(tempDir, "test.md"));
   });
 });
 

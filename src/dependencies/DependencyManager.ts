@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import type { DstIO } from "../dst/DstIO";
+import { DstError } from "../dst/DstIO";
 import { LinkResolver } from "../links/LinkResolver";
 import { LinkScanner } from "../links/LinkScanner";
 import { MetadataManager } from "../metadata/MetadataManager";
@@ -15,12 +15,14 @@ export class DependencyManager {
   private memoCache: Map<string, DependencyNode>;
   private processingStack: Set<string>;
   private pathResolver: PathResolver;
+  private dstIO: DstIO | undefined;
 
-  constructor(config: MetadataConfig, pathResolver: PathResolver) {
+  constructor(config: MetadataConfig, pathResolver: PathResolver, dstIO?: DstIO) {
     this.config = config;
     this.memoCache = new Map();
     this.processingStack = new Set();
     this.pathResolver = pathResolver;
+    this.dstIO = dstIO;
   }
 
   /**
@@ -150,64 +152,51 @@ export class DependencyManager {
     currentDepth: number,
     maxDepth: number
   ): DependencyNode {
-    // Check memoization cache first - return complete cached node if available
     if (this.memoCache.has(filePath)) {
       return this.memoCache.get(filePath)!;
     }
 
-    // Check for circular dependency
     if (this.processingStack.has(filePath)) {
-      // console.warn(`Circular dependency detected: ${filePath}`);
-      // Create shallow node but don't cache it to break the cycle
       return this.createNode(filePath, currentDepth, []);
     }
 
-    // Check depth limit
     if (currentDepth >= maxDepth) {
       console.warn(`Maximum dependency depth reached at ${filePath}`);
-      // Don't cache nodes truncated by depth limit
       return this.createNode(filePath, currentDepth, []);
     }
 
     this.processingStack.add(filePath);
 
     try {
-      // Check if path is a directory
       try {
-        const stats = lstatSync(filePath);
+        const stats = this.fsLstat(filePath);
         if (stats.isDirectory()) {
           console.error(`Error processing file ${filePath}: Cannot process directory as file`);
           return this.createNode(filePath, currentDepth, []);
         }
-      } catch (error) {
-        // If we can't stat the path, try decoding and check again
+      } catch {
         try {
           const decodedPath = decodeURIComponent(filePath);
-          const stats = lstatSync(decodedPath);
+          const stats = this.fsLstat(decodedPath);
           if (stats.isDirectory()) {
             console.error(`Error processing file ${decodedPath}: Cannot process directory as file`);
             return this.createNode(filePath, currentDepth, []);
           }
         } catch {
-          // Path doesn't exist, will be handled by readFileSync below
         }
       }
 
-      // Read file content and find local links
       let content: string;
       try {
-        content = readFileSync(filePath, 'utf-8');
-      } catch (error) {
-        // Try decoding URL-encoded characters
+        content = this.fsReadFile(filePath);
+      } catch {
         const decodedPath = decodeURIComponent(filePath);
-        content = readFileSync(decodedPath, 'utf-8');
+        content = this.fsReadFile(decodedPath);
       }
       const contentWithoutMetadata = MetadataManager.removeMetadata(content);
 
-      // Extract all links using the new LinkScanner
       const allLinks = LinkScanner.extractLinks(contentWithoutMetadata);
 
-      // Filter for local markdown links and create LocalLink objects
       const localLinks: LocalLink[] = allLinks
         .filter(link => !link.href.startsWith('http') && !link.href.startsWith('https') && !link.href.startsWith('mailto:') && !link.href.startsWith('#'))
         .filter(link => link.href.toLowerCase().endsWith('.md') || link.href.toLowerCase().endsWith('.markdown'))
@@ -225,12 +214,10 @@ export class DependencyManager {
           endIndex: link.columnEnd,
         }));
 
-      // Build dependency nodes for linked files
       const dependencies: DependencyNode[] = [];
       for (const link of localLinks) {
         try {
-          // Check if the target file exists
-          if (existsSync(link.resolvedPath)) {
+          if (this.fsExists(link.resolvedPath)) {
             const depNode = this.buildNodeRecursive(
               link.resolvedPath,
               currentDepth + 1,
@@ -238,42 +225,54 @@ export class DependencyManager {
             );
             dependencies.push(depNode);
           }
-        } catch (error) {
+        } catch {
         }
       }
 
       const node = this.createNode(filePath, currentDepth, dependencies);
-
-      // Cache the fully constructed node before returning
       this.memoCache.set(filePath, node);
-
       this.processingStack.delete(filePath);
       return node;
 
     } catch (error) {
       console.error(`Error processing file ${filePath}:`, error);
       this.processingStack.delete(filePath);
-      // Don't cache nodes created due to errors
       return this.createNode(filePath, currentDepth, []);
     }
   }
 
   /**
    * Create dependency node
-   * @param filePath File path
-   * @param depth Node depth
-   * @param dependencies Child dependencies
-   * @returns Dependency node
    */
   private createNode(
     filePath: string,
     depth: number,
     dependencies: DependencyNode[]
   ): DependencyNode {
-    const status = MetadataManager.getPublicationStatus(filePath);
-    const metadata = status === PublicationStatus.PUBLISHED
-      ? MetadataManager.getPublicationInfo(filePath) || undefined
-      : undefined;
+    let status: PublicationStatus;
+    let metadata: Record<string, unknown> | undefined;
+
+    if (this.dstIO) {
+      try {
+        const content = this.fsReadFile(filePath);
+        const parsed = MetadataManager.parseMetadata(content);
+        if (parsed && MetadataManager.validateMetadata(parsed)) {
+          status = PublicationStatus.PUBLISHED;
+          metadata = parsed;
+        } else if (parsed && !MetadataManager.validateMetadata(parsed)) {
+          status = PublicationStatus.METADATA_CORRUPTED;
+        } else {
+          status = PublicationStatus.NOT_PUBLISHED;
+        }
+      } catch {
+        status = PublicationStatus.METADATA_MISSING;
+      }
+    } else {
+      status = MetadataManager.getPublicationStatus(filePath);
+      metadata = status === PublicationStatus.PUBLISHED
+        ? MetadataManager.getPublicationInfo(filePath) || undefined
+        : undefined;
+    }
 
     return {
       filePath,
@@ -382,5 +381,36 @@ export class DependencyManager {
 
     traverse(root);
     return nodes;
+  }
+
+  private fsLstat(path: string): ReturnType<DstIO["lstat"]> {
+    if (this.dstIO) {
+      return this.dstIO.lstat(path);
+    }
+    const { lstatSync } = require("node:fs");
+    const stats = lstatSync(path);
+    return {
+      isFile: () => stats.isFile(),
+      isDirectory: () => stats.isDirectory(),
+      isSymbolicLink: () => stats.isSymbolicLink(),
+      size: stats.size,
+      mtimeMs: stats.mtimeMs,
+    };
+  }
+
+  private fsReadFile(path: string): string {
+    if (this.dstIO) {
+      return this.dstIO.readFile(path);
+    }
+    const { readFileSync } = require("node:fs");
+    return readFileSync(path, "utf-8");
+  }
+
+  private fsExists(path: string): boolean {
+    if (this.dstIO) {
+      return this.dstIO.exists(path);
+    }
+    const { existsSync } = require("node:fs");
+    return existsSync(path);
   }
 }
