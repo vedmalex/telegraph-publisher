@@ -57,6 +57,16 @@ export interface FileMetadata {
   description?: string;
   /** Optional content hash for change detection */
   contentHash?: string;
+  /** Optional GitHub Gist ID for markdown export/update workflow */
+  gistId?: string;
+  /** Optional GitHub Gist URL */
+  gistUrl?: string;
+  /** Optional filename used inside GitHub Gist */
+  gistFilename?: string;
+  /** Optional gist visibility flag */
+  gistPublic?: boolean;
+  /** Optional ISO timestamp for last gist update */
+  gistUpdatedAt?: string;
   /**
    * Access token used for publication/editing.
    * 
@@ -358,6 +368,8 @@ export interface MetadataConfig {
 export interface ExtendedMetadataConfig extends MetadataConfig {
   /** Access token for hierarchical token resolution */
   accessToken?: string;
+  /** GitHub token for gist publishing */
+  githubToken?: string;
   /** Configuration version for compatibility */
   version?: string;
   /** Timestamp when config was last modified */

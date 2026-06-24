@@ -21,6 +21,7 @@
 - 📑 **Table of Contents (ToC)** - автоматическая генерация оглавления с якорными ссылками
 - 📊 **Анализ зависимостей** - визуализация дерева зависимостей между файлами
 - 📚 **Генерация EPUB** - создание электронных книг из Markdown файлов с переиспользованием механизма публикации
+- 🐙 **Публикация в GitHub Gist** - создание/обновление одного markdown-файла (по умолчанию приватный gist)
 - ⚙️ **Гибкая конфигурация** - настройка по умолчанию для автора, глубины зависимостей и других параметров
 - 🛠️ **Режимы работы** - dry-run, debug, force-republish и другие
 - 🧪 **Полное покрытие тестами** (472+ тестов) с методологией TDD
@@ -69,6 +70,9 @@ telegraph-publisher pub -f article.md --no-auto-register
 
 # Генерация EPUB книги из Markdown файлов
 telegraph-publisher epub -f chapter1.md chapter2.md -a "Автор" -o book.epub
+
+# Публикация merged-markdown в приватный GitHub Gist
+telegraph-publisher gist -f index.md --token GITHUB_TOKEN
 ```
 
 ## 📚 Подробное руководство
@@ -219,6 +223,75 @@ telegraph-publisher pdf -f index.md --with-dependencies
 telegraph-publisher pdf -f document.md --paper a4
 ```
 
+### 🐙 Публикация в GitHub Gist
+Команда публикует один markdown-файл в gist. Контент собирается тем же способом, что и в `pdf` (объединение зависимостей + переписывание локальных ссылок на якоря).
+
+```bash
+telegraph-publisher gist [опции]
+```
+
+**Основные опции:**
+- `-f, --file <path...>` - Путь(и) к входным Markdown-файлам (обязательно)
+- `--token <token>` - GitHub token (или сохраните через `config --github-token`)
+- `--with-dependencies` - Включать локальные markdown-зависимости (по умолчанию: true)
+- `--no-with-dependencies` - Не включать зависимости
+- `--filename <name>` - Имя файла внутри gist (по умолчанию: `*_pdf.md`)
+- `--description <text>` - Описание gist
+- `--public` - Сделать gist публичным (по умолчанию gist приватный)
+- `--save-merged` - Сохранить merged markdown локально перед публикацией
+
+**Поведение:**
+- При первом запуске создается gist и выводится ссылка.
+- При следующих запусках команда обновляет тот же gist (ID хранится в front-matter исходного файла).
+- В gist всегда отправляется один markdown-файл.
+
+#### Как получить `GITHUB_TOKEN`
+
+Рекомендуемый вариант: **Fine-grained Personal Access Token**.
+
+1. Откройте GitHub: `Settings` → `Developer settings` → `Personal access tokens` → `Fine-grained tokens`.
+2. Нажмите `Generate new token`.
+3. В `Resource owner` выберите свой пользовательский аккаунт.
+4. В разделе `Permissions` задайте:
+   - `Account permissions` → `Gists` → `Read and write`.
+5. Сгенерируйте токен и сразу сохраните его в безопасном месте (GitHub показывает его один раз).
+
+Альтернатива: **Personal access token (classic)** с scope `gist`.
+
+Важно:
+- Для API создания/обновления gist fine-grained токену нужен permission `Gists (write)`.
+- Если у вас organization-политики на токены, доступ может требовать approval администратора.
+
+#### Какие настройки нужны
+
+Можно использовать любой из способов (приоритет: CLI флаг → config → переменные окружения):
+
+1. Через конфиг проекта (рекомендуется):
+```bash
+telegraph-publisher config --github-token YOUR_TOKEN
+```
+
+2. Через переменную окружения:
+```bash
+export GITHUB_TOKEN=YOUR_TOKEN
+# или
+export GH_TOKEN=YOUR_TOKEN
+```
+
+3. Через флаг команды:
+```bash
+telegraph-publisher gist -f index.md --token YOUR_TOKEN
+```
+
+Проверка:
+```bash
+# Проверить без публикации
+telegraph-publisher gist -f index.md --dry-run
+
+# Реальная публикация/обновление
+telegraph-publisher gist -f index.md
+```
+
 ### 🔐 Автоматическая регистрация
 
 #### Что такое автоматическая регистрация?
@@ -264,6 +337,7 @@ telegraph-publisher config [опции]
 **Опции:**
 - `--show` - Показать текущую конфигурацию
 - `--username <name>` - Установить автора по умолчанию
+- `--github-token <token>` - Сохранить GitHub token для команды `gist`
 - `--max-depth <number>` - Установить максимальную глубину зависимостей
 - `--auto-deps <boolean>` - Включить/отключить автоматическую публикацию зависимостей
 - `--set <key=value>` - Установить значение конфигурации

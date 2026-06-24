@@ -9,6 +9,7 @@ import { IntelligentConfigMerger } from "./IntelligentConfigMerger.js";
  */
 interface ExtendedConfig extends MetadataConfig {
   accessToken?: string;
+  githubToken?: string;
   version?: string;
 }
 
@@ -173,6 +174,16 @@ export class ConfigManager {
   }
 
   /**
+   * Load GitHub token for gist publication
+   * @param directory Directory to look for config file
+   * @returns GitHub token if found
+   */
+  static loadGithubToken(directory: string): string | undefined {
+    const config = ConfigManager.loadConfig(directory);
+    return config?.githubToken;
+  }
+
+  /**
    * Load configuration from directory (backward compatibility method)
    * @param directory Directory to look for config file
    * @returns Extended configuration or null if not found
@@ -196,11 +207,20 @@ export class ConfigManager {
   }
 
   /**
+   * Save GitHub token for gist publication
+   * @param directory Directory to save config file
+   * @param githubToken GitHub token to save
+   */
+  static saveGithubToken(directory: string, githubToken: string): void {
+    ConfigManager.saveConfig(directory, { githubToken });
+  }
+
+  /**
    * Update metadata configuration
    * @param directory Directory to save config to
    * @param metadataConfig Metadata configuration to update
    */
-  static updateMetadataConfig(directory: string, metadataConfig: Partial<MetadataConfig>): void {
+  static updateMetadataConfig(directory: string, metadataConfig: Partial<ExtendedConfig>): void {
     ConfigManager.saveConfig(directory, metadataConfig);
   }
 
@@ -224,6 +244,13 @@ export class ConfigManager {
       console.log(`🔑 Access Token: ${maskedToken}`);
     } else {
       console.log("🔑 Access Token: Not set");
+    }
+
+    if (config.githubToken) {
+      const maskedToken = config.githubToken.substring(0, 8) + "..." + config.githubToken.slice(-4);
+      console.log(`🐙 GitHub Token: ${maskedToken}`);
+    } else {
+      console.log("🐙 GitHub Token: Not set");
     }
 
     console.log(`👤 Default Username: ${config.defaultUsername || "Not set"}`);
@@ -256,6 +283,9 @@ export class ConfigManager {
       const existingConfig = ConfigManager.loadConfig(directory);
       if (existingConfig && existingConfig.accessToken) {
         config.accessToken = existingConfig.accessToken;
+      }
+      if (existingConfig && existingConfig.githubToken) {
+        config.githubToken = existingConfig.githubToken;
       }
     }
 

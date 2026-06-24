@@ -1,26 +1,27 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, extname, resolve } from "node:path";
 import type { Command } from "commander";
 import { PagesCacheManager } from "../cache/PagesCacheManager";
 import { ConfigManager } from "../config/ConfigManager";
 import { ContentProcessor } from "../content/ContentProcessor";
 import { DependencyManager } from "../dependencies/DependencyManager";
+import { EpubGenerator } from "../epub/EpubGenerator";
+import { DeprecatedFlagError, UserFriendlyErrorReporter } from "../errors/DeprecatedFlagError";
 import { BidirectionalLinkResolver } from "../links/BidirectionalLinkResolver";
 import { LinkResolver } from "../links/LinkResolver";
 import type { BrokenLink, FileScanResult } from "../links/types";
 import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
 import { MetadataManager } from "../metadata/MetadataManager";
+import { AutoRegistrationManager } from "../publisher/AutoRegistrationManager";
 import { EnhancedTelegraphPublisher } from "../publisher/EnhancedTelegraphPublisher";
+import { GitHubGistPublisher } from "../publisher/GitHubGistPublisher";
+import { PAPER_PRESETS as PDF_PAPER_PRESETS, PdfGenerator } from "../svg/PdfGenerator";
+import { PAPER_PRESETS, SvgGenerator } from "../svg/SvgGenerator";
 import { TelegraphPublisher } from "../telegraphPublisher";
-import { type FileMetadata, PublicationStatus, type TelegraphLink, type ExtendedMetadataConfig, type DependencyNode } from "../types/metadata";
+import { type DependencyNode, type ExtendedMetadataConfig, type FileMetadata, PublicationStatus, type TelegraphLink } from "../types/metadata";
 import { PathResolver } from "../utils/PathResolver";
 import { PublicationWorkflowManager } from "../workflow";
 import { ProgressIndicator } from "./ProgressIndicator";
-import { DeprecatedFlagError, UserFriendlyErrorReporter } from "../errors/DeprecatedFlagError";
-import { AutoRegistrationManager } from "../publisher/AutoRegistrationManager";
-import { EpubGenerator } from "../epub/EpubGenerator";
-import { SvgGenerator, PAPER_PRESETS } from "../svg/SvgGenerator";
-import { PdfGenerator, PAPER_PRESETS as PDF_PAPER_PRESETS } from "../svg/PdfGenerator";
 
 /**
  * Enhanced CLI commands with metadata management
@@ -254,6 +255,7 @@ export class EnhancedCommands {
       .option("--set <key=value>", "Set configuration value", [])
       .option("--reset", "Reset configuration to defaults")
       .option("--username <name>", "Set default username")
+      .option("--github-token <token>", "Set GitHub token for gist publication")
       .option("--max-depth <number>", "Set maximum dependency depth")
       .option("--auto-deps <boolean>", "Enable/disable automatic dependency publishing")
       .action(async (options) => {
@@ -559,6 +561,10 @@ export class EnhancedCommands {
 
     if (options.username) {
       updates.defaultUsername = options.username;
+    }
+
+    if (options.githubToken) {
+      updates.githubToken = options.githubToken;
     }
 
     if (options.maxDepth) {
@@ -1093,7 +1099,7 @@ export class EnhancedCommands {
     // автоматически предотвращает циклы и избыточный обход.
     const orderedFilesToProcess: string[] = [];
     const visitedFiles = new Map<string, { level: number; order: number }>();
-    let bfsQueue: Array<{ filePath: string; level: number }> = [];
+    const bfsQueue: Array<{ filePath: string; level: number }> = [];
 
     const depsEnabled = options.withDependencies !== false;
 
@@ -1348,6 +1354,7 @@ export class EnhancedCommands {
       .option("--with-dependencies", "Automatically include linked local files (default: true)")
       .option("--no-with-dependencies", "Skip automatic dependency inclusion")
       .option("--save-merged", "Save merged markdown as _pdf.md file before PDF generation")
+      .option("--no-header", "Skip document title in PDF output (useful when header breaks layout)")
       .option("--debug", "Enable debug output (keep temp files)")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
@@ -1361,6 +1368,134 @@ export class EnhancedCommands {
           process.exit(1);
         }
       });
+  }
+
+  /**
+   * Add GitHub Gist publication command
+   * @param program Commander program instance
+   */
+  static addGistCommand(program: Command): void {
+    program
+      .command("gist")
+      .description("Publish merged Markdown to GitHub Gist (create or update existing gist)")
+      .option("-f, --file <path...>", "Path(s) to the Markdown file(s) (required)")
+      .option("--filename <name>", "Filename inside gist (default: *_pdf.md)")
+      .option("--description <text>", "Gist description (optional)")
+      .option("--gist-id <id>", "Update specific gist ID instead of metadata-discovered gist")
+      .option("--token <token>", "GitHub token (optional: config, GITHUB_TOKEN, GH_TOKEN are used as fallback)")
+      .option("--with-dependencies", "Automatically include linked local files (default: true)")
+      .option("--no-with-dependencies", "Skip automatic dependency inclusion")
+      .option("--public", "Create public gist (default: private)")
+      .option("--save-merged", "Save merged markdown as _pdf.md file before gist publication")
+      .option("--dry-run", "Preview gist payload without GitHub API request")
+      .option("-v, --verbose", "Show detailed progress information")
+      .action(async (options) => {
+        try {
+          await EnhancedCommands.handleGistCommand(options);
+        } catch (error) {
+          ProgressIndicator.showStatus(
+            `Gist publication failed: ${error instanceof Error ? error.message : String(error)}`,
+            "error"
+          );
+          process.exit(1);
+        }
+      });
+  }
+
+  private static async handleGistCommand(options: any): Promise<void> {
+    if (!options.file || options.file.length === 0) {
+      throw new Error("At least one file is required. Use -f or --file to specify Markdown file(s).");
+    }
+
+    const inputFilePaths = Array.isArray(options.file) ? options.file : [options.file];
+    const firstFilePath = resolve(inputFilePaths[0]);
+    const fileDirectory = dirname(firstFilePath);
+
+    if (!existsSync(firstFilePath)) {
+      throw new Error(`File not found: ${firstFilePath}`);
+    }
+
+    const sourceContent = readFileSync(firstFilePath, "utf-8");
+    const sourceMetadata = MetadataManager.parseMetadata(sourceContent);
+    const existingGistId =
+      options.gistId ||
+      sourceMetadata?.gistId ||
+      EnhancedCommands.extractGistIdFromUrl(sourceMetadata?.gistUrl);
+
+    const githubToken =
+      options.token ||
+      ConfigManager.loadGithubToken(fileDirectory) ||
+      process.env.GITHUB_TOKEN ||
+      process.env.GH_TOKEN;
+
+    if (!githubToken) {
+      throw new Error("GitHub token is required. Use --token, config --github-token, or GITHUB_TOKEN.");
+    }
+
+    if (options.token) {
+      ConfigManager.saveGithubToken(fileDirectory, options.token);
+    }
+
+    const documentTitle = EnhancedCommands.resolveDocumentTitleFromMarkdown(firstFilePath, options.title);
+    const mergedDocument = EnhancedCommands.buildMergedMarkdownForSingleDocument(inputFilePaths, {
+      withDependencies: options.withDependencies,
+      verbose: options.verbose,
+    });
+
+    const defaultFilename = mergedDocument.inputFiles.length > 1
+      ? "book_pdf.md"
+      : `${basename(firstFilePath, extname(firstFilePath))}_pdf.md`;
+    const gistFilename = EnhancedCommands.ensureMarkdownFilename(options.filename || defaultFilename);
+
+    ProgressIndicator.showStatus(`📝 Publishing markdown to Gist: ${documentTitle}`, "info");
+    ProgressIndicator.showStatus(`   File in gist: ${gistFilename}`, "info");
+    ProgressIndicator.showStatus(`   Visibility: ${options.public ? "public" : "private"}`, "info");
+
+    if (options.saveMerged) {
+      const mergedFilePath = resolve(fileDirectory, defaultFilename);
+      writeFileSync(mergedFilePath, mergedDocument.mergedMarkdown, "utf-8");
+      ProgressIndicator.showStatus(`   Saved merged markdown: ${mergedFilePath}`, "info");
+    }
+
+    if (options.dryRun) {
+      ProgressIndicator.showStatus(
+        `🔍 DRY-RUN: Would ${existingGistId ? "update" : "create"} gist with ${mergedDocument.orderedFilesToProcess.length} merged file(s)`,
+        "info"
+      );
+      return;
+    }
+
+    const gistPublisher = new GitHubGistPublisher(githubToken);
+    const gistDescription = options.description || documentTitle;
+
+    const gistResult = existingGistId
+      ? await gistPublisher.updateGist({
+          gistId: existingGistId,
+          filename: gistFilename,
+          content: mergedDocument.mergedMarkdown,
+          description: gistDescription,
+        })
+      : await gistPublisher.createGist({
+          filename: gistFilename,
+          content: mergedDocument.mergedMarkdown,
+          description: gistDescription,
+          isPublic: options.public === true,
+        });
+
+    const updatedContent = MetadataManager.upsertGistMetadata(sourceContent, {
+      gistId: gistResult.id,
+      gistUrl: gistResult.html_url,
+      gistFilename,
+      gistPublic: gistResult.public,
+      gistUpdatedAt: new Date().toISOString(),
+    });
+    writeFileSync(firstFilePath, updatedContent, "utf-8");
+
+    ProgressIndicator.showStatus(
+      `✅ Gist ${existingGistId ? "updated" : "created"} successfully`,
+      "success"
+    );
+    console.log(`🔗 URL: ${gistResult.html_url}`);
   }
 
   /**
@@ -1382,27 +1517,7 @@ export class EnhancedCommands {
       throw new Error(`File not found: ${firstFilePath}`);
     }
 
-    // Extract title from first file if not provided
-    let documentTitle = options.title;
-    if (!documentTitle) {
-      const firstFileContent = readFileSync(firstFilePath, "utf-8");
-      const contentWithoutMetadata = MetadataManager.removeMetadata(firstFileContent);
-      const headingLine = contentWithoutMetadata
-        .split(/\r?\n/)
-        .find((line: string) => /^#{1,6}\s+.+/.test(line));
-
-      if (headingLine) {
-        const extractedTitle = headingLine.replace(/^#{1,6}\s+/, "").trim();
-        if (extractedTitle) {
-          documentTitle = extractedTitle;
-        }
-      }
-
-      if (!documentTitle) {
-        const metadata = MetadataManager.parseMetadata(firstFileContent);
-        documentTitle = metadata?.title || basename(firstFilePath, ".md");
-      }
-    }
+    const documentTitle = EnhancedCommands.resolveDocumentTitleFromMarkdown(firstFilePath, options.title);
 
     // Determine output path
     const defaultOutputName = filePaths.length > 1 ? "book.pdf" : `${basename(firstFilePath, ".md")}.pdf`;
@@ -1410,188 +1525,11 @@ export class EnhancedCommands {
 
     ProgressIndicator.showStatus(`📄 Generating PDF: ${documentTitle}`, "info");
     ProgressIndicator.showStatus(`   Output: ${outputPath}`, "info");
-
-    // ============================================
-    // BFS: Collect files following links (like EPUB)
-    // ============================================
-    const orderedFilesToProcess: string[] = [];
-    const visitedFiles = new Map<string, { level: number; order: number }>();
-    let bfsQueue: Array<{ filePath: string; level: number }> = [];
-
-    const depsEnabled = options.withDependencies !== false;
-
-    if (!depsEnabled) {
-      // Without dependencies: only explicitly passed files
-      filePaths.forEach((filePath: string, index: number) => {
-        const resolvedPath = resolve(filePath);
-        if (!existsSync(resolvedPath)) {
-          throw new Error(`File not found: ${resolvedPath}`);
-        }
-        if (!visitedFiles.has(resolvedPath)) {
-          visitedFiles.set(resolvedPath, { level: 0, order: index });
-          orderedFilesToProcess.push(resolvedPath);
-        }
-      });
-    } else {
-      // With dependencies: BFS through link tree
-      // 1. Initialize queue with root files (layer 0)
-      filePaths.forEach((filePath: string, index: number) => {
-        const resolvedPath = resolve(filePath);
-        if (!existsSync(resolvedPath)) {
-          throw new Error(`File not found: ${resolvedPath}`);
-        }
-        if (!visitedFiles.has(resolvedPath)) {
-          visitedFiles.set(resolvedPath, { level: 0, order: index });
-          bfsQueue.push({ filePath: resolvedPath, level: 0 });
-          orderedFilesToProcess.push(resolvedPath);
-        }
-      });
-
-      // 2. BFS: for each file, find local markdown links and add new files
-      let queueIndex = 0;
-      while (queueIndex < bfsQueue.length) {
-        const current = bfsQueue[queueIndex];
-        queueIndex++;
-
-        if (!current) continue;
-
-        const currentPath = current.filePath;
-        let content: string;
-        try {
-          content = readFileSync(currentPath, "utf-8");
-        } catch {
-          continue;
-        }
-
-        const contentWithoutMetadata = MetadataManager.removeMetadata(content);
-
-        // Find all local links
-        const localLinks = LinkResolver.findLocalLinks(
-          contentWithoutMetadata,
-          currentPath,
-        );
-
-        for (const link of localLinks) {
-          const resolvedWithAnchor = link.resolvedPath;
-          const anchorIndex = resolvedWithAnchor.indexOf("#");
-          const resolvedPath =
-            anchorIndex !== -1
-              ? resolvedWithAnchor.substring(0, anchorIndex)
-              : resolvedWithAnchor;
-
-          // Only process markdown files
-          if (
-            !resolvedPath.toLowerCase().endsWith(".md") &&
-            !resolvedPath.toLowerCase().endsWith(".markdown")
-          ) {
-            continue;
-          }
-
-          if (!existsSync(resolvedPath)) {
-            continue;
-          }
-
-          if (!visitedFiles.has(resolvedPath)) {
-            const level = current.level + 1;
-            visitedFiles.set(resolvedPath, {
-              level,
-              order: orderedFilesToProcess.length,
-            });
-            bfsQueue.push({ filePath: resolvedPath, level });
-            orderedFilesToProcess.push(resolvedPath);
-          }
-        }
-      }
-    }
-
-    ProgressIndicator.showStatus(`   Found ${orderedFilesToProcess.length} file(s) to process`, "info");
-
-    // ============================================
-    // Create anchor mapping for internal links
-    // ============================================
-    const fileToAnchorMap: Record<string, string> = {};
-    orderedFilesToProcess.forEach((filePath, index) => {
-      if (!filePath) return;
-      const abs = resolve(filePath);
-      // Create unique section anchor using relative path from first file's directory
-      // This ensures uniqueness for files with same name in different directories
-      const relativePath = abs.startsWith(fileDirectory) 
-        ? abs.substring(fileDirectory.length + 1) 
-        : basename(abs);
-      const pathWithoutExt = relativePath.replace(/\.(md|markdown)$/i, "");
-      // Convert path separators and non-alphanumeric chars to hyphens
-      const anchorId = `section-${pathWithoutExt.toLowerCase().replace(/[\/\\]/g, "-").replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-")}`;
-      fileToAnchorMap[abs] = anchorId;
+    const mergedDocument = EnhancedCommands.buildMergedMarkdownForSingleDocument(filePaths, {
+      withDependencies: options.withDependencies,
+      verbose: options.verbose,
     });
-
-    // ============================================
-    // Merge all files into single markdown with link rewriting
-    // ============================================
-    const mergedContentParts: string[] = [];
-    
-    for (let i = 0; i < orderedFilesToProcess.length; i++) {
-      const filePathItem = orderedFilesToProcess[i];
-      if (!filePathItem) continue;
-      
-      const absolutePath = resolve(filePathItem);
-      const anchorId = fileToAnchorMap[absolutePath];
-
-      if (options.verbose) {
-        ProgressIndicator.showStatus(`   Processing: ${basename(filePathItem)}`, "info");
-      }
-
-      let content: string;
-      try {
-        content = readFileSync(filePathItem, "utf-8");
-      } catch (error) {
-        ProgressIndicator.showStatus(`   Warning: Could not read ${basename(filePathItem)}`, "warning");
-        continue;
-      }
-
-      // Remove metadata
-      let processedContent = MetadataManager.removeMetadata(content);
-
-      // Rewrite local markdown links to anchors
-      const localLinks = LinkResolver.findLocalLinks(processedContent, filePathItem);
-      
-      // Sort by position descending to replace from end to start (preserve positions)
-      const sortedLinks = [...localLinks].sort((a, b) => b.startIndex - a.startIndex);
-      
-      for (const link of sortedLinks) {
-        const resolvedWithAnchor = link.resolvedPath;
-        const anchorIndex = resolvedWithAnchor.indexOf("#");
-        const resolvedPath = anchorIndex !== -1
-          ? resolvedWithAnchor.substring(0, anchorIndex)
-          : resolvedWithAnchor;
-        const originalAnchor = anchorIndex !== -1
-          ? resolvedWithAnchor.substring(anchorIndex)
-          : "";
-
-        // Check if this file is in our processed files
-        const targetAnchor = fileToAnchorMap[resolvedPath];
-        if (targetAnchor) {
-          // Rewrite link to internal anchor
-          const newHref = originalAnchor ? `#${targetAnchor}${originalAnchor.replace("#", "-")}` : `#${targetAnchor}`;
-          const newLink = `[${link.text}](${newHref})`;
-          processedContent = 
-            processedContent.substring(0, link.startIndex) + 
-            newLink + 
-            processedContent.substring(link.endIndex);
-        }
-      }
-
-      // Add section anchor at the beginning of content
-      const sectionHeader = `<a id="${anchorId}"></a>\n\n`;
-      
-      // Add horizontal rule between sections (except first)
-      if (i > 0) {
-        mergedContentParts.push("\n\n---\n\n");
-      }
-      
-      mergedContentParts.push(sectionHeader + processedContent);
-    }
-
-    const mergedMarkdown = mergedContentParts.join("");
+    const mergedMarkdown = mergedDocument.mergedMarkdown;
 
     // ============================================
     // Optionally save merged markdown file
@@ -1646,6 +1584,7 @@ export class EnhancedCommands {
     // Create PDF generator
     const pdfGenerator = new PdfGenerator({
       outputPath,
+      basePath: firstFilePath,
       width,
       pageHeight,
       orientation,
@@ -1655,6 +1594,7 @@ export class EnhancedCommands {
       lineHeight: lineHeight ?? 1.6,
       debug: options.debug || options.verbose,
       chromePath: options.chromePath,
+      noHeader: options.header === false,
     });
 
     // Generate PDF from merged content
@@ -1870,6 +1810,257 @@ export class EnhancedCommands {
     } catch (error) {
       throw new Error(`Cache validation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private static resolveDocumentTitleFromMarkdown(filePath: string, explicitTitle?: string): string {
+    if (explicitTitle?.trim()) {
+      return explicitTitle.trim();
+    }
+
+    const content = readFileSync(filePath, "utf-8");
+    const contentWithoutMetadata = MetadataManager.removeMetadata(content);
+    const headingLine = contentWithoutMetadata
+      .split(/\r?\n/)
+      .find((line: string) => /^#{1,6}\s+.+/.test(line));
+
+    if (headingLine) {
+      const extractedTitle = headingLine.replace(/^#{1,6}\s+/, "").trim();
+      if (extractedTitle) {
+        return extractedTitle;
+      }
+    }
+
+    const metadata = MetadataManager.parseMetadata(content);
+    return metadata?.title || basename(filePath, extname(filePath));
+  }
+
+  private static ensureMarkdownFilename(filename: string): string {
+    const trimmed = filename.trim();
+    if (!trimmed) {
+      return "book_pdf.md";
+    }
+
+    const lowered = trimmed.toLowerCase();
+    if (lowered.endsWith(".md") || lowered.endsWith(".markdown")) {
+      return trimmed;
+    }
+
+    return `${trimmed}.md`;
+  }
+
+  private static extractGistIdFromUrl(gistUrl?: string): string | undefined {
+    if (!gistUrl) {
+      return undefined;
+    }
+
+    try {
+      const parsed = new URL(gistUrl);
+      const pathParts = parsed.pathname.split("/").filter(Boolean);
+      const lastPart = pathParts[pathParts.length - 1];
+
+      if (!lastPart) {
+        return undefined;
+      }
+
+      return lastPart;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private static buildMergedMarkdownForSingleDocument(
+    inputFiles: string[],
+    options: {
+      withDependencies?: boolean;
+      verbose?: boolean;
+    } = {}
+  ): {
+    mergedMarkdown: string;
+    orderedFilesToProcess: string[];
+    firstFilePath: string;
+    fileDirectory: string;
+    inputFiles: string[];
+  } {
+    if (inputFiles.length === 0) {
+      throw new Error("At least one input file is required.");
+    }
+
+    const firstInputFile = inputFiles[0];
+    if (!firstInputFile) {
+      throw new Error("First input file is missing.");
+    }
+
+    const firstFilePath = resolve(firstInputFile);
+    const fileDirectory = dirname(firstFilePath);
+
+    if (!existsSync(firstFilePath)) {
+      throw new Error(`File not found: ${firstFilePath}`);
+    }
+
+    const orderedFilesToProcess: string[] = [];
+    const visitedFiles = new Map<string, { level: number; order: number }>();
+    const bfsQueue: Array<{ filePath: string; level: number }> = [];
+    const depsEnabled = options.withDependencies !== false;
+
+    if (!depsEnabled) {
+      inputFiles.forEach((filePath: string, index: number) => {
+        const resolvedPath = resolve(filePath);
+        if (!existsSync(resolvedPath)) {
+          throw new Error(`File not found: ${resolvedPath}`);
+        }
+        if (!visitedFiles.has(resolvedPath)) {
+          visitedFiles.set(resolvedPath, { level: 0, order: index });
+          orderedFilesToProcess.push(resolvedPath);
+        }
+      });
+    } else {
+      inputFiles.forEach((filePath: string, index: number) => {
+        const resolvedPath = resolve(filePath);
+        if (!existsSync(resolvedPath)) {
+          throw new Error(`File not found: ${resolvedPath}`);
+        }
+        if (!visitedFiles.has(resolvedPath)) {
+          visitedFiles.set(resolvedPath, { level: 0, order: index });
+          bfsQueue.push({ filePath: resolvedPath, level: 0 });
+          orderedFilesToProcess.push(resolvedPath);
+        }
+      });
+
+      let queueIndex = 0;
+      while (queueIndex < bfsQueue.length) {
+        const current = bfsQueue[queueIndex];
+        queueIndex++;
+
+        if (!current) {
+          continue;
+        }
+
+        const currentPath = current.filePath;
+        let content: string;
+        try {
+          content = readFileSync(currentPath, "utf-8");
+        } catch {
+          continue;
+        }
+
+        const contentWithoutMetadata = MetadataManager.removeMetadata(content);
+        const localLinks = LinkResolver.findLocalLinks(contentWithoutMetadata, currentPath);
+
+        for (const link of localLinks) {
+          const resolvedWithAnchor = link.resolvedPath;
+          const anchorIndex = resolvedWithAnchor.indexOf("#");
+          const resolvedPath =
+            anchorIndex !== -1
+              ? resolvedWithAnchor.substring(0, anchorIndex)
+              : resolvedWithAnchor;
+
+          if (
+            !resolvedPath.toLowerCase().endsWith(".md") &&
+            !resolvedPath.toLowerCase().endsWith(".markdown")
+          ) {
+            continue;
+          }
+
+          if (!existsSync(resolvedPath)) {
+            continue;
+          }
+
+          if (!visitedFiles.has(resolvedPath)) {
+            const level = current.level + 1;
+            visitedFiles.set(resolvedPath, {
+              level,
+              order: orderedFilesToProcess.length,
+            });
+            bfsQueue.push({ filePath: resolvedPath, level });
+            orderedFilesToProcess.push(resolvedPath);
+          }
+        }
+      }
+    }
+
+    ProgressIndicator.showStatus(`   Found ${orderedFilesToProcess.length} file(s) to process`, "info");
+
+    const fileToAnchorMap: Record<string, string> = {};
+    orderedFilesToProcess.forEach((filePath) => {
+      const absolutePath = resolve(filePath);
+      const relativePath = absolutePath.startsWith(fileDirectory)
+        ? absolutePath.substring(fileDirectory.length + 1)
+        : basename(absolutePath);
+      const pathWithoutExt = relativePath.replace(/\.(md|markdown)$/i, "");
+      const anchorId = `section-${pathWithoutExt
+        .toLowerCase()
+        .replace(/[/\\]/g, "-")
+        .replace(/[^a-z0-9-]/g, "-")
+        .replace(/-+/g, "-")}`;
+      fileToAnchorMap[absolutePath] = anchorId;
+    });
+
+    const mergedContentParts: string[] = [];
+    for (let i = 0; i < orderedFilesToProcess.length; i++) {
+      const filePathItem = orderedFilesToProcess[i];
+      if (!filePathItem) {
+        continue;
+      }
+
+      if (options.verbose) {
+        ProgressIndicator.showStatus(`   Processing: ${basename(filePathItem)}`, "info");
+      }
+
+      let content: string;
+      try {
+        content = readFileSync(filePathItem, "utf-8");
+      } catch {
+        ProgressIndicator.showStatus(`   Warning: Could not read ${basename(filePathItem)}`, "warning");
+        continue;
+      }
+
+      let processedContent = MetadataManager.removeMetadata(content);
+      const localLinks = LinkResolver.findLocalLinks(processedContent, filePathItem);
+      const sortedLinks = [...localLinks].sort((a, b) => b.startIndex - a.startIndex);
+
+      for (const link of sortedLinks) {
+        const resolvedWithAnchor = link.resolvedPath;
+        const anchorIndex = resolvedWithAnchor.indexOf("#");
+        const resolvedPath =
+          anchorIndex !== -1
+            ? resolvedWithAnchor.substring(0, anchorIndex)
+            : resolvedWithAnchor;
+        const originalAnchor = anchorIndex !== -1
+          ? resolvedWithAnchor.substring(anchorIndex)
+          : "";
+        const targetAnchor = fileToAnchorMap[resolvedPath];
+
+        if (targetAnchor) {
+          const newHref = originalAnchor
+            ? `#${targetAnchor}${originalAnchor.replace("#", "-")}`
+            : `#${targetAnchor}`;
+          const newLink = `[${link.text}](${newHref})`;
+
+          processedContent =
+            processedContent.substring(0, link.startIndex) +
+            newLink +
+            processedContent.substring(link.endIndex);
+        }
+      }
+
+      const absolutePath = resolve(filePathItem);
+      const anchorId = fileToAnchorMap[absolutePath] || `section-${i + 1}`;
+      const sectionHeader = `<a id="${anchorId}"></a>\n\n`;
+
+      if (i > 0) {
+        mergedContentParts.push("\n\n---\n\n");
+      }
+
+      mergedContentParts.push(sectionHeader + processedContent);
+    }
+
+    return {
+      mergedMarkdown: mergedContentParts.join(""),
+      orderedFilesToProcess,
+      firstFilePath,
+      fileDirectory,
+      inputFiles: [...inputFiles],
+    };
   }
 
   private static async processSinglePublish(filePath: string, options: any): Promise<void> {

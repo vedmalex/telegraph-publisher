@@ -55,6 +55,69 @@ invalidField: some invalid syntax ][
       expect(result?.editPath).toBe("Test-01-01");
       expect(result?.username).toBe("Test Author");
     });
+
+    it("should parse gist metadata fields", () => {
+      const content = `---
+title: "Test"
+gistId: "abc123"
+gistUrl: "https://gist.github.com/user/abc123"
+gistFilename: "book_pdf.md"
+gistPublic: false
+gistUpdatedAt: "2026-02-14T10:00:00.000Z"
+---
+
+# Test`;
+
+      const result = MetadataManager.parseMetadata(content);
+
+      expect(result?.gistId).toBe("abc123");
+      expect(result?.gistUrl).toBe("https://gist.github.com/user/abc123");
+      expect(result?.gistFilename).toBe("book_pdf.md");
+      expect(result?.gistPublic).toBe(false);
+      expect(result?.gistUpdatedAt).toBe("2026-02-14T10:00:00.000Z");
+    });
+  });
+
+  describe("upsertGistMetadata", () => {
+    it("should create front-matter when absent", () => {
+      const content = "# Test Article\n\nText";
+      const result = MetadataManager.upsertGistMetadata(content, {
+        gistId: "gist-1",
+        gistUrl: "https://gist.github.com/user/gist-1",
+        gistFilename: "test_pdf.md",
+        gistPublic: false,
+      });
+
+      expect(result).toContain('gistId: "gist-1"');
+      expect(result).toContain('gistUrl: "https://gist.github.com/user/gist-1"');
+      expect(result).toContain('gistFilename: "test_pdf.md"');
+      expect(result).toContain("gistPublic: false");
+      expect(result).toContain("# Test Article");
+    });
+
+    it("should update existing gist fields without duplicating keys", () => {
+      const content = `---
+title: "My Doc"
+gistId: "old-id"
+---
+
+# Test`;
+
+      const result = MetadataManager.upsertGistMetadata(content, {
+        gistId: "new-id",
+        gistUrl: "https://gist.github.com/user/new-id",
+        gistFilename: "new_pdf.md",
+        gistPublic: true,
+      });
+
+      const gistIdMatches = result.match(/^gistId:/gm) || [];
+
+      expect(gistIdMatches.length).toBe(1);
+      expect(result).toContain('title: "My Doc"');
+      expect(result).toContain('gistId: "new-id"');
+      expect(result).toContain("gistPublic: true");
+      expect(result).toContain("# Test");
+    });
   });
 
   describe("injectMetadata", () => {

@@ -1,12 +1,12 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
-import { dirname, join, basename, resolve, extname } from "node:path";
-import type { TelegraphNode } from "../telegraphPublisher";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { ContentProcessor } from "../content/ContentProcessor";
-import { MetadataManager } from "../metadata/MetadataManager";
-import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
-import { AnchorGenerator, type HeadingInfo } from "../utils/AnchorGenerator";
 import { DependencyManager } from "../dependencies/DependencyManager";
 import { LinkResolver } from "../links/LinkResolver";
+import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
+import { MetadataManager } from "../metadata/MetadataManager";
+import type { TelegraphNode } from "../telegraphPublisher";
+import { AnchorGenerator, type HeadingInfo } from "../utils/AnchorGenerator";
 import { PathResolver } from "../utils/PathResolver";
 
 /**
@@ -21,11 +21,11 @@ export class EpubGenerator {
 	private identifier: string;
 	private cover?: string;
 	private debug?: boolean;
-	private chapters: Array<{ 
-		title: string; 
-		content: TelegraphNode[]; 
-		id: string; 
-		sourcePath: string; 
+	private chapters: Array<{
+		title: string;
+		content: TelegraphNode[];
+		id: string;
+		sourcePath: string;
 		headings: HeadingInfo[];
 	}> = [];
 	private chapterPathMap: Map<string, string> = new Map();
@@ -259,7 +259,7 @@ export class EpubGenerator {
 		tocSeparators?: boolean;
 	} = {}): Promise<void> {
 		if (this.debug) console.log(`[EPUB DEBUG] Processing chapter file: ${filePath}`);
-		
+
 		// Reuse the same processing pipeline as Telegraph publication:
 		// - parse metadata
 		// - remove front-matter
@@ -269,7 +269,7 @@ export class EpubGenerator {
 
 		// Use the same title extraction strategy as publish:
 		// metadata.title → first heading/bold line → short first line → filename.
-		let chapterTitle = ContentProcessor.extractTitle(processedContent) || basename(filePath, ".md");
+		const chapterTitle = ContentProcessor.extractTitle(processedContent) || basename(filePath, ".md");
 
 		// Remove duplicate top-level heading that matches the chosen chapter title
 		// so that EPUB does not contain both <h1> and a converted markdown heading
@@ -347,7 +347,7 @@ export class EpubGenerator {
 					// Create a temporary markdown content to use findLocalLinks.
 					const tempContent = `[link](${originalHref})`;
 					const localLinks = LinkResolver.findLocalLinks(tempContent, sourcePath);
-					
+
 					if (localLinks.length > 0 && localLinks[0]) {
 						const resolvedWithAnchor = localLinks[0].resolvedPath;
 						const anchorIndex = resolvedWithAnchor.indexOf("#");
@@ -431,7 +431,7 @@ export class EpubGenerator {
 			.join(" ");
 
 		// Convert children to HTML
-		const childrenHtml = children
+		let childrenHtml = children
 			.map((child) => {
 				if (typeof child === "string") {
 					return this.escapeHtml(child);
@@ -439,6 +439,13 @@ export class EpubGenerator {
 				return this.nodeToHtml(child);
 			})
 			.join("");
+
+		// Wrap blockquote content in <code> for proper rendering in EPUB readers
+		// EPUB readers don't handle CSS font changes well, so structural wrapping
+		// ensures citations/Sanskrit text renders with the right font.
+		if (tag === "blockquote") {
+			childrenHtml = `<code>${childrenHtml}</code>`;
+		}
 
 		// Handle self-closing tags
 		const selfClosingTags = ["br", "hr", "img"];
@@ -698,6 +705,14 @@ blockquote {
 	margin: 1em 0;
 	padding-left: 1em;
 	color: #666;
+}
+
+/* Code wrapper inside blockquotes: inherit blockquote layout,
+   display as block so line breaks work properly in EPUB readers */
+blockquote code {
+	display: block;
+	background-color: transparent;
+	padding: 0;
 }`;
 	}
 
@@ -797,7 +812,7 @@ ${guideSection}
 
 				// Root of the current chapter's tree
 				const root: NavNode = { label: chapter.title, src: `${chapter.id}.html`, children: [] };
-				
+
 				// Stack stores the node and its effective level (Chapter is level 0)
 				const stack: { node: NavNode; level: number }[] = [{ node: root, level: 0 }];
 
@@ -807,7 +822,7 @@ ${guideSection}
 					// Logic:
 					// If heading.level > stack.top.level -> child of stack.top
 					// If heading.level <= stack.top.level -> sibling of stack.top (so parent is stack.pop)
-					
+
 					while (stack.length > 1 && stack[stack.length - 1].level >= heading.level) {
 						stack.pop();
 					}
@@ -834,11 +849,11 @@ ${indent}		<text>${this.escapeHtml(node.label)}</text>
 ${indent}	</navLabel>
 ${indent}	<content src="${node.src}"/>`;
 						playOrder++;
-						
+
 						if (node.children.length > 0) {
 							result += serializeNodes(node.children, indent + "\t");
 						}
-						
+
 						result += `\n${indent}</navPoint>`;
 					}
 					return result;

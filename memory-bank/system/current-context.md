@@ -1,13 +1,16 @@
-# Current Context - Memory Bank 3.0
+# Current Context
 
-**Current Date:** 2025-11-29
-**Active Task:** 2025-11-29_TASK-EPUB-NESTED-TOC
-**Current Phase:** PLAN
+Updated: 2026-06-24 07:15
 
-## Active Task Summary
-**EPUB Nested TOC**
+## Active Task
+- ID: TASK-002
+- Name: DST harness for telegraph-publisher
+- Profile: full-spec
+- Phase: CREATIVE
+- Tier: T4:standard  QA: MAX
 
-Goal: Update `EpubGenerator` to parse headings from chapter content and include them in the generated `toc.ncx` as nested navigation points.
+## Quick Resume
+- Next action: continue current phase
+- Progress: -
+- Blockers: none
 
-## Current Status
-- 🟡 PLAN phase in progress

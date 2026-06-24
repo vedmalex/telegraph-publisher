@@ -80,6 +80,7 @@ EnhancedCommands.addCacheValidateCommand(program);
 EnhancedCommands.addEpubCommand(program);
 EnhancedCommands.addSvgCommand(program);
 EnhancedCommands.addPdfCommand(program);
+EnhancedCommands.addGistCommand(program);
 
 // Keep original publish command as legacy support with enhanced workflow
 program
@@ -226,6 +227,9 @@ program
 
 📋 Check Status:
    telegraph-publisher status -f article.md
+
+🐙 Publish to GitHub Gist:
+   telegraph-publisher gist -f index.md --token GITHUB_TOKEN
 
 🔧 Legacy Commands (with enhanced workflow):
    telegraph-publisher publish-legacy -f article.md -a "Author"

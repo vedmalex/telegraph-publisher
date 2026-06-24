@@ -1,5 +1,6 @@
-import { writeFileSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import puppeteer from "puppeteer-core";
 import { ContentProcessor } from "../content/ContentProcessor";
 import { convertMarkdownToHtml } from "../markdownHtmlConverter";
@@ -20,6 +21,7 @@ export const PAPER_PRESETS: Record<string, { width: number; height: number }> = 
  */
 export interface PdfGeneratorOptions {
   outputPath: string;
+  basePath?: string;
   width?: number;
   pageHeight?: number;
   orientation?: "portrait" | "landscape";
@@ -29,6 +31,7 @@ export interface PdfGeneratorOptions {
   lineHeight?: number;
   debug?: boolean;
   chromePath?: string;
+  noHeader?: boolean;
 }
 
 /**
@@ -47,14 +50,18 @@ export class PdfGenerator {
   private orientation: "portrait" | "landscape";
   private lineHeight: number;
   private chromePath?: string;
+  private baseHref?: string;
   private debug: boolean;
+  private noHeader: boolean;
 
   constructor(options: PdfGeneratorOptions) {
     this.outputPath = resolve(options.outputPath);
     this.orientation = options.orientation || "portrait";
     this.lineHeight = options.lineHeight || 1.5;
     this.chromePath = options.chromePath;
+    this.baseHref = options.basePath ? pathToFileURL(resolve(options.basePath)).href : undefined;
     this.debug = options.debug || false;
+    this.noHeader = options.noHeader || false;
 
     let wMm = options.width || 57;
     let hMm = options.pageHeight || 105;
@@ -79,11 +86,14 @@ export class PdfGenerator {
 
   async generateFromFile(filePath: string): Promise<void> {
     const resolvedPath = resolve(filePath);
+    if (!this.baseHref) {
+      this.baseHref = pathToFileURL(resolvedPath).href;
+    }
     const processedContent = ContentProcessor.processFile(resolvedPath);
-    
-    let title = ContentProcessor.extractTitle(processedContent) || basename(filePath, ".md");
+
+    const title = ContentProcessor.extractTitle(processedContent) || basename(filePath, ".md");
     let markdownContent = processedContent.contentWithoutMetadata;
-    
+
     // Remove duplicate title if first line matches
     const lines = markdownContent.split('\n');
     const firstLine = lines[0];
@@ -111,53 +121,59 @@ export class PdfGenerator {
   private async generatePdfBuffer(title: string, markdownContent: string): Promise<Buffer> {
     // Convert markdown to HTML
     const htmlBody = convertMarkdownToHtml(markdownContent);
-    
+
     // Build complete HTML document with styles
     const html = this.buildHtmlDocument(title, htmlBody);
-    
-    if (this.debug) {
-      writeFileSync(this.outputPath.replace(/\.pdf$/, ".debug.html"), html, "utf-8");
-    }
-
-    // Find Chrome/Chromium path
-    const executablePath = this.chromePath || await this.findChromePath();
-    
-    if (!executablePath) {
-      throw new Error(
-        "Chrome/Chromium not found. Please install Chrome or specify path with --chrome-path option.\n" +
-        "On macOS: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome\n" +
-        "On Linux: /usr/bin/google-chrome or /usr/bin/chromium-browser"
-      );
-    }
-
-    // Launch browser and generate PDF
-    const browser = await puppeteer.launch({
-      executablePath,
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    const debugHtmlPath = this.outputPath.replace(/\.pdf$/, ".debug.html");
+    const tempHtmlPath = this.outputPath.replace(/\.pdf$/, ".tmp-render.html");
+    const renderHtmlPath = this.debug ? debugHtmlPath : tempHtmlPath;
+    writeFileSync(renderHtmlPath, html, "utf-8");
 
     try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: "networkidle0" });
-      
-      // Generate PDF with proper page settings
-      const pdfBuffer = await page.pdf({
-        width: `${this.widthMm}mm`,
-        height: `${this.pageHeightMm}mm`,
-        margin: {
-          top: `${this.marginMm}mm`,
-          bottom: `${this.marginMm}mm`,
-          left: `${this.marginMm}mm`,
-          right: `${this.marginMm}mm`,
-        },
-        printBackground: true,
-        preferCSSPageSize: false,
+      // Find Chrome/Chromium path
+      const executablePath = this.chromePath || await this.findChromePath();
+
+      if (!executablePath) {
+        throw new Error(
+          "Chrome/Chromium not found. Please install Chrome or specify path with --chrome-path option.\n" +
+          "On macOS: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome\n" +
+          "On Linux: /usr/bin/google-chrome or /usr/bin/chromium-browser"
+        );
+      }
+
+      // Launch browser and generate PDF
+      const browser = await puppeteer.launch({
+        executablePath,
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
       });
 
-      return Buffer.from(pdfBuffer);
+      try {
+        const page = await browser.newPage();
+        await page.goto(pathToFileURL(renderHtmlPath).href, { waitUntil: "networkidle0" });
+
+        // Generate PDF with proper page settings
+        const pdfBuffer = await page.pdf({
+          width: `${this.widthMm}mm`,
+          height: `${this.pageHeightMm}mm`,
+          margin: {
+            top: `${this.marginMm}mm`,
+            bottom: `${this.marginMm}mm`,
+            left: `${this.marginMm}mm`,
+            right: `${this.marginMm}mm`,
+          },
+          printBackground: true,
+          preferCSSPageSize: false,
+        });
+
+        return Buffer.from(pdfBuffer);
+      } finally {
+        await browser.close();
+      }
     } finally {
-      await browser.close();
+      if (!this.debug && existsSync(tempHtmlPath)) {
+        unlinkSync(tempHtmlPath);
+      }
     }
   }
 
@@ -166,18 +182,19 @@ export class PdfGenerator {
 <html>
 <head>
   <meta charset="utf-8">
+  ${this.baseHref ? `<base href="${this.escapeHtml(this.baseHref)}">` : ""}
   <style>
     @page {
       size: ${this.widthMm}mm ${this.pageHeightMm}mm;
       margin: ${this.marginMm}mm;
     }
-    
+
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
     }
-    
+
     html, body {
       background: white;
       font-family: "Georgia", "DejaVu Serif", "Liberation Serif", serif;
@@ -186,7 +203,7 @@ export class PdfGenerator {
       color: black;
       -webkit-font-smoothing: antialiased;
     }
-    
+
     h1, h2, h3, h4, h5, h6 {
       font-weight: bold;
       margin-top: 0.5em;
@@ -194,12 +211,12 @@ export class PdfGenerator {
       page-break-after: avoid;
       page-break-inside: avoid;
     }
-    
+
     h1 { font-size: 1.4em; }
     h2 { font-size: 1.25em; }
     h3 { font-size: 1.1em; }
     h4 { font-size: 1em; }
-    
+
     p {
       margin-bottom: 0.6em;
       text-align: justify;
@@ -211,18 +228,18 @@ export class PdfGenerator {
       orphans: 3;
       widows: 3;
     }
-    
+
     ul, ol {
       margin-left: 1.5em;
       margin-bottom: 0.5em;
       page-break-inside: avoid;
     }
-    
+
     li {
       margin-bottom: 0.2em;
       page-break-inside: avoid;
     }
-    
+
     code {
       font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
       font-style: italic;
@@ -230,14 +247,14 @@ export class PdfGenerator {
       border-radius: 2px;
       padding: 0 2px;
     }
-    
+
     /* Remove border from code inside pre (block has its own border) */
     pre code {
       border: none;
       padding: 0;
       border-radius: 0;
     }
-    
+
     pre {
       font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
       font-style: italic;
@@ -249,7 +266,7 @@ export class PdfGenerator {
       word-wrap: break-word;
       page-break-inside: avoid;
     }
-    
+
     blockquote {
       border-left: 2px solid black;
       padding-left: 10px;
@@ -257,38 +274,57 @@ export class PdfGenerator {
       margin-bottom: 0.5em;
       page-break-inside: avoid;
     }
-    
+
+    /* Code wrapper inside blockquotes */
+    blockquote code {
+      display: block;
+      border: none;
+      padding: 0;
+    }
+
     hr {
       border: none;
       border-bottom: 1px solid black;
       margin: 0.5em 0;
     }
-    
+
     strong, b {
       font-weight: bold;
     }
-    
+
     em, i {
       font-style: italic;
     }
-    
+
+    img {
+      display: block;
+      max-width: 100%;
+      max-height: ${this.pageHeightMm - this.marginMm * 2}mm;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      margin: 0.4em auto 0.8em;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
     table {
       border-collapse: collapse;
       margin-bottom: 0.5em;
       width: 100%;
       page-break-inside: avoid;
     }
-    
+
     th, td {
       border: 1px solid black;
       padding: 4px;
       text-align: left;
     }
-    
+
     th {
       font-weight: bold;
     }
-    
+
     .title {
       font-size: 1.4em;
       font-weight: bold;
@@ -297,7 +333,7 @@ export class PdfGenerator {
   </style>
 </head>
 <body>
-  <div class="title">${this.escapeHtml(title)}</div>
+  ${this.noHeader ? '' : `<div class="title">${this.escapeHtml(title)}</div>`}
   ${bodyHtml}
 </body>
 </html>`;
@@ -336,4 +372,3 @@ export class PdfGenerator {
       .replace(/'/g, "&#39;");
   }
 }
-

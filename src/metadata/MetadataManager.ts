@@ -115,6 +115,21 @@ export class MetadataManager {
         case 'contentHash':
           metadata.contentHash = value;
           break;
+        case 'gistId':
+          metadata.gistId = value;
+          break;
+        case 'gistUrl':
+          metadata.gistUrl = value;
+          break;
+        case 'gistFilename':
+          metadata.gistFilename = value;
+          break;
+        case 'gistPublic':
+          metadata.gistPublic = value.toLowerCase() === 'true';
+          break;
+        case 'gistUpdatedAt':
+          metadata.gistUpdatedAt = value;
+          break;
         case 'accessToken':
           metadata.accessToken = value;
           break;
@@ -227,6 +242,70 @@ export class MetadataManager {
     }
 
     return remainingLines.join('\n');
+  }
+
+  /**
+   * Upsert gist metadata in YAML front-matter while preserving existing fields.
+   * Creates front-matter when it does not exist.
+   */
+  static upsertGistMetadata(content: string, gistData: {
+    gistId: string;
+    gistUrl: string;
+    gistFilename: string;
+    gistPublic: boolean;
+    gistUpdatedAt?: string;
+  }): string {
+    const lines = content.split(/\r?\n/);
+    const updatedAt = gistData.gistUpdatedAt ?? new Date().toISOString();
+
+    const hasFrontMatterStart = lines[0]?.trim() === MetadataManager.FRONTMATTER_DELIMITER;
+    let closingIndex = -1;
+
+    if (hasFrontMatterStart) {
+      for (let i = 1; i < lines.length; i++) {
+        if (lines[i]?.trim() === MetadataManager.FRONTMATTER_DELIMITER) {
+          closingIndex = i;
+          break;
+        }
+      }
+    }
+
+    const hasValidYaml =
+      closingIndex !== -1 &&
+      lines
+        .slice(1, closingIndex)
+        .some((line) => {
+          const trimmed = line.trim();
+          return trimmed.length > 0 && !trimmed.startsWith("#") && trimmed.includes(":");
+        });
+
+    const gistIdLine = `gistId: ${MetadataManager.quoteYaml(gistData.gistId)}`;
+    const gistUrlLine = `gistUrl: ${MetadataManager.quoteYaml(gistData.gistUrl)}`;
+    const gistFilenameLine = `gistFilename: ${MetadataManager.quoteYaml(gistData.gistFilename)}`;
+    const gistPublicLine = `gistPublic: ${gistData.gistPublic ? "true" : "false"}`;
+    const gistUpdatedAtLine = `gistUpdatedAt: ${MetadataManager.quoteYaml(updatedAt)}`;
+
+    if (hasFrontMatterStart && hasValidYaml && closingIndex !== -1) {
+      const frontMatterLines = lines.slice(1, closingIndex);
+      const bodyLines = lines.slice(closingIndex + 1);
+
+      MetadataManager.upsertYamlKey(frontMatterLines, "gistId", gistIdLine);
+      MetadataManager.upsertYamlKey(frontMatterLines, "gistUrl", gistUrlLine);
+      MetadataManager.upsertYamlKey(frontMatterLines, "gistFilename", gistFilenameLine);
+      MetadataManager.upsertYamlKey(frontMatterLines, "gistPublic", gistPublicLine);
+      MetadataManager.upsertYamlKey(frontMatterLines, "gistUpdatedAt", gistUpdatedAtLine);
+
+      const body = bodyLines.join("\n");
+      return `${MetadataManager.FRONTMATTER_DELIMITER}\n${frontMatterLines.join("\n")}\n${MetadataManager.FRONTMATTER_DELIMITER}${body.length > 0 ? `\n${body}` : ""}`;
+    }
+
+    const gistLines = [gistIdLine, gistUrlLine, gistFilenameLine, gistPublicLine, gistUpdatedAtLine];
+
+    if (content.trim().length === 0) {
+      return `${MetadataManager.FRONTMATTER_DELIMITER}\n${gistLines.join("\n")}\n${MetadataManager.FRONTMATTER_DELIMITER}`;
+    }
+
+    return `${MetadataManager.FRONTMATTER_DELIMITER}\n${gistLines.join("\n")}\n${MetadataManager.FRONTMATTER_DELIMITER}\n\n${content}`;
   }
 
   /**
@@ -469,6 +548,26 @@ export class MetadataManager {
       lines.push(`contentHash: "${metadata.contentHash}"`);
     }
 
+    if (metadata.gistId) {
+      lines.push(`gistId: "${metadata.gistId}"`);
+    }
+
+    if (metadata.gistUrl) {
+      lines.push(`gistUrl: "${metadata.gistUrl}"`);
+    }
+
+    if (metadata.gistFilename) {
+      lines.push(`gistFilename: "${metadata.gistFilename}"`);
+    }
+
+    if (metadata.gistPublic !== undefined) {
+      lines.push(`gistPublic: ${metadata.gistPublic ? "true" : "false"}`);
+    }
+
+    if (metadata.gistUpdatedAt) {
+      lines.push(`gistUpdatedAt: "${metadata.gistUpdatedAt}"`);
+    }
+
     if (metadata.accessToken) {
       lines.push(`accessToken: "${metadata.accessToken}"`);
     }
@@ -496,6 +595,21 @@ export class MetadataManager {
     }
 
     return lines.join('\n');
+  }
+
+  private static quoteYaml(value: string): string {
+    return `"${value.replace(/"/g, '\\"')}"`;
+  }
+
+  private static upsertYamlKey(lines: string[], key: string, fullLine: string): void {
+    const keyPrefix = `${key}:`;
+    const index = lines.findIndex((line) => line.trim().startsWith(keyPrefix));
+    if (index !== -1) {
+      lines[index] = fullLine;
+      return;
+    }
+
+    lines.push(fullLine);
   }
 
   /**
