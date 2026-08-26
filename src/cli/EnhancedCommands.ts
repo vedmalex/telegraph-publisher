@@ -1264,11 +1264,16 @@ export class EnhancedCommands {
       )
       .option(
         "--chapter-toc <pos>",
-        "In-text list of a chapter's own headings: start | end | none | auto. " +
-        "auto (default) adds it at the start when --toc-depth hides those headings " +
-        "from the reader's navigation, and omits it otherwise"
+        "Navigation inside a chapter: none | blocks | full | auto. " +
+        "blocks is a short row of jump points (1 · 20 · 40) for long chapters; " +
+        "full lists every heading; auto (default) uses blocks when --toc-depth " +
+        "hides those headings from the reader's navigation, and adds nothing otherwise"
       )
-      .option("--chapter-toc-depth <n>", "Deepest heading level in the chapter's in-text list (default: no limit)")
+      .option("--chapter-toc-depth <n>", "Deepest heading level in the chapter's in-text list (full mode only)")
+      .option("--chapter-toc-position <p>", "Where chapter navigation goes: start | end | both (default: both for blocks, start for full)")
+      .option("--nav-threshold <n>", "Fewest sections in a chapter before a jump row appears (default: 30)")
+      .option("--nav-max-items <n>", "Most jump points in a row; drives the step (default: 12)")
+      .option("--nav-caption <s>", "Caption of the jump row (default: 'К тексту:')")
       .option(
         "--book-toc <pos>",
         "Add a contents page for the whole book: start | end. Off by default, " +
@@ -1308,28 +1313,31 @@ export class EnhancedCommands {
    * the only way to reach them, so it is added by default. When navigation
    * already lists everything, the in-text list would only repeat it.
    */
-  private static resolveChapterToc(options: any): {
-    inlineToC: boolean;
-    tocPosition?: "start" | "end";
-    tocDepth?: number;
-    tocNested?: boolean;
-  } {
+  private static resolveChapterToc(options: any): Record<string, unknown> {
     const depthLimited = Boolean(options.tocDepth);
     const requested: string = options.chapterToc
-      ?? (options.inlineToc === true ? "start" : options.inlineToc === false ? "none" : "auto");
+      ?? (options.inlineToc === true ? "full" : options.inlineToc === false ? "none" : "auto");
 
-    const position = requested === "auto"
-      ? (depthLimited ? "start" : "none")
-      : requested;
-
-    if (position === "none") {
+    // auto ties the two together: while --toc-depth keeps a chapter's sections
+    // out of the reader's navigation, something inside the chapter has to lead
+    // to them, and a row of jump points does it without listing all of them.
+    const mode = requested === "auto" ? (depthLimited ? "blocks" : "none") : requested;
+    if (mode === "none") {
       return { inlineToC: false };
     }
+
+    const position = options.chapterTocPosition
+      ?? (mode === "blocks" ? "both" : "start");
+
     return {
       inlineToC: true,
-      tocPosition: position === "end" ? "end" : "start",
-      tocDepth: options.chapterTocDepth ? Number.parseInt(options.chapterTocDepth, 10) : undefined,
+      tocMode: mode === "blocks" ? "blocks" : "full",
+      tocPosition: position,
       tocNested: true,
+      tocDepth: options.chapterTocDepth ? Number.parseInt(options.chapterTocDepth, 10) : undefined,
+      navCaption: options.navCaption,
+      navThreshold: options.navThreshold ? Number.parseInt(options.navThreshold, 10) : undefined,
+      navMaxItems: options.navMaxItems ? Number.parseInt(options.navMaxItems, 10) : undefined,
     };
   }
 

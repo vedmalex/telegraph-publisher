@@ -1,5 +1,6 @@
 import type { TelegraphNode } from "./telegraphPublisher"; // Import TelegraphNode interface
 import { AnchorGenerator, type HeadingInfo } from "./utils/AnchorGenerator"; // Import unified anchor generator
+import { buildSectionNav, renderSectionNavNodes } from "./navigation/sectionNav";
 
 /**
  * Validates cleaned content to ensure it does not contain unsupported syntax, like raw HTML tags.
@@ -486,11 +487,19 @@ export function convertMarkdownToTelegraphNodes(
 		tocDepth?: number;
 		/** Render the in-text table of contents as a nested list. */
 		tocNested?: boolean;
-		/** Where the in-text table of contents goes: before the text or after it. */
-		tocPosition?: "start" | "end";
+		/** Where the in-text table of contents goes: before the text, after it, or both. */
+		tocPosition?: "start" | "end" | "both";
+		/** Shape of the in-text contents: the full list, or a row of jump points. */
+		tocMode?: "full" | "blocks";
+		/** Caption of the jump row. */
+		navCaption?: string;
+		/** Fewest sections before a jump row is worth its place. */
+		navThreshold?: number;
+		/** Most jump points a row may hold. */
+		navMaxItems?: number;
 	} = {},
 ): TelegraphNode[] {
-	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph", tocDepth = Number.POSITIVE_INFINITY, tocNested = false, tocPosition = "start" } = options;
+	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph", tocDepth = Number.POSITIVE_INFINITY, tocNested = false, tocPosition = "start", tocMode = "full", navCaption = "К тексту:", navThreshold, navMaxItems } = options;
 
 	markdown = stripHtmlComments(markdown);
 
@@ -531,6 +540,26 @@ export function convertMarkdownToTelegraphNodes(
 									process.env.USE_UNIFIED_ANCHORS === 'true' || 
 									process.env.NODE_ENV !== 'production';
 		
+		if (tocMode === "blocks") {
+			// A chapter of hundreds of numbered sections needs a way in, not a
+			// list of everything it holds: such a list runs longer than the
+			// chapter itself and buries the chapters around it.
+			const items = buildSectionNav(AnchorGenerator.parseHeadingsFromContent(markdown), {
+				threshold: navThreshold,
+				maxItems: navMaxItems,
+			});
+			if (items) {
+				if (tocPosition !== "end") {
+					nodes.push(...renderSectionNavNodes(items, navCaption, "start"));
+				}
+				if (tocPosition === "end" || tocPosition === "both") {
+					// Repeated at the foot of the chapter: having read to the
+					// bottom, the reader should not have to climb back up to move on.
+					tocNodes.push(...renderSectionNavNodes(items, navCaption, "end"));
+				}
+			}
+		} else {
+
 		const tocAside = USE_UNIFIED_ANCHORS 
 			? generateTocAsideWithAnchorGenerator(markdown, tocTitle, tocDepth, tocNested)
 			: generateTocAside(markdown, tocTitle);
@@ -559,9 +588,10 @@ export function convertMarkdownToTelegraphNodes(
 		// A table of contents placed at the end suits a long list: the reader
 		// meets the text first and finds the index where an index belongs in a
 		// printed book. Placed at the start it is a map of what follows.
-		if (tocPosition === "start") {
+		if (tocPosition !== "end") {
 			nodes.push(...tocNodes);
 			tocNodes.length = 0;
+		}
 		}
 	}
 	

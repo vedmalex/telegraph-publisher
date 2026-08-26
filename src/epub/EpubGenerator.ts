@@ -383,9 +383,13 @@ export class EpubGenerator {
 			inlineToC?: boolean;
 			tocTitle?: string;
 			tocSeparators?: boolean;
-			tocPosition?: "start" | "end";
+			tocPosition?: "start" | "end" | "both";
 			tocDepth?: number;
 			tocNested?: boolean;
+			tocMode?: "full" | "blocks";
+			navCaption?: string;
+			navThreshold?: number;
+			navMaxItems?: number;
 		},
 		isFirstOfFile: boolean,
 		headingAnchor?: string,
@@ -406,6 +410,10 @@ export class EpubGenerator {
 			tocPosition: options.tocPosition,
 			tocDepth: options.tocDepth,
 			tocNested: options.tocNested,
+			tocMode: options.tocMode,
+			navCaption: options.navCaption,
+			navThreshold: options.navThreshold,
+			navMaxItems: options.navMaxItems,
 			target: "epub",
 		});
 
@@ -711,7 +719,27 @@ export class EpubGenerator {
 	 * Generate CSS styles
 	 */
 	private generateCss(): string {
-		return `/* ===================== */
+		return `/* Строка переходов внутри длинной главы.
+   Набрана мельче основного текста и приглушена: это служебная строка, а не
+   часть произведения. Отступы вокруг цифр делают цель достаточно крупной,
+   чтобы по ней можно было попасть пальцем и на электронных чернилах. */
+.section-nav {
+	font-size: 0.85em;
+	color: #555;
+	text-align: center;
+	margin: 0.6em 0 1.4em;
+	line-height: 2;
+}
+.section-nav-end {
+	margin: 2em 0 0.6em;
+}
+.section-nav a {
+	display: inline-block;
+	padding: 0.2em 0.55em;
+	text-decoration: none;
+}
+
+/* ===================== */
 /* Font Family Settings  */
 /* ===================== */
 
