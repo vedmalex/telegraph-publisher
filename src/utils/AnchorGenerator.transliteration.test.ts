@@ -40,6 +40,14 @@ describe("AnchorGenerator.transliterateToAscii", () => {
 		expect(t("Текст-1–2")).not.toBe(t("Текст-12"));
 	});
 
+	test("punctuation becomes a hyphen instead of vanishing (library collisions)", () => {
+		// Real pairs found across the 115-book library that merged when
+		// punctuation was dropped:
+		expect(t("«Шри-Бхаджана-дарпана»")).not.toBe(t("Шри-Бхаджана-дарпана"));
+		expect(t("Текст-1*")).not.toBe(t("Текст-1"));
+		expect(t("Adhyāya-4:-(Глава-4)")).not.toBe(t("Adhyāya-4-(Глава-4)"));
+	});
+
 	test("is deterministic and idempotent", () => {
 		for (const s of ["Текст-1", "Шрӣла-Прабхупа̄да", "> Глава", "ā-ī"]) {
 			const once = t(s);
@@ -53,6 +61,7 @@ describe("AnchorGenerator.transliterateToAscii", () => {
 		expect(t("देवनागरी")).toBe("section"); // no ASCII equivalent at all
 		expect(t("开始")).toBe("section");
 		expect(t("1.-Глава")).toBe("id-1.-Glava"); // XML ID cannot start with a digit
+		expect(t("(скобки)")).toBe("id--skobki-"); // '(' → '-', then XML-ID start guard
 		const anchors = ["Текст-1", "1-Глава", "देव", "> Пять", ">> Шесть"];
 		for (const a of anchors) {
 			expect(t(a)).toMatch(/^[A-Za-z_][A-Za-z0-9._-]*$/);

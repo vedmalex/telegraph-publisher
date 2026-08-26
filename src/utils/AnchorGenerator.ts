@@ -217,8 +217,13 @@ export class AnchorGenerator {
     //    than vanish: «Текст 1–2» and «Текст 12» must not merge into one id.
     out = out.replace(/[‐-―− ]/g, '-');
 
-    // 6b. Keep only characters valid both in an XML ID and a raw URI fragment.
-    out = out.replace(/[^A-Za-z0-9._-]/g, '');
+    // 6b. Keep only characters valid both in an XML ID and a raw URI
+    //    fragment. Letters with no ASCII equivalent (Devanagari, CJK) are
+    //    dropped, but punctuation becomes a hyphen rather than vanish —
+    //    dropping it merged distinct anchors («Шри» vs Шри, Текст-1 vs
+    //    Текст-1*, a colon vs a parenthesis) into one id.
+    out = out.replace(/[^\x00-\x7F]/gu, (ch) => /[\p{L}\p{M}]/u.test(ch) ? '' : '-');
+    out = out.replace(/[^A-Za-z0-9._-]/g, '-');
 
     // 7. Never empty, always a valid XML ID start (letter or underscore).
     if (out.length === 0) return 'section';
