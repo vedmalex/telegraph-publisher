@@ -1262,6 +1262,11 @@ export class EnhancedCommands {
         "Deepest heading level shown in the reader's navigation (default: no limit). " +
         "Use 2 for books where every verse is a heading, so navigation lists chapters only"
       )
+      .option(
+        "--split-at <n>",
+        "Split each file into separate xhtml documents at headings of this level " +
+        "or shallower (e.g. 2). Keeps documents small enough for readers to load"
+      )
       .option("--language <lang>", "Book language code (default: 'ru')")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
@@ -1347,6 +1352,7 @@ export class EnhancedCommands {
       cover: options.cover,
       debug: options.debug,
       tocDepth: options.tocDepth ? Number.parseInt(options.tocDepth, 10) : undefined,
+      splitAt: options.splitAt ? Number.parseInt(options.splitAt, 10) : undefined,
     });
 
     // Process files with dependencies.

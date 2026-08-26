@@ -22,12 +22,14 @@ export class EpubGenerator {
 	private cover?: string;
 	private debug?: boolean;
 	private tocDepth: number;
+	private splitAt?: number;
 	private chapters: Array<{
 		title: string;
 		content: TelegraphNode[];
 		id: string;
 		sourcePath: string;
 		headings: HeadingInfo[];
+		headingAnchor?: string;
 	}> = [];
 	private chapterPathMap: Map<string, string> = new Map();
 
@@ -43,6 +45,10 @@ export class EpubGenerator {
 		 * Unset means every heading, which in a volume where each verse is a
 		 * heading produces tens of thousands of navigation points. */
 		tocDepth?: number;
+		/** Split each input file into separate xhtml documents at headings of this
+		 * level or shallower. Unset keeps one document per file, which for a book
+		 * where every verse is a heading means a single multi-megabyte document. */
+		splitAt?: number;
 	}) {
 		this.outputPath = resolve(options.outputPath);
 		this.title = options.title;
@@ -52,6 +58,7 @@ export class EpubGenerator {
 		this.cover = options.cover ? resolve(options.cover) : undefined;
 		this.debug = options.debug;
 		this.tocDepth = options.tocDepth ?? Number.POSITIVE_INFINITY;
+		this.splitAt = options.splitAt;
 	}
 
 	/**
@@ -285,6 +292,87 @@ export class EpubGenerator {
 			chapterTitle
 		);
 
+		// A book may be split into several xhtml documents. Readers load a whole
+		// document at once, so a single 16 MB file stalls them; the EPUB guidance
+		// is to stay near 300 KB per document.
+		if (this.splitAt) {
+			const parts = EpubGenerator.splitMarkdownByHeading(contentWithoutDuplicateTitle, this.splitAt);
+			if (parts.length > 1) {
+				for (const [index, part] of parts.entries()) {
+					const partTitle = part.title || (index === 0 ? chapterTitle : `${chapterTitle} — ${index + 1}`);
+					// Give the document's heading the anchor the original heading had,
+					// so links written against it keep working after the split.
+					const anchor = part.headingLine
+						? AnchorGenerator.generateAnchor(AnchorGenerator.extractHeadingInfo(
+							part.headingLine.match(/^(#{1,6})\s+(.*)$/)!))
+						: undefined;
+					await this.addChapterPart(part.content, partTitle, filePath, options, index === 0, anchor);
+				}
+				return;
+			}
+		}
+
+		await this.addChapterPart(contentWithoutDuplicateTitle, chapterTitle, filePath, options, true);
+	}
+
+	/**
+	 * Splits markdown at headings of the given level or shallower.
+	 *
+	 * Anything before the first such heading stays with the opening part, so a
+	 * preface or an epigraph is not lost.
+	 */
+	static splitMarkdownByHeading(markdown: string, level: number): Array<{ title: string; headingLine: string; content: string }> {
+		const lines = markdown.split(/\r?\n/);
+		const parts: Array<{ title: string; headingLine: string; content: string[] }> = [];
+		let current: { title: string; headingLine: string; content: string[] } | null = null;
+		let inFence = false;
+
+		for (const line of lines) {
+			if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+
+			const heading = inFence ? null : line.match(/^(#{1,6})\s+(.*)$/);
+			if (heading && heading[1]!.length <= level) {
+				if (current) parts.push(current);
+				// The heading line is kept aside, not in the body: it becomes the
+				// document's own <h1>, and leaving it in would print it twice.
+				current = { title: heading[2]!.trim(), headingLine: line, content: [] };
+				continue;
+			}
+
+			if (!current) current = { title: "", headingLine: "", content: [] };
+			current.content.push(line);
+		}
+		if (current) parts.push(current);
+
+		return parts
+			.filter(part => part.title !== "" || part.content.join("\n").trim() !== "")
+			.map(part => ({
+				title: part.title,
+				headingLine: part.headingLine,
+				content: part.content.join("\n"),
+			}));
+	}
+
+	/**
+	 * Converts one piece of markdown into a chapter document.
+	 *
+	 * `isFirstOfFile` marks the piece that other files' links should point at:
+	 * a link to the source file must land on its opening document, not on
+	 * whichever piece happens to be registered last.
+	 */
+	private async addChapterPart(
+		contentWithoutDuplicateTitle: string,
+		chapterTitle: string,
+		filePath: string,
+		options: {
+			generateToc?: boolean;
+			inlineToC?: boolean;
+			tocTitle?: string;
+			tocSeparators?: boolean;
+		},
+		isFirstOfFile: boolean,
+		headingAnchor?: string,
+	): Promise<void> {
 		// Extract headings using AnchorGenerator for TOC generation
 		// We use contentWithoutDuplicateTitle to avoid duplicating the chapter title in TOC
 		const headings = AnchorGenerator.parseHeadingsFromContent(contentWithoutDuplicateTitle);
@@ -319,18 +407,23 @@ export class EpubGenerator {
 			}
 		}
 
-		// Resolve local links (same as Telegraph publication)
-		const linkResolver = new LinkResolver();
-		const resolvedNodes = await this.resolveLinksInNodes(nodes, filePath, linkResolver);
 
 		const chapterId = `chapter-${this.chapters.length + 1}`;
 
+		// Links from other files must land on the document a file starts with.
+		// The mapping cannot be computed up front once splitting is on: how many
+		// documents a file becomes is only known after it has been split.
+		if (isFirstOfFile) {
+			this.chapterPathMap.set(resolve(filePath), `${chapterId}.html`);
+		}
+
 		this.chapters.push({
 			title: chapterTitle,
-			content: resolvedNodes,
+			content: nodes,
 			id: chapterId,
 			sourcePath: resolve(filePath),
 			headings: headings,
+			headingAnchor,
 		});
 	}
 
@@ -478,6 +571,14 @@ export class EpubGenerator {
 	 * Generate EPUB file
 	 */
 	async generate(): Promise<void> {
+		// Links are resolved here, not while chapters are being added: a link may
+		// point at a file that has not been processed yet, and with splitting on
+		// its document name is not known until then.
+		const linkResolver = new LinkResolver();
+		for (const chapter of this.chapters) {
+			chapter.content = await this.resolveLinksInNodes(chapter.content, chapter.sourcePath, linkResolver);
+		}
+
 		const epubDir = join(dirname(this.outputPath), `.epub-temp-${Date.now()}`);
 		mkdirSync(epubDir, { recursive: true });
 
@@ -559,7 +660,7 @@ export class EpubGenerator {
 	/**
 	 * Generate HTML for a chapter
 	 */
-	private generateChapterHtml(chapter: { title: string; content: TelegraphNode[]; id: string }): string {
+	private generateChapterHtml(chapter: { title: string; content: TelegraphNode[]; id: string; headingAnchor?: string }): string {
 		const contentHtml = chapter.content.map((node) => this.nodeToHtml(node)).join("\n");
 
 		return `<?xml version="1.0" encoding="UTF-8"?>
@@ -571,7 +672,7 @@ export class EpubGenerator {
 	<link rel="stylesheet" type="text/css" href="style.css"/>
 </head>
 <body>
-	<h1 id="${chapter.id}">${this.escapeHtml(chapter.title)}</h1>
+	<h1 id="${chapter.headingAnchor ?? chapter.id}">${this.escapeHtml(chapter.title)}</h1>
 	${contentHtml}
 </body>
 </html>`;
