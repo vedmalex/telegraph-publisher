@@ -661,9 +661,10 @@ export class EpubGenerator {
 			const opfContent = this.generateOpf(htmlFiles);
 			writeFileSync(join(oebpsDir, "content.opf"), opfContent, "utf-8");
 
-			// 6. Generate toc.ncx (navigation)
+			// 6. Generate navigation: nav.xhtml for EPUB 3, toc.ncx for older readers
 			const ncxContent = this.generateNcx();
 			writeFileSync(join(oebpsDir, "toc.ncx"), ncxContent, "utf-8");
+			writeFileSync(join(oebpsDir, "nav.xhtml"), this.generateNavXhtml(), "utf-8");
 
 			// 7. Copy cover image if provided
 			if (this.cover) {
@@ -734,6 +735,59 @@ export class EpubGenerator {
 	 * the text, cross-file anchors — is run through the same transliteration,
 	 * so both sides of the reference are produced by the same pure function.
 	 */
+	/**
+	 * Builds the EPUB 3 navigation document.
+	 *
+	 * The package declares version 3.0, and a reader that takes that at its word
+	 * looks for this file: toc.ncx is the EPUB 2 form, kept alongside it only so
+	 * older readers still find their way. Without nav.xhtml a strict reader has
+	 * no navigation of its own to work from.
+	 */
+	private generateNavXhtml(): string {
+		interface NavItem { label: string; href: string; children: NavItem[]; }
+
+		const render = (nodes: NavItem[]): string =>
+			`<ol>${nodes.map(node =>
+				`<li><a href="${this.escapeHtml(this.encodeHref(node.href))}">${this.escapeHtml(node.label)}</a>` +
+				(node.children.length ? render(node.children) : "") +
+				`</li>`
+			).join("")}</ol>`;
+
+		const roots: NavItem[] = this.chapters.map(chapter => {
+			const node: NavItem = { label: chapter.title, href: `${chapter.id}.html`, children: [] };
+			const stack: Array<{ node: NavItem; level: number }> = [{ node, level: 0 }];
+
+			for (const heading of chapter.headings) {
+				if (heading.level > this.tocDepth) continue;
+				while (stack.length > 1 && stack[stack.length - 1]!.level >= heading.level) stack.pop();
+				const parent = stack[stack.length - 1]!;
+				const child: NavItem = {
+					label: heading.textForAnchor,
+					href: `${chapter.id}.html#${AnchorGenerator.generateAsciiAnchor(heading)}`,
+					children: [],
+				};
+				parent.node.children.push(child);
+				stack.push({ node: child, level: heading.level });
+			}
+			return node;
+		});
+
+		return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${this.language}" xml:lang="${this.language}">
+<head>
+	<meta charset="UTF-8"/>
+	<title>${this.escapeHtml(this.bookTocTitle)}</title>
+</head>
+<body>
+	<nav epub:type="toc" id="toc">
+		<h1>${this.escapeHtml(this.bookTocTitle)}</h1>
+${render(roots)}
+	</nav>
+</body>
+</html>`;
+	}
+
 	private encodeHref(href: string): string {
 		const hash = href.indexOf("#");
 		if (hash === -1) return href;
@@ -1014,6 +1068,7 @@ ${render(roots)}
 		<meta property="dcterms:modified">${now}</meta>
 	</metadata>
 	<manifest>
+		<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
 		<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
 		<item id="css" href="style.css" media-type="text/css"/>
 ${manifestItems}
