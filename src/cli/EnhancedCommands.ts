@@ -1287,6 +1287,39 @@ export class EnhancedCommands {
    * Reuses the same processing pipeline as Telegraph publication
    * @param options Command options
    */
+  /**
+   * Decides whether a chapter carries an in-text list of its own headings.
+   *
+   * The two tables of contents answer to each other: when --toc-depth keeps a
+   * chapter's headings out of the reader's navigation, the in-text list becomes
+   * the only way to reach them, so it is added by default. When navigation
+   * already lists everything, the in-text list would only repeat it.
+   */
+  private static resolveChapterToc(options: any): {
+    inlineToC: boolean;
+    tocPosition?: "start" | "end";
+    tocDepth?: number;
+    tocNested?: boolean;
+  } {
+    const depthLimited = Boolean(options.tocDepth);
+    const requested: string = options.chapterToc
+      ?? (options.inlineToc === true ? "start" : options.inlineToc === false ? "none" : "auto");
+
+    const position = requested === "auto"
+      ? (depthLimited ? "start" : "none")
+      : requested;
+
+    if (position === "none") {
+      return { inlineToC: false };
+    }
+    return {
+      inlineToC: true,
+      tocPosition: position === "end" ? "end" : "start",
+      tocDepth: options.chapterTocDepth ? Number.parseInt(options.chapterTocDepth, 10) : undefined,
+      tocNested: true,
+    };
+  }
+
   private static async handleEpubCommand(options: any): Promise<void> {
     if (!options.file || options.file.length === 0) {
       throw new Error("At least one file is required. Use -f or --file to specify Markdown file(s).");
@@ -1470,7 +1503,7 @@ export class EnhancedCommands {
       ProgressIndicator.showStatus(`   Processing: ${basename(filePath)}`, "info");
       await epubGenerator.addChapterFromFile(filePath, {
         generateToc: true, // Generate TOC for each chapter (independent of dependency processing)
-        inlineToC: options.inlineToc === true, // Default to false for EPUB, true only if explicitly enabled with --inline-toc
+        ...EnhancedCommands.resolveChapterToc(options),
         tocTitle: options.tocTitle,
         tocSeparators: options.tocSeparators !== false,
       });

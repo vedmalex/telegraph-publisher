@@ -369,6 +369,9 @@ export class EpubGenerator {
 			inlineToC?: boolean;
 			tocTitle?: string;
 			tocSeparators?: boolean;
+			tocPosition?: "start" | "end";
+			tocDepth?: number;
+			tocNested?: boolean;
 		},
 		isFirstOfFile: boolean,
 		headingAnchor?: string,
@@ -386,6 +389,9 @@ export class EpubGenerator {
 			inlineToC: options.inlineToC === true, // Default to false for EPUB, true only if explicitly enabled
 			tocTitle: options.tocTitle,
 			tocSeparators: options.tocSeparators !== false,
+			tocPosition: options.tocPosition,
+			tocDepth: options.tocDepth,
+			tocNested: options.tocNested,
 			target: "epub",
 		});
 

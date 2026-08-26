@@ -486,13 +486,17 @@ export function convertMarkdownToTelegraphNodes(
 		tocDepth?: number;
 		/** Render the in-text table of contents as a nested list. */
 		tocNested?: boolean;
+		/** Where the in-text table of contents goes: before the text or after it. */
+		tocPosition?: "start" | "end";
 	} = {},
 ): TelegraphNode[] {
-	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph", tocDepth = Number.POSITIVE_INFINITY, tocNested = false } = options;
+	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph", tocDepth = Number.POSITIVE_INFINITY, tocNested = false, tocPosition = "start" } = options;
 
 	markdown = stripHtmlComments(markdown);
 
 	const nodes: TelegraphNode[] = [];
+	// Held aside until the end when tocPosition asks for it there.
+	const tocNodes: TelegraphNode[] = [];
 	let currentParagraphLines: string[] = [];
 
 	const flushParagraph = () => {
@@ -534,22 +538,30 @@ export function convertMarkdownToTelegraphNodes(
 		if (tocAside) {
 			// Add HR before TOC (if separators enabled)
 			if (tocSeparators) {
-				nodes.push({ tag: 'hr' });
+				tocNodes.push({ tag: 'hr' });
 			}
 			
 			// Extract TOC elements from aside and add them separately for better Telegram compatibility
 			if (tocAside.children) {
 				for (const child of tocAside.children) {
 					if (typeof child !== 'string') {
-						nodes.push(child);
+						tocNodes.push(child);
 					}
 				}
 			}
 			
 			// Add HR after TOC (if separators enabled)
 			if (tocSeparators) {
-				nodes.push({ tag: 'hr' });
+				tocNodes.push({ tag: 'hr' });
 			}
+		}
+
+		// A table of contents placed at the end suits a long list: the reader
+		// meets the text first and finds the index where an index belongs in a
+		// printed book. Placed at the start it is a map of what follows.
+		if (tocPosition === "start") {
+			nodes.push(...tocNodes);
+			tocNodes.length = 0;
 		}
 	}
 	
@@ -1006,6 +1018,9 @@ export function convertMarkdownToTelegraphNodes(
 	if (inTable) {
 		nodes.push(parseTable(tableLines, target === "epub"));
 	}
+
+	// Anything still held aside belongs after the text.
+	nodes.push(...tocNodes);
 
 	// Filter out any empty paragraph nodes that might have been created unnecessarily
 	return nodes.filter(
