@@ -354,32 +354,71 @@ function generateTocAside(markdown: string, tocTitle: string = ''): TelegraphNod
  * @param markdown The raw Markdown content to scan for headings.
  * @returns TelegraphNode for aside element with ToC, or null if insufficient headings.
  */
-function generateTocAsideWithAnchorGenerator(markdown: string, tocTitle: string = ''): TelegraphNode | null {
+/**
+ * Builds the in-text table of contents as a nested list.
+ *
+ * A flat list loses the shape of the book: in a volume where every verse is a
+ * heading, chapters and verses sit side by side and the reader cannot tell one
+ * from the other. Nesting each heading under the nearest shallower one restores
+ * that shape without needing the levels to be contiguous - books skip levels.
+ */
+function buildNestedTocItems(headings: HeadingInfo[]): TelegraphNode[] {
+	const roots: TelegraphNode[] = [];
+	// Each stack entry holds the list item and the heading level it came from.
+	const stack: { item: TelegraphNode; level: number }[] = [];
+
+	for (const headingInfo of headings) {
+		const item: TelegraphNode = {
+			tag: 'li',
+			children: [{
+				tag: 'a',
+				attrs: { href: `#${AnchorGenerator.generateAnchor(headingInfo)}` },
+				children: createTocChildrenFromHeadingInfo(headingInfo)
+			}],
+		};
+
+		while (stack.length > 0 && stack[stack.length - 1]!.level >= headingInfo.level) {
+			stack.pop();
+		}
+
+		const parent = stack[stack.length - 1];
+		if (!parent) {
+			roots.push(item);
+		} else {
+			const children = parent.item.children as (string | TelegraphNode)[];
+			const last = children[children.length - 1];
+			const sublist = (typeof last === 'object' && last?.tag === 'ul')
+				? last
+				: (children.push({ tag: 'ul', children: [] }), children[children.length - 1] as TelegraphNode);
+			(sublist.children as TelegraphNode[]).push(item);
+		}
+
+		stack.push({ item, level: headingInfo.level });
+	}
+
+	return roots;
+}
+
+function generateTocAsideWithAnchorGenerator(markdown: string, tocTitle: string = '', tocDepth: number = Number.POSITIVE_INFINITY, nested: boolean = false): TelegraphNode | null {
 	// Use AnchorGenerator to parse headings with unified logic
-	const headings = AnchorGenerator.parseHeadingsFromContent(markdown);
+	const headings = AnchorGenerator.parseHeadingsFromContent(markdown)
+		.filter(h => h.level <= tocDepth);
 	
 	// Check if ToC should be generated (2+ headings required)
 	if (headings.length < 2) {
 		return null;
 	}
 
-	// Build ToC structure as list items
-	const listItems: TelegraphNode[] = [];
-	for (const headingInfo of headings) {
-		// Generate anchor using unified algorithm
-		const anchor = AnchorGenerator.generateAnchor(headingInfo);
-		
-		const linkNode: TelegraphNode = {
-			tag: 'a',
-			attrs: { href: `#${anchor}` },
-			children: createTocChildrenFromHeadingInfo(headingInfo)
-		};
-		
-		listItems.push({
+	const listItems: TelegraphNode[] = nested
+		? buildNestedTocItems(headings)
+		: headings.map(headingInfo => ({
 			tag: 'li',
-			children: [linkNode],
-		});
-	}
+			children: [{
+				tag: 'a',
+				attrs: { href: `#${AnchorGenerator.generateAnchor(headingInfo)}` },
+				children: createTocChildrenFromHeadingInfo(headingInfo)
+			} as TelegraphNode],
+		}));
 
 	// Return aside element with optional heading and unordered list
 	const children: any[] = [];
@@ -441,9 +480,15 @@ export function convertMarkdownToTelegraphNodes(
 		 * - "svg" – simplified for SVG image generation
 		 */
 		target?: "telegraph" | "epub" | "svg";
+		/** Deepest heading level to include in the in-text table of contents.
+		 * Unset means no limit: books use levels beyond h6 and dropping them by
+		 * default would silently shorten existing tables of contents. */
+		tocDepth?: number;
+		/** Render the in-text table of contents as a nested list. */
+		tocNested?: boolean;
 	} = {},
 ): TelegraphNode[] {
-	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph" } = options;
+	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph", tocDepth = Number.POSITIVE_INFINITY, tocNested = false } = options;
 
 	markdown = stripHtmlComments(markdown);
 
@@ -478,7 +523,7 @@ export function convertMarkdownToTelegraphNodes(
 									process.env.NODE_ENV !== 'production';
 		
 		const tocAside = USE_UNIFIED_ANCHORS 
-			? generateTocAsideWithAnchorGenerator(markdown, tocTitle)
+			? generateTocAsideWithAnchorGenerator(markdown, tocTitle, tocDepth, tocNested)
 			: generateTocAside(markdown, tocTitle);
 			
 		if (tocAside) {
