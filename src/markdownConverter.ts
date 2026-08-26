@@ -445,6 +445,34 @@ function generateTocAsideWithAnchorGenerator(markdown: string, tocTitle: string 
 }
 
 /**
+ * Assembles a paragraph, honouring hard line breaks.
+ *
+ * A line ending in two or more spaces is a hard break in Markdown, and Sanskrit
+ * is written that way: each line of a śloka ends there, and running the lines
+ * together loses the metre the text is set in. A plain newline inside a
+ * paragraph renders as a space, so the break has to become an explicit element.
+ *
+ * Only the EPUB path does this. Telegraph pages published before now were laid
+ * out without it, and turning it on there would reflow every one of them.
+ */
+function buildParagraphChildren(lines: string[], target: string): (string | TelegraphNode)[] {
+	if (target !== "epub" || !lines.some(line => /\S {2,}$/.test(line))) {
+		return processInlineMarkdown(lines.join("\n"));
+	}
+
+	const children: (string | TelegraphNode)[] = [];
+	lines.forEach((line, index) => {
+		const hardBreak = /\S {2,}$/.test(line);
+		children.push(...processInlineMarkdown(line.replace(/\s+$/, "")));
+
+		if (index < lines.length - 1) {
+			children.push(hardBreak ? { tag: "br" } : "\n");
+		}
+	});
+	return children;
+}
+
+/**
  * Removes HTML comments before any other parsing.
  *
  * A comment is not markup the reader should ever see, but an unclosed one is
@@ -522,7 +550,7 @@ export function convertMarkdownToTelegraphNodes(
 			return;
 		}
 
-		nodes.push({ tag: "p", children: processInlineMarkdown(paragraphContent) });
+		nodes.push({ tag: "p", children: buildParagraphChildren(currentParagraphLines, target) });
 
 		currentParagraphLines = [];
 	};
