@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, resolve } from "node:path";
+import { basename, dirname, extname, relative, resolve } from "node:path";
 import type { Command } from "commander";
 import { PagesCacheManager } from "../cache/PagesCacheManager";
 import { ConfigManager } from "../config/ConfigManager";
@@ -21,6 +21,12 @@ import { TelegraphPublisher } from "../telegraphPublisher";
 import { type DependencyNode, type ExtendedMetadataConfig, type FileMetadata, PublicationStatus, type TelegraphLink } from "../types/metadata";
 import { PathResolver } from "../utils/PathResolver";
 import { PublicationWorkflowManager } from "../workflow";
+import {
+  applyConfigSet,
+  computeFileStatus as computeFileStatusOp,
+  type ConfigSetAssignment,
+  scanMarkdownFiles,
+} from "./CliStatusConfigOps";
 import { ProgressIndicator } from "./ProgressIndicator";
 
 /**
@@ -252,7 +258,12 @@ export class EnhancedCommands {
       .command("config")
       .description("Manage configuration settings")
       .option("--show", "Show current configuration")
-      .option("--set <key=value>", "Set configuration value", [])
+      .option(
+        "--set <key=value>",
+        "Set a configuration value (repeatable). Keys: defaultUsername, autoPublishDependencies, replaceLinksinContent, createBackups, manageBidirectionalLinks, autoSyncCache, maxDependencyDepth, rateLimiting.<field>, customFields.<name>",
+        (value: string, previous: string[]) => previous.concat([value]),
+        [] as string[]
+      )
       .option("--reset", "Reset configuration to defaults")
       .option("--username <name>", "Set default username")
       .option("--github-token <token>", "Set GitHub token for gist publication")
@@ -540,6 +551,179 @@ export class EnhancedCommands {
   }
 
   /**
+   * Whitelist of allowed `config --set` keys, grouped by validation rule.
+   * Kept as a static structure so it can be surfaced verbatim in error messages
+   * and reused by tests without spawning the CLI.
+   */
+  private static readonly CONFIG_SET_SCHEMA = {
+    /** Free-form string values (must be non-empty after trimming) */
+    stringKeys: ["defaultUsername"],
+    /** Boolean values accepting only the literals "true" / "false" */
+    booleanKeys: [
+      "autoPublishDependencies",
+      "replaceLinksinContent",
+      "createBackups",
+      "manageBidirectionalLinks",
+      "autoSyncCache"
+    ],
+    /** Integer key with an inclusive range constraint */
+    intRange: { maxDependencyDepth: { min: 1, max: 20 } } as Record<string, { min: number; max: number }>,
+    /** Nested rateLimiting.* numeric fields (must be finite and > 0) */
+    rateNumericKeys: [
+      "baseDelayMs",
+      "adaptiveMultiplier",
+      "maxDelayMs",
+      "maxRetries",
+      "cooldownPeriodMs"
+    ],
+    /** Nested rateLimiting.* enum fields */
+    rateEnumKeys: { backoffStrategy: ["linear", "exponential"] } as Record<string, string[]>,
+    /** Nested rateLimiting.* boolean fields */
+    rateBooleanKeys: ["enableAdaptiveThrottling"],
+    /** Keys explicitly rejected to avoid encouraging secrets in argv */
+    rejectedKeys: {
+      accessToken: "--token",
+      githubToken: "--github-token"
+    } as Record<string, string>
+  };
+
+  /**
+   * Build a human-readable list of all valid `config --set` keys for error messages.
+   */
+  private static describeConfigSetKeys(): string {
+    const s = EnhancedCommands.CONFIG_SET_SCHEMA;
+    const parts = [
+      ...s.stringKeys,
+      ...s.booleanKeys,
+      ...Object.keys(s.intRange),
+      ...s.rateNumericKeys.map(k => `rateLimiting.${k}`),
+      ...Object.keys(s.rateEnumKeys).map(k => `rateLimiting.${k}`),
+      ...s.rateBooleanKeys.map(k => `rateLimiting.${k}`),
+      "customFields.<name>"
+    ];
+    return parts.join(", ");
+  }
+
+  /**
+   * Parse and validate `--set key=value` pairs against the config whitelist.
+   *
+   * This is a pure function (no filesystem access) so it can be unit-tested
+   * directly. It throws a descriptive Error on any unknown key, wrong type,
+   * out-of-range value, or rejected (secret) key.
+   *
+   * @param pairs Raw `key=value` strings collected from the CLI
+   * @returns Structured assignments describing the target config path + typed value
+   */
+  static parseConfigSet(pairs: string[]): {
+    assignments: Array<{ path: string; value: string | number | boolean; display: string; sensitive: boolean }>;
+  } {
+    const s = EnhancedCommands.CONFIG_SET_SCHEMA;
+    const assignments: Array<{ path: string; value: string | number | boolean; display: string; sensitive: boolean }> = [];
+
+    for (const raw of pairs) {
+      const eq = raw.indexOf("=");
+      if (eq === -1) {
+        throw new Error(`Invalid --set format: "${raw}". Expected key=value.`);
+      }
+      const key = raw.slice(0, eq).trim();
+      const value = raw.slice(eq + 1);
+
+      if (!key) {
+        throw new Error(`Invalid --set format: "${raw}". Empty key.`);
+      }
+
+      // Reject secret keys outright
+      if (s.rejectedKeys[key]) {
+        throw new Error(
+          `Refusing to set "${key}" via --set (avoid secrets in shell history). Use ${s.rejectedKeys[key]} instead.`
+        );
+      }
+
+      // Nested rateLimiting.*
+      if (key.startsWith("rateLimiting.")) {
+        const sub = key.slice("rateLimiting.".length);
+        if (s.rateNumericKeys.includes(sub)) {
+          const num = Number(value);
+          if (!Number.isFinite(num) || num <= 0) {
+            throw new Error(`Invalid value for ${key}: "${value}". Expected a number greater than 0.`);
+          }
+          assignments.push({ path: `rateLimiting.${sub}`, value: num, display: String(num), sensitive: false });
+          continue;
+        }
+        if (s.rateEnumKeys[sub]) {
+          const allowed = s.rateEnumKeys[sub];
+          if (!allowed.includes(value)) {
+            throw new Error(`Invalid value for ${key}: "${value}". Allowed: ${allowed.join(" | ")}.`);
+          }
+          assignments.push({ path: `rateLimiting.${sub}`, value, display: value, sensitive: false });
+          continue;
+        }
+        if (s.rateBooleanKeys.includes(sub)) {
+          const bool = EnhancedCommands.parseBooleanValue(key, value);
+          assignments.push({ path: `rateLimiting.${sub}`, value: bool, display: String(bool), sensitive: false });
+          continue;
+        }
+        throw new Error(
+          `Unknown rateLimiting field: "${sub}". Valid keys: ${EnhancedCommands.describeConfigSetKeys()}.`
+        );
+      }
+
+      // Nested customFields.*
+      if (key.startsWith("customFields.")) {
+        const sub = key.slice("customFields.".length);
+        if (!sub) {
+          throw new Error(`Invalid custom field key: "${key}". Expected customFields.<name>.`);
+        }
+        assignments.push({ path: `customFields.${sub}`, value, display: value, sensitive: false });
+        continue;
+      }
+
+      // String keys
+      if (s.stringKeys.includes(key)) {
+        if (value.trim().length === 0) {
+          throw new Error(`Invalid value for ${key}: value cannot be empty.`);
+        }
+        assignments.push({ path: key, value, display: value, sensitive: false });
+        continue;
+      }
+
+      // Boolean keys
+      if (s.booleanKeys.includes(key)) {
+        const bool = EnhancedCommands.parseBooleanValue(key, value);
+        assignments.push({ path: key, value: bool, display: String(bool), sensitive: false });
+        continue;
+      }
+
+      // Int-range keys
+      if (s.intRange[key]) {
+        const { min, max } = s.intRange[key];
+        const num = Number(value);
+        if (!Number.isInteger(num) || num < min || num > max) {
+          throw new Error(`Invalid value for ${key}: "${value}". Expected an integer between ${min} and ${max}.`);
+        }
+        assignments.push({ path: key, value: num, display: String(num), sensitive: false });
+        continue;
+      }
+
+      // Unknown key
+      throw new Error(
+        `Unknown config key: "${key}". Valid keys: ${EnhancedCommands.describeConfigSetKeys()}.`
+      );
+    }
+
+    return { assignments };
+  }
+
+  /**
+   * Parse a strict boolean literal ("true" / "false") for a config key.
+   */
+  private static parseBooleanValue(key: string, value: string): boolean {
+    if (value === "true") return true;
+    if (value === "false") return false;
+    throw new Error(`Invalid value for ${key}: "${value}". Expected "true" or "false".`);
+  }
+
+  /**
    * Handle configuration command
    * @param options Command options
    */
@@ -556,15 +740,24 @@ export class EnhancedCommands {
       return;
     }
 
-    // Handle individual settings
-    const updates: any = {};
+    // Handle individual settings.
+    //
+    // The whole combined update (--set pairs PLUS the --username/--github-token/
+    // --max-depth/--auto-deps flags) is routed through the SINGLE DstIO-seated
+    // write in CliStatusConfigOps.applyConfigSet (TASK-035 / ISS-029). The
+    // non---set flags are converted into the same per-path assignments and
+    // appended AFTER the --set pairs, preserving the legacy handler's applied
+    // order and its single-write semantics. Byte-for-byte identical file + console
+    // output to the former ConfigManager.loadConfig/updateMetadataConfig path.
+    const setPairs: string[] = Array.isArray(options.set) ? options.set : [];
+    const extraAssignments: ConfigSetAssignment[] = [];
 
     if (options.username) {
-      updates.defaultUsername = options.username;
+      extraAssignments.push({ path: "defaultUsername", value: options.username, display: options.username, sensitive: false });
     }
 
     if (options.githubToken) {
-      updates.githubToken = options.githubToken;
+      extraAssignments.push({ path: "githubToken", value: options.githubToken, display: options.githubToken, sensitive: true });
     }
 
     if (options.maxDepth) {
@@ -572,19 +765,38 @@ export class EnhancedCommands {
       if (isNaN(depth) || depth < 1 || depth > 20) {
         throw new Error("Max depth must be a number between 1 and 20");
       }
-      updates.maxDependencyDepth = depth;
+      extraAssignments.push({ path: "maxDependencyDepth", value: depth, display: String(depth), sensitive: false });
     }
 
     if (options.autoDeps !== undefined) {
-      updates.autoPublishDependencies = options.autoDeps === "true";
+      extraAssignments.push({ path: "autoPublishDependencies", value: options.autoDeps === "true", display: String(options.autoDeps === "true"), sensitive: false });
     }
 
-    if (Object.keys(updates).length > 0) {
-      ConfigManager.updateMetadataConfig(directory, updates);
+    if (setPairs.length > 0 || extraAssignments.length > 0) {
+      const { applied, configPath } = applyConfigSet(directory, setPairs, undefined, extraAssignments);
+      // Mirror ConfigManager.saveConfig's success line (applyConfigSet performs
+      // the DstIO-seated write and stays pure of the handler's user-facing block).
+      console.log(`✅ Configuration saved to ${configPath}`);
       ProgressIndicator.showStatus("Configuration updated successfully", "success");
+      console.log("\n📝 Applied settings:");
+      for (const item of applied) {
+        const shown = EnhancedCommands.maskSensitive(item.key, item.display, item.sensitive);
+        console.log(`   ${item.key} = ${shown}`);
+      }
+      console.log("");
     } else {
       ConfigManager.displayConfig(directory);
     }
+  }
+
+  /**
+   * Mask sensitive values (tokens/secrets) for console output.
+   */
+  private static maskSensitive(key: string, value: string, sensitive: boolean): string {
+    const looksSecret = sensitive || /token|secret|password/i.test(key);
+    if (!looksSecret) return value;
+    if (value.length <= 8) return "***";
+    return `${value.substring(0, 4)}...${value.slice(-2)}`;
   }
 
   /**
@@ -609,8 +821,75 @@ export class EnhancedCommands {
         console.log(`👤 Author: ${metadata.username}`);
         console.log(`📅 Published: ${metadata.publishedAt}`);
       }
-    } else {
-      ProgressIndicator.showStatus("Directory status checking not implemented yet", "warning");
+      return;
+    }
+
+    // Directory mode (default to CWD when neither -f nor -d is provided)
+    const directory = resolve(options.directory || process.cwd());
+    if (!existsSync(directory)) {
+      throw new Error(`Directory not found: ${directory}`);
+    }
+
+    const recursive = options.recursive === true;
+    const files = await EnhancedCommands.findMarkdownFiles(directory, recursive);
+
+    console.log(`\n📂 Directory: ${directory}${recursive ? " (recursive)" : ""}`);
+
+    if (files.length === 0) {
+      ProgressIndicator.showStatus("No markdown files found", "info");
+      return;
+    }
+
+    const counts: Record<string, number> = {
+      [PublicationStatus.PUBLISHED]: 0,
+      [PublicationStatus.NOT_PUBLISHED]: 0,
+      [PublicationStatus.METADATA_CORRUPTED]: 0,
+      [PublicationStatus.METADATA_MISSING]: 0
+    };
+
+    for (const file of files) {
+      const { status, url } = EnhancedCommands.computeFileStatus(file);
+      counts[status] = (counts[status] ?? 0) + 1;
+      const rel = relative(directory, file) || basename(file);
+      const icon = EnhancedCommands.statusIcon(status);
+      console.log(`${icon} ${rel} — ${status}${url ? ` → ${url}` : ""}`);
+    }
+
+    console.log(`\n📊 Summary (${files.length} file${files.length === 1 ? "" : "s"}):`);
+    console.log(`   ✅ published: ${counts[PublicationStatus.PUBLISHED]}`);
+    console.log(`   📝 not_published: ${counts[PublicationStatus.NOT_PUBLISHED]}`);
+    console.log(`   ⚠️ metadata_corrupted: ${counts[PublicationStatus.METADATA_CORRUPTED]}`);
+    console.log(`   ❓ metadata_missing: ${counts[PublicationStatus.METADATA_MISSING]}`);
+    console.log("");
+  }
+
+  /**
+   * Compute the publication status (and URL, if any) for a single file.
+   *
+   * Thin wrapper over MetadataManager so directory-status uses the exact same
+   * resolution path as the single-file branch.
+   *
+   * @param filePath Absolute path to a markdown file
+   */
+  static computeFileStatus(filePath: string): { status: PublicationStatus; url?: string } {
+    // Thin, real-fs delegate (positional signature preserved for back-compat) to
+    // the DstIO-seated implementation in CliStatusConfigOps.
+    return computeFileStatusOp(filePath);
+  }
+
+  /**
+   * Map a publication status to a display icon.
+   */
+  private static statusIcon(status: PublicationStatus): string {
+    switch (status) {
+      case PublicationStatus.PUBLISHED:
+        return "✅";
+      case PublicationStatus.NOT_PUBLISHED:
+        return "📝";
+      case PublicationStatus.METADATA_CORRUPTED:
+        return "⚠️";
+      default:
+        return "❓";
     }
   }
 
@@ -647,44 +926,20 @@ export class EnhancedCommands {
   }
 
   /**
-   * Find all markdown files in directory and subdirectories
+   * Find all markdown files in a directory.
+   *
+   * Skips dot-directories, `node_modules`, and `dist`. When `recursive` is
+   * true (the default, preserving existing reset behavior) it descends into
+   * subdirectories; when false it lists only the top-level `.md` files.
+   *
    * @param dir Directory to search
-   * @returns Array of markdown file paths
+   * @param recursive Whether to descend into subdirectories (default: true)
+   * @returns Sorted array of markdown file paths
    */
-  static async findMarkdownFiles(dir: string): Promise<string[]> {
-    const { readdirSync, statSync } = await import('fs');
-    const { join } = await import('path');
-
-    const files: string[] = [];
-
-    try {
-      const entries = readdirSync(dir);
-
-      for (const entry of entries) {
-        const fullPath = join(dir, entry);
-
-        try {
-          const stat = statSync(fullPath);
-
-          if (stat.isDirectory()) {
-            // Skip node_modules, .git, and other common directories
-            if (!entry.startsWith('.') && entry !== 'node_modules' && entry !== 'dist') {
-              const subFiles = await EnhancedCommands.findMarkdownFiles(fullPath);
-              files.push(...subFiles);
-            }
-          } else if (stat.isFile() && entry.toLowerCase().endsWith('.md')) {
-            files.push(fullPath);
-          }
-        } catch (error) {
-          // Skip files/directories that can't be accessed
-          console.warn(`Warning: Could not access ${fullPath}`);
-        }
-      }
-    } catch (error) {
-      console.warn(`Warning: Could not read directory ${dir}`);
-    }
-
-    return files.sort();
+  static async findMarkdownFiles(dir: string, recursive: boolean = true): Promise<string[]> {
+    // Thin, real-fs delegate (positional signature preserved for back-compat) to
+    // the DstIO-seated implementation in CliStatusConfigOps.
+    return scanMarkdownFiles(dir, { recursive });
   }
 
   /**
@@ -1002,6 +1257,11 @@ export class EnhancedCommands {
       .option("--toc-title <title>", "Title for the Table of Contents section (default: 'Содержание')")
       .option("--toc-separators", "Add horizontal separators (HR) before and after Table of Contents (default: true)")
       .option("--no-toc-separators", "Disable horizontal separators around Table of Contents")
+      .option(
+        "--toc-depth <n>",
+        "Deepest heading level shown in the reader's navigation (default: no limit). " +
+        "Use 2 for books where every verse is a heading, so navigation lists chapters only"
+      )
       .option("--language <lang>", "Book language code (default: 'ru')")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
@@ -1086,6 +1346,7 @@ export class EnhancedCommands {
       language: options.language || "ru",
       cover: options.cover,
       debug: options.debug,
+      tocDepth: options.tocDepth ? Number.parseInt(options.tocDepth, 10) : undefined,
     });
 
     // Process files with dependencies.
@@ -1225,7 +1486,7 @@ export class EnhancedCommands {
       .command("svg")
       .description("Generate SVG file from Markdown for thermal printer (black & white, with cut marks)")
       .option("-f, --file <path>", "Path to the Markdown file (required)")
-      .option("-o, --output <path>", "Output SVG file path (default: output.svg)")
+      .option("-o, --output <path>", "Output SVG file path (default: <input-basename>.svg next to the input file)")
       .option("-w, --width <mm>", "Paper width in mm (default: 57)")
       .option("--page-height <mm>", "Page height in mm (default: 105)")
       .option("--orientation <type>", "Orientation: portrait or landscape (default: portrait)")
@@ -1318,7 +1579,7 @@ export class EnhancedCommands {
       pageHeight,
       orientation,
       paper: options.paper,
-      margin,
+      margin: margin ?? 3,
       fontSize,
       lineHeight,
       cutMarks: options.cutMarks !== false,

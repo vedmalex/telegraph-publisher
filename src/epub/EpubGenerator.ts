@@ -21,6 +21,7 @@ export class EpubGenerator {
 	private identifier: string;
 	private cover?: string;
 	private debug?: boolean;
+	private tocDepth: number;
 	private chapters: Array<{
 		title: string;
 		content: TelegraphNode[];
@@ -38,6 +39,10 @@ export class EpubGenerator {
 		identifier?: string;
 		cover?: string;
 		debug?: boolean;
+		/** Deepest heading level to include in the reader's navigation (toc.ncx).
+		 * Unset means every heading, which in a volume where each verse is a
+		 * heading produces tens of thousands of navigation points. */
+		tocDepth?: number;
 	}) {
 		this.outputPath = resolve(options.outputPath);
 		this.title = options.title;
@@ -46,6 +51,7 @@ export class EpubGenerator {
 		this.identifier = options.identifier || `epub-${Date.now()}`;
 		this.cover = options.cover ? resolve(options.cover) : undefined;
 		this.debug = options.debug;
+		this.tocDepth = options.tocDepth ?? Number.POSITIVE_INFINITY;
 	}
 
 	/**
@@ -817,6 +823,10 @@ ${guideSection}
 				const stack: { node: NavNode; level: number }[] = [{ node: root, level: 0 }];
 
 				for (const heading of chapter.headings) {
+					// Headings deeper than the limit are reachable through the text,
+					// not through the reader's navigation panel.
+					if (heading.level > this.tocDepth) continue;
+
 					// Find parent in stack
 					// We pop while the top of stack is deeper or equal level
 					// Logic:
