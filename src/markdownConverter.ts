@@ -519,7 +519,12 @@ export function convertMarkdownToTelegraphNodes(
 	// generateToc controls whether ToC generation should be attempted at all
 	if (generateToc && inlineToC) {
 		// Feature flag: Use unified AnchorGenerator for consistent anchor generation
-		const USE_UNIFIED_ANCHORS = process.env.USE_UNIFIED_ANCHORS === 'true' || 
+		// Depth and nesting are implemented only in the unified builder, so asking
+		// for either selects it regardless of the flag: silently ignoring an
+		// explicit option would be worse than taking the newer path.
+		const tocShapeRequested = Number.isFinite(tocDepth) || tocNested;
+		const USE_UNIFIED_ANCHORS = tocShapeRequested ||
+									process.env.USE_UNIFIED_ANCHORS === 'true' || 
 									process.env.NODE_ENV !== 'production';
 		
 		const tocAside = USE_UNIFIED_ANCHORS 
