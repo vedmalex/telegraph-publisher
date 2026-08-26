@@ -35,6 +35,9 @@ export interface SectionNavOptions {
 	matchLevel?: number | "auto";
 	/** Дополнительный отбор заголовков ряда. */
 	matchPattern?: RegExp;
+	/** ASCII-якоря (транслитерация) — для EPUB, где сырой кириллический
+	 * фрагмент URI читалкой не разрешается. */
+	asciiAnchors?: boolean;
 }
 
 const DEFAULTS = {
@@ -187,7 +190,9 @@ export function buildSectionNav(
 		label: labels[index] ?? String(index + 1),
 		// Якорь берётся тем же генератором, что расставляет id на заголовках, —
 		// иначе переход указал бы в пустоту.
-		anchor: AnchorGenerator.generateAnchor(heading),
+		anchor: options.asciiAnchors
+			? AnchorGenerator.generateAsciiAnchor(heading)
+			: AnchorGenerator.generateAnchor(heading),
 		ordinal: indices[index]! + 1,
 	}));
 }

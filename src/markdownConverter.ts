@@ -363,7 +363,7 @@ function generateTocAside(markdown: string, tocTitle: string = ''): TelegraphNod
  * from the other. Nesting each heading under the nearest shallower one restores
  * that shape without needing the levels to be contiguous - books skip levels.
  */
-function buildNestedTocItems(headings: HeadingInfo[]): TelegraphNode[] {
+function buildNestedTocItems(headings: HeadingInfo[], asciiAnchors: boolean = false): TelegraphNode[] {
 	const roots: TelegraphNode[] = [];
 	// Each stack entry holds the list item and the heading level it came from.
 	const stack: { item: TelegraphNode; level: number }[] = [];
@@ -373,7 +373,7 @@ function buildNestedTocItems(headings: HeadingInfo[]): TelegraphNode[] {
 			tag: 'li',
 			children: [{
 				tag: 'a',
-				attrs: { href: `#${AnchorGenerator.generateAnchor(headingInfo)}` },
+				attrs: { href: `#${asciiAnchors ? AnchorGenerator.generateAsciiAnchor(headingInfo) : AnchorGenerator.generateAnchor(headingInfo)}` },
 				children: createTocChildrenFromHeadingInfo(headingInfo)
 			}],
 		};
@@ -400,7 +400,7 @@ function buildNestedTocItems(headings: HeadingInfo[]): TelegraphNode[] {
 	return roots;
 }
 
-function generateTocAsideWithAnchorGenerator(markdown: string, tocTitle: string = '', tocDepth: number = Number.POSITIVE_INFINITY, nested: boolean = false): TelegraphNode | null {
+function generateTocAsideWithAnchorGenerator(markdown: string, tocTitle: string = '', tocDepth: number = Number.POSITIVE_INFINITY, nested: boolean = false, asciiAnchors: boolean = false): TelegraphNode | null {
 	// Use AnchorGenerator to parse headings with unified logic
 	const headings = AnchorGenerator.parseHeadingsFromContent(markdown)
 		.filter(h => h.level <= tocDepth);
@@ -411,12 +411,12 @@ function generateTocAsideWithAnchorGenerator(markdown: string, tocTitle: string 
 	}
 
 	const listItems: TelegraphNode[] = nested
-		? buildNestedTocItems(headings)
+		? buildNestedTocItems(headings, asciiAnchors)
 		: headings.map(headingInfo => ({
 			tag: 'li',
 			children: [{
 				tag: 'a',
-				attrs: { href: `#${AnchorGenerator.generateAnchor(headingInfo)}` },
+				attrs: { href: `#${asciiAnchors ? AnchorGenerator.generateAsciiAnchor(headingInfo) : AnchorGenerator.generateAnchor(headingInfo)}` },
 				children: createTocChildrenFromHeadingInfo(headingInfo)
 			} as TelegraphNode],
 		}));
@@ -536,7 +536,10 @@ export function convertMarkdownToTelegraphNodes(
 		// for either selects it regardless of the flag: silently ignoring an
 		// explicit option would be worse than taking the newer path.
 		const tocShapeRequested = Number.isFinite(tocDepth) || tocNested;
-		const USE_UNIFIED_ANCHORS = tocShapeRequested ||
+		// The EPUB target always takes the unified path: ASCII transliteration
+		// of anchors lives only there, and the legacy builder would emit
+		// Cyrillic hrefs pointing at Latin ids.
+		const USE_UNIFIED_ANCHORS = tocShapeRequested || target === 'epub' ||
 									process.env.USE_UNIFIED_ANCHORS === 'true' || 
 									process.env.NODE_ENV !== 'production';
 		
@@ -547,6 +550,7 @@ export function convertMarkdownToTelegraphNodes(
 			const items = buildSectionNav(AnchorGenerator.parseHeadingsFromContent(markdown), {
 				threshold: navThreshold,
 				maxItems: navMaxItems,
+				asciiAnchors: target === 'epub',
 			});
 			if (items) {
 				if (tocPosition !== "end") {
@@ -561,7 +565,7 @@ export function convertMarkdownToTelegraphNodes(
 		} else {
 
 		const tocAside = USE_UNIFIED_ANCHORS 
-			? generateTocAsideWithAnchorGenerator(markdown, tocTitle, tocDepth, tocNested)
+			? generateTocAsideWithAnchorGenerator(markdown, tocTitle, tocDepth, tocNested, target === 'epub')
 			: generateTocAside(markdown, tocTitle);
 			
 		if (tocAside) {
@@ -804,7 +808,12 @@ export function convertMarkdownToTelegraphNodes(
 
 			// Use unified AnchorGenerator for consistent heading processing and ID generation
 			const headingInfo = AnchorGenerator.extractHeadingInfo(headingMatch);
-			const anchorId = AnchorGenerator.generateAnchor(headingInfo);
+			// EPUB ids must be ASCII: readers resolve URI fragments per RFC 3986
+			// and a raw Cyrillic fragment never lands. Telegraph anchors are
+			// produced by Telegra.ph itself and must stay byte-for-byte intact.
+			const anchorId = target === 'epub'
+				? AnchorGenerator.generateAsciiAnchor(headingInfo)
+				: AnchorGenerator.generateAnchor(headingInfo);
 			
 			const level = headingInfo.level;
 			const displayText = headingInfo.displayText;

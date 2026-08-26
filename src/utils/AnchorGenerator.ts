@@ -134,6 +134,112 @@ export class AnchorGenerator {
   }
 
   /**
+   * EPUB VARIANT: ASCII Anchor Generation
+   *
+   * EPUB readers resolve URI fragments per RFC 3986: a raw Cyrillic fragment
+   * is visible as a link but never lands (confirmed on a real reader), and
+   * percent-encoding the href alone did not help either. So for the EPUB
+   * target both the heading id and every href pointing at it are produced in
+   * plain ASCII by transliterating the Telegraph anchor.
+   *
+   * This is a pure function of the Telegraph anchor, so every call site that
+   * uses it for the same heading gets the same ASCII anchor — the consistency
+   * guarantee does not depend on shared state.
+   *
+   * The Telegraph target keeps using generateAnchor() untouched: Telegra.ph
+   * derives anchors from heading text itself, and our hrefs must match it
+   * byte for byte.
+   *
+   * @param headingInfo Processed heading information
+   * @returns ASCII-only, XML-ID-safe anchor string
+   */
+  static generateAsciiAnchor(headingInfo: HeadingInfo): string {
+    return this.transliterateToAscii(this.generateAnchor(headingInfo));
+  }
+
+  /**
+   * Transliterates a Telegraph anchor into an ASCII, XML-ID-safe one.
+   *
+   * Scheme: a practical simplification of GOST 7.79-2012 system B for the
+   * Cyrillic letters (zh/ts/ch/sh/shch/yu/ya, `й`→`j`, `ы`→`y`, signs
+   * dropped; `х`→`h` instead of GOST `x` because in these Sanskrit-in-Cyrillic
+   * texts `х` is the aspiration: Бхагавад→Bhagavad) — chosen over ISO 9
+   * because ISO 9 keeps diacritics, which is the very thing being removed. IAST diacritics are stripped to the base letter
+   * (`ṛ`→`r`, `ś`→`s`), except the long-vowel macron, which DOUBLES the
+   * letter (`ā`→`aa`, `ӣ`→`ii`): the macron is the usual distinguishing mark
+   * in these texts («Шри» vs «Шрӣ»), and collapsing it would merge different
+   * headings into one id.
+   *
+   * The result is deterministic (stability across builds), never empty (a
+   * heading with no ASCII-representable characters falls back to "section"),
+   * and always starts with a letter or underscore (valid XML ID).
+   */
+  static transliterateToAscii(anchor: string): string {
+    // 1. Decompose so every diacritic becomes a combining mark.
+    let text = anchor.normalize('NFD');
+
+    // 2. Long-vowel macron doubles the base letter (ā→aa, ӣ→ii) to keep
+    //    long/short pairs distinct after the diacritics are gone.
+    //    NFD orders marks by combining class, so a macron may follow another
+    //    mark (ṝ = r + dot below + macron) — allow marks in between.
+    text = text.replace(/([A-Za-zЀ-ӿ])([̀-ͯ]*)̄/g, '$1$2$1$2');
+
+    // 3. Recompose: NFD also splits `й` and `ё` into base + mark, and those
+    //    must reach the Cyrillic map as whole letters (`й`→`j`, not `и`→`i`).
+    //    IAST letters recompose too; their marks are stripped at step 5.
+    text = text.normalize('NFC');
+
+    // 4. Cyrillic → Latin, case-aware.
+    let out = '';
+    for (const ch of text) {
+      const mapped = this.CYRILLIC_MAP[ch.toLowerCase()];
+      if (mapped === undefined) {
+        out += ch;
+        continue;
+      }
+      if (ch === ch.toLowerCase()) {
+        out += mapped;
+      } else {
+        // Uppercase source letter: capitalize the first letter of the digraph.
+        out += mapped.charAt(0).toUpperCase() + mapped.slice(1);
+      }
+    }
+
+    // 5. Strip the remaining diacritics of IAST Latin (dots, tildes, acutes):
+    //    decompose again and drop the combining marks.
+    out = out.normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+    // 5b. The H5/H6 prefix characters '>' carry level information the
+    //    Telegraph anchors rely on; keep the distinction as underscores.
+    out = out.replace(/>/g, '_');
+
+    // 6. Typographic dashes and non-breaking spaces become hyphens rather
+    //    than vanish: «Текст 1–2» and «Текст 12» must not merge into one id.
+    out = out.replace(/[‐-―− ]/g, '-');
+
+    // 6b. Keep only characters valid both in an XML ID and a raw URI fragment.
+    out = out.replace(/[^A-Za-z0-9._-]/g, '');
+
+    // 7. Never empty, always a valid XML ID start (letter or underscore).
+    if (out.length === 0) return 'section';
+    if (!/^[A-Za-z_]/.test(out)) out = `id-${out}`;
+    return out;
+  }
+
+  /** Practical GOST 7.79-2012 (system B)–based Cyrillic map, signs dropped. */
+  private static readonly CYRILLIC_MAP: Record<string, string> = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
+    'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm',
+    'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+    // 'х'→'h' (not GOST 'kh'/'x'): these books are Sanskrit in Cyrillic,
+    // where 'х' is the aspiration — Бхагавад→Bhagavad, Прабхупада→Prabhupada.
+    'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch',
+    'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+    // Ukrainian/old letters occasionally met in citations
+    'і': 'i', 'ї': 'yi', 'є': 'ye', 'ґ': 'g', 'ѣ': 'e', 'ѐ': 'e', 'ѝ': 'i',
+  };
+
+  /**
    * PHASE 3: Batch Content Processing
    * 
    * Efficiently processes entire markdown content for headings.

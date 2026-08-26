@@ -317,7 +317,7 @@ export class EpubGenerator {
 					// Give the document's heading the anchor the original heading had,
 					// so links written against it keep working after the split.
 					const anchor = part.headingLine
-						? AnchorGenerator.generateAnchor(AnchorGenerator.extractHeadingInfo(
+						? AnchorGenerator.generateAsciiAnchor(AnchorGenerator.extractHeadingInfo(
 							part.headingLine.match(/^(#{1,6})\s+(.*)$/)!))
 						: undefined;
 					await this.addChapterPart(part.content, partTitle, filePath, options, index === 0, anchor);
@@ -554,7 +554,10 @@ export class EpubGenerator {
 
 		// Build attributes string
 		const attrsString = Object.entries(attrs)
-			.map(([key, value]) => `${key}="${this.escapeHtml(value)}"`)
+			.map(([key, value]) => {
+				const rendered = key === "href" ? this.encodeHref(String(value)) : value;
+				return `${key}="${this.escapeHtml(rendered)}"`;
+			})
 			.join(" ");
 
 		// Convert children to HTML
@@ -718,6 +721,40 @@ export class EpubGenerator {
 	/**
 	 * Generate CSS styles
 	 */
+	/**
+	 * Bring the fragment of a link to the ASCII form the heading ids use.
+	 *
+	 * Headings in these books are Russian, so author-written anchors read
+	 * "#Текст-20". A URI fragment is ASCII-only, and a reader that follows the
+	 * specification will not resolve a raw Cyrillic one — the link is visible
+	 * but leads nowhere; percent-encoding the href did not help on a real
+	 * reader either. The heading ids are therefore transliterated (see
+	 * AnchorGenerator.transliterateToAscii), and every fragment that still
+	 * reaches serialization in Cyrillic — links written by the author inside
+	 * the text, cross-file anchors — is run through the same transliteration,
+	 * so both sides of the reference are produced by the same pure function.
+	 */
+	private encodeHref(href: string): string {
+		const hash = href.indexOf("#");
+		if (hash === -1) return href;
+		// External fragments belong to the other site's ids — leave them alone.
+		if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return href;
+
+		const base = href.slice(0, hash);
+		let fragment = href.slice(hash + 1);
+		// A percent-encoded fragment hides the Cyrillic it was made from;
+		// decode it first so the transliteration sees the letters.
+		if (/%[0-9A-Fa-f]{2}/.test(fragment)) {
+			try {
+				fragment = decodeURIComponent(fragment);
+			} catch {
+				return href;
+			}
+		}
+
+		return `${base}#${AnchorGenerator.transliterateToAscii(fragment)}`;
+	}
+
 	private generateCss(): string {
 		return `/* Строка переходов внутри длинной главы.
    Набрана мельче основного текста и приглушена: это служебная строка, а не
@@ -911,7 +948,7 @@ blockquote code {
 				const parent = stack[stack.length - 1]!;
 				const node = {
 					label: heading.textForAnchor,
-					href: `${chapter.id}.html#${AnchorGenerator.generateAnchor(heading)}`,
+					href: `${chapter.id}.html#${AnchorGenerator.generateAsciiAnchor(heading)}`,
 					children: [],
 					level: heading.level,
 				};
@@ -1053,7 +1090,7 @@ ${guideSection}
 					}
 
 					const parent = stack[stack.length - 1];
-					const anchor = AnchorGenerator.generateAnchor(heading);
+					const anchor = AnchorGenerator.generateAsciiAnchor(heading);
 					const newNode: NavNode = {
 						label: heading.textForAnchor,
 						src: `${chapter.id}.html#${anchor}`,
