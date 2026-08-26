@@ -944,10 +944,13 @@ test("should add ID attributes to headings only when target is 'epub'", () => {
 		{ tag: "h3", children: ["Section 1"] }
 	]);
 	
-	// Test EPUB target - IDs expected
+	// Test EPUB target - IDs expected, and real heading levels preserved.
+	// Telegraph only has h3/h4, but EPUB is plain XHTML: collapsing every
+	// heading to h3 would flatten the book and leave nothing to limit the
+	// navigation depth by.
 	const resultEpub = convertMarkdownToTelegraphNodes(markdown, { target: "epub", generateToc: false });
 	expect(resultEpub).toEqual([
-		{ tag: "h3", attrs: { id: "Chapter-1" }, children: ["Chapter 1"] },
-		{ tag: "h3", attrs: { id: "Section-1" }, children: ["Section 1"] }
+		{ tag: "h1", attrs: { id: "Chapter-1" }, children: ["Chapter 1"] },
+		{ tag: "h2", attrs: { id: "Section-1" }, children: ["Section 1"] }
 	]);
 });

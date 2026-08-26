@@ -405,6 +405,22 @@ function generateTocAsideWithAnchorGenerator(markdown: string, tocTitle: string 
 }
 
 /**
+ * Removes HTML comments before any other parsing.
+ *
+ * A comment is not markup the reader should ever see, but an unclosed one is
+ * worse than visible: everything up to the next "-->" anywhere later in the
+ * file would be swallowed, taking headings with it. Books converted from PDF
+ * carry page markers like "<!-- Page 12 -->", and a truncated marker is common
+ * enough that the unclosed case needs its own rule - cut only to the end of the
+ * line, so the rest of the book survives.
+ */
+function stripHtmlComments(markdown: string): string {
+	return markdown
+		.replace(/<!--[\s\S]*?-->/g, "")
+		.replace(/<!--[^\n]*$/gm, "");
+}
+
+/**
  * Converts Markdown content directly into an array of TelegraphNode objects.
  * This function replaces the need for an intermediate HTML conversion step and 'mrkdwny' library.
  * It directly parses Markdown elements into the structure expected by the Telegra.ph API.
@@ -428,6 +444,8 @@ export function convertMarkdownToTelegraphNodes(
 	} = {},
 ): TelegraphNode[] {
 	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph" } = options;
+
+	markdown = stripHtmlComments(markdown);
 
 	const nodes: TelegraphNode[] = [];
 	let currentParagraphLines: string[] = [];
@@ -698,24 +716,33 @@ export function convertMarkdownToTelegraphNodes(
 			
 			const level = headingInfo.level;
 			const displayText = headingInfo.displayText;
-			let tag: 'h3' | 'h4' = 'h3';
+			let tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' = 'h3';
 
-			// Map headings to Telegraph API compatible tags with visual hierarchy preservation
-			// Telegraph API only supports h3 and h4 tags for headings
-			switch (level) {
-				case 1:
-				case 2:
-				case 3:
-					// H1, H2, H3 → h3 (highest available level in Telegraph API)
-					tag = 'h3';
-					break;
-				case 4:
-				case 5:
-				case 6:
-				default:
-					// H4 and below → h4
-					tag = 'h4';
-					break;
+			if (target === "epub") {
+				// EPUB is plain XHTML and has all six levels. Collapsing them the
+				// Telegraph way would flatten a book's structure: chapter headings
+				// and verse headings would become indistinguishable, and the
+				// navigation built from them could no longer be limited by depth.
+				const epubTags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const;
+				tag = epubTags[Math.min(Math.max(level, 1), 6) - 1] ?? 'h3';
+			} else {
+				// Map headings to Telegraph API compatible tags with visual hierarchy preservation
+				// Telegraph API only supports h3 and h4 tags for headings
+				switch (level) {
+					case 1:
+					case 2:
+					case 3:
+						// H1, H2, H3 → h3 (highest available level in Telegraph API)
+						tag = 'h3';
+						break;
+					case 4:
+					case 5:
+					case 6:
+					default:
+						// H4 and below → h4
+						tag = 'h4';
+						break;
+				}
 			}
 
 			const processedChildren = processInlineMarkdown(displayText);
