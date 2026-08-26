@@ -1285,6 +1285,12 @@ export class EnhancedCommands {
         "Split each file into separate xhtml documents at headings of this level " +
         "or shallower (e.g. 2). Keeps documents small enough for readers to load"
       )
+      .option(
+        "--epub-version <n>",
+        "EPUB version the package declares: 3 (default) or 2. " +
+        "Use 2 for older readers: it drops the navigation document and the EPUB 3 " +
+        "metadata, leaving the toc.ncx that such readers expect"
+      )
       .option("--language <lang>", "Book language code (default: 'ru')")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
@@ -1410,6 +1416,7 @@ export class EnhancedCommands {
       bookToc: options.bookToc === "start" || options.bookToc === "end" ? options.bookToc : undefined,
       bookTocDepth: options.bookTocDepth ? Number.parseInt(options.bookTocDepth, 10) : undefined,
       bookTocTitle: options.tocTitle,
+      epubVersion: options.epubVersion === "2" ? 2 : 3,
     });
 
     // Process files with dependencies.

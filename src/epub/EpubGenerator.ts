@@ -26,6 +26,7 @@ export class EpubGenerator {
 	private bookToc?: "start" | "end";
 	private bookTocDepth: number = 2;
 	private bookTocTitle: string = "Содержание";
+	private epubVersion: 2 | 3 = 3;
 	private chapters: Array<{
 		title: string;
 		content: TelegraphNode[];
@@ -58,6 +59,9 @@ export class EpubGenerator {
 		bookTocDepth?: number;
 		/** Heading of the whole-book contents page. */
 		bookTocTitle?: string;
+		/** Which EPUB version the package declares: 3 (default) or 2.
+		 * Version 2 is the wider-compatible fallback for older readers. */
+		epubVersion?: 2 | 3;
 	}) {
 		this.outputPath = resolve(options.outputPath);
 		this.title = options.title;
@@ -73,6 +77,7 @@ export class EpubGenerator {
 		// list, and a book with 12 000 verse headings must not open with them.
 		this.bookTocDepth = options.bookTocDepth ?? (Number.isFinite(this.tocDepth) ? this.tocDepth : 2);
 		this.bookTocTitle = options.bookTocTitle ?? "Содержание";
+		this.epubVersion = options.epubVersion ?? 3;
 	}
 
 	/**
@@ -664,7 +669,11 @@ export class EpubGenerator {
 			// 6. Generate navigation: nav.xhtml for EPUB 3, toc.ncx for older readers
 			const ncxContent = this.generateNcx();
 			writeFileSync(join(oebpsDir, "toc.ncx"), ncxContent, "utf-8");
-			writeFileSync(join(oebpsDir, "nav.xhtml"), this.generateNavXhtml(), "utf-8");
+			// Only for EPUB 3: a file that is not in the manifest makes an EPUB 2
+			// package invalid, and EPUB 2 has nowhere to declare this one.
+			if (this.epubVersion === 3) {
+				writeFileSync(join(oebpsDir, "nav.xhtml"), this.generateNavXhtml(), "utf-8");
+			}
 
 			// 7. Copy cover image if provided
 			if (this.cover) {
@@ -1058,18 +1067,28 @@ ${render(roots)}
 		}
 		const guideSection = guideRefs.length ? `	<guide>\n${guideRefs.join("\n")}\n	</guide>` : "";
 
+		// EPUB 2 has no navigation document and no "properties" attribute; the
+		// file is still written, but declaring it would make the package invalid
+		// for the very readers this version is meant to satisfy.
+		const navManifestItem = this.epubVersion === 3
+			? `		<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n`
+			: "";
+		// dcterms:modified is required in EPUB 3 and unknown to EPUB 2.
+		const modifiedMeta = this.epubVersion === 3
+			? `		<meta property="dcterms:modified">${now}</meta>\n`
+			: "";
+
 		return `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id">
+<package xmlns="http://www.idpf.org/2007/opf" version="${this.epubVersion}.0" unique-identifier="book-id">
 	<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 		<dc:title>${this.escapeHtml(this.title)}</dc:title>
 		<dc:creator>${this.escapeHtml(this.author)}</dc:creator>
 		<dc:language>${this.language}</dc:language>
 		<dc:identifier id="book-id">${this.identifier}</dc:identifier>
-		<meta property="dcterms:modified">${now}</meta>
+${modifiedMeta}
 	</metadata>
 	<manifest>
-		<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-		<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+${navManifestItem}		<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
 		<item id="css" href="style.css" media-type="text/css"/>
 ${manifestItems}
 	</manifest>
