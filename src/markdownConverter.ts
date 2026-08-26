@@ -80,8 +80,12 @@ export function extractTitleAndContent(markdown: string): {
  */
 function parseTable(tableLines: string[], asHtmlTable: boolean = false): TelegraphNode {
 	if (tableLines.length < 3) {
-		// Not a valid table, return as paragraphs
-		return { tag: "p", children: [tableLines.join("\n")] };
+		// Not a table after all. The lines still have to go through inline
+		// processing: returning them raw drops emphasis and links, which is how
+		// Sanskrit verses lost their italics - a śloka ends in a daṇḍa ("|"),
+		// so the pipe detector claimed the line and this branch handed it back
+		// untouched.
+		return { tag: "p", children: processInlineMarkdown(tableLines.join("\n")) };
 	}
 
 	// Parse header row
@@ -601,10 +605,17 @@ export function convertMarkdownToTelegraphNodes(
 		}
 
 		// Handle table detection and parsing
-		const isTableLine = line.includes("|") && line.trim() !== "";
 		// Separator must include at least one pipe to avoid catching horizontal rules like '---'
 		const isTableSeparator =
 			line.includes("|") && /^\s*\|?[\s\-|:]+\|?\s*$/.test(line);
+		// A pipe alone does not make a table: it is also the daṇḍa that ends a
+		// Sanskrit verse. Require the line that follows to be a header separator,
+		// or that a table is already open.
+		const nextLine = lines[i + 1] ?? "";
+		const nextIsSeparator =
+			nextLine.includes("|") && /^\s*\|?[\s\-|:]+\|?\s*$/.test(nextLine);
+		const isTableLine =
+			line.includes("|") && line.trim() !== "" && (inTable || nextIsSeparator);
 
 		if (isTableLine || isTableSeparator) {
 			if (!inTable) {
