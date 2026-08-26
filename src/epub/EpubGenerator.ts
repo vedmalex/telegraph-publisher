@@ -23,6 +23,9 @@ export class EpubGenerator {
 	private debug?: boolean;
 	private tocDepth: number;
 	private splitAt?: number;
+	private bookToc?: "start" | "end";
+	private bookTocDepth: number = 2;
+	private bookTocTitle: string = "Содержание";
 	private chapters: Array<{
 		title: string;
 		content: TelegraphNode[];
@@ -49,6 +52,12 @@ export class EpubGenerator {
 		 * level or shallower. Unset keeps one document per file, which for a book
 		 * where every verse is a heading means a single multi-megabyte document. */
 		splitAt?: number;
+		/** Where a whole-book contents page goes: "start", "end", or absent for none. */
+		bookToc?: "start" | "end";
+		/** Deepest heading level on the whole-book contents page. */
+		bookTocDepth?: number;
+		/** Heading of the whole-book contents page. */
+		bookTocTitle?: string;
 	}) {
 		this.outputPath = resolve(options.outputPath);
 		this.title = options.title;
@@ -59,6 +68,11 @@ export class EpubGenerator {
 		this.debug = options.debug;
 		this.tocDepth = options.tocDepth ?? Number.POSITIVE_INFINITY;
 		this.splitAt = options.splitAt;
+		this.bookToc = options.bookToc;
+		// The book page defaults to the navigation's own depth: it is the same
+		// list, and a book with 12 000 verse headings must not open with them.
+		this.bookTocDepth = options.bookTocDepth ?? (Number.isFinite(this.tocDepth) ? this.tocDepth : 2);
+		this.bookTocTitle = options.bookTocTitle ?? "Содержание";
 	}
 
 	/**
@@ -619,6 +633,15 @@ export class EpubGenerator {
 				htmlFiles.push(htmlFileName);
 			}
 
+			if (this.bookToc) {
+				writeFileSync(join(oebpsDir, "book-toc.html"), this.generateBookTocHtml(), "utf-8");
+				if (this.bookToc === "start") {
+					htmlFiles.unshift("book-toc.html");
+				} else {
+					htmlFiles.push("book-toc.html");
+				}
+			}
+
 			// 4. Generate CSS
 			const cssContent = this.generateCss();
 			writeFileSync(join(oebpsDir, "style.css"), cssContent, "utf-8");
@@ -830,15 +853,70 @@ blockquote code {
 	}
 
 	/**
+	 * Builds a contents page covering the whole book.
+	 *
+	 * It repeats what the reader's navigation already holds, so it is opt-in:
+	 * worth having where navigation is absent or ignored - reading the files in
+	 * a browser, printing - and unwelcome as twelve thousand lines in front of
+	 * the text. Its depth therefore follows the navigation's by default.
+	 */
+	private generateBookTocHtml(): string {
+		const render = (nodes: Array<{ label: string; href: string; children: any[] }>): string =>
+			`<ul>${nodes.map(node =>
+				`<li><a href="${node.href}">${this.escapeHtml(node.label)}</a>` +
+				(node.children.length ? render(node.children) : "") +
+				`</li>`
+			).join("")}</ul>`;
+
+		const roots: Array<{ label: string; href: string; children: any[]; level: number }> = [];
+		const stack: Array<{ node: any; level: number }> = [];
+
+		for (const chapter of this.chapters) {
+			const chapterNode = { label: chapter.title, href: `${chapter.id}.html`, children: [], level: 0 };
+			roots.push(chapterNode);
+			stack.length = 0;
+			stack.push({ node: chapterNode, level: 0 });
+
+			for (const heading of chapter.headings) {
+				if (heading.level > this.bookTocDepth) continue;
+				while (stack.length > 1 && stack[stack.length - 1]!.level >= heading.level) stack.pop();
+				const parent = stack[stack.length - 1]!;
+				const node = {
+					label: heading.textForAnchor,
+					href: `${chapter.id}.html#${AnchorGenerator.generateAnchor(heading)}`,
+					children: [],
+					level: heading.level,
+				};
+				parent.node.children.push(node);
+				stack.push({ node, level: heading.level });
+			}
+		}
+
+		return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head>
+	<meta charset="UTF-8"/>
+	<title>${this.escapeHtml(this.bookTocTitle)}</title>
+	<link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+	<h1 id="book-toc">${this.escapeHtml(this.bookTocTitle)}</h1>
+${render(roots)}
+</body>
+</html>`;
+	}
+
+	/**
 	 * Generate content.opf (package document)
 	 */
 	private generateOpf(htmlFiles: string[]): string {
 		const now = new Date().toISOString();
+		// Identifiers follow the file name rather than the position: inserting a
+		// contents page must not renumber every chapter after it.
+		const idOf = (file: string) => file.replace(/\.html$/, "");
 		let manifestItems = htmlFiles
-			.map(
-				(file, index) =>
-					`		<item id="chapter-${index + 1}" href="${file}" media-type="application/xhtml+xml"/>`
-			)
+			.map(file => `		<item id="${idOf(file)}" href="${file}" media-type="application/xhtml+xml"/>`)
 			.join("\n");
 
 		// Add cover image to manifest if provided
@@ -848,16 +926,18 @@ blockquote code {
 		}
 
 		const spineItems = htmlFiles
-			.map((_, index) => `		<itemref idref="chapter-${index + 1}"/>`)
+			.map(file => `		<itemref idref="${idOf(file)}"/>`)
 			.join("\n");
 
-		let guideSection = "";
+		const guideRefs: string[] = [];
 		if (this.cover) {
 			const coverFilename = `cover${extname(this.cover)}`;
-			guideSection = `	<guide>
-		<reference href="${coverFilename}" type="cover" title="Cover"/>
-	</guide>`;
+			guideRefs.push(`		<reference href="${coverFilename}" type="cover" title="Cover"/>`);
 		}
+		if (this.bookToc) {
+			guideRefs.push(`		<reference href="book-toc.html" type="toc" title="${this.escapeHtml(this.bookTocTitle)}"/>`);
+		}
+		const guideSection = guideRefs.length ? `	<guide>\n${guideRefs.join("\n")}\n	</guide>` : "";
 
 		return `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id">

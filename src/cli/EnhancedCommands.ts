@@ -1263,6 +1263,19 @@ export class EnhancedCommands {
         "Use 2 for books where every verse is a heading, so navigation lists chapters only"
       )
       .option(
+        "--chapter-toc <pos>",
+        "In-text list of a chapter's own headings: start | end | none | auto. " +
+        "auto (default) adds it at the start when --toc-depth hides those headings " +
+        "from the reader's navigation, and omits it otherwise"
+      )
+      .option("--chapter-toc-depth <n>", "Deepest heading level in the chapter's in-text list (default: no limit)")
+      .option(
+        "--book-toc <pos>",
+        "Add a contents page for the whole book: start | end. Off by default, " +
+        "since it repeats the reader's own navigation"
+      )
+      .option("--book-toc-depth <n>", "Deepest heading level on the book contents page (default: --toc-depth, else 2)")
+      .option(
         "--split-at <n>",
         "Split each file into separate xhtml documents at headings of this level " +
         "or shallower (e.g. 2). Keeps documents small enough for readers to load"
@@ -1386,6 +1399,9 @@ export class EnhancedCommands {
       debug: options.debug,
       tocDepth: options.tocDepth ? Number.parseInt(options.tocDepth, 10) : undefined,
       splitAt: options.splitAt ? Number.parseInt(options.splitAt, 10) : undefined,
+      bookToc: options.bookToc === "start" || options.bookToc === "end" ? options.bookToc : undefined,
+      bookTocDepth: options.bookTocDepth ? Number.parseInt(options.bookTocDepth, 10) : undefined,
+      bookTocTitle: options.tocTitle,
     });
 
     // Process files with dependencies.
