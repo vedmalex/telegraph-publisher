@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { TestHelpers } from "../test-utils/TestHelpers";
@@ -308,6 +309,78 @@ describe("EpubGenerator", () => {
 			await generator.generate();
 
 			expect(existsSync(outputPath)).toBe(true);
+		});
+	});
+
+	describe("title page", () => {
+		/** Read one file out of the generated package. */
+		const entry = (epubPath: string, name: string): string =>
+			execFileSync("unzip", ["-p", epubPath, name], { encoding: "utf-8" });
+
+		const build = async (options: Record<string, unknown>) => {
+			const testFile = join(tempDir, "chapter1.md");
+			TestHelpers.createTestFile(testFile, "# Chapter 1\n\nContent.");
+			const outputPath = join(outputDir, "titled.epub");
+			const generator = new EpubGenerator({
+				outputPath,
+				title: "Тестовая книга",
+				author: "Тестовый автор",
+				...options,
+			});
+			await generator.addChapterFromFile(testFile);
+			await generator.generate();
+			return outputPath;
+		};
+
+		it("omits the title page unless asked for one", async () => {
+			const epub = await build({});
+			expect(entry(epub, "OEBPS/content.opf")).not.toContain("title-page.html");
+		});
+
+		it("puts the title page first and names the book on it", async () => {
+			const epub = await build({ titlePage: true });
+
+			const page = entry(epub, "OEBPS/title-page.html");
+			expect(page).toContain("Тестовая книга");
+			expect(page).toContain("Тестовый автор");
+			expect(page).toContain('epub:type="titlepage"');
+
+			// First in the spine: a reader opening the book sees what the book is
+			// before anything else.
+			const opf = entry(epub, "OEBPS/content.opf");
+			const spine = opf.slice(opf.indexOf("<spine"));
+			expect(spine.indexOf("title-page")).toBeLessThan(spine.indexOf("chapter-1"));
+			expect(opf).toContain('type="title-page"');
+		});
+
+		it("records the imprint details it was given", async () => {
+			const epub = await build({
+				titlePage: true,
+				publisher: "Издательство",
+				pubDate: "2026",
+				translator: "Переводчик",
+				series: "Серия",
+				description: "Описание",
+			});
+
+			const opf = entry(epub, "OEBPS/content.opf");
+			expect(opf).toContain("<dc:publisher>Издательство</dc:publisher>");
+			expect(opf).toContain("<dc:date>2026</dc:date>");
+			expect(opf).toContain("Переводчик");
+			expect(opf).toContain("<dc:description>Описание</dc:description>");
+			expect(opf).toContain('property="belongs-to-collection"');
+
+			const page = entry(epub, "OEBPS/title-page.html");
+			expect(page).toContain("Серия");
+			expect(page).toContain("Издательство, 2026");
+		});
+
+		it("marks the title page and the body in the landmarks", async () => {
+			const epub = await build({ titlePage: true });
+			const nav = entry(epub, "OEBPS/nav.xhtml");
+			expect(nav).toContain('epub:type="landmarks"');
+			expect(nav).toContain('epub:type="titlepage"');
+			expect(nav).toContain('epub:type="bodymatter"');
 		});
 	});
 

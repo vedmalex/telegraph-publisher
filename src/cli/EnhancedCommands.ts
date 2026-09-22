@@ -1292,6 +1292,17 @@ export class EnhancedCommands {
         "metadata, leaving the toc.ncx that such readers expect"
       )
       .option("--language <lang>", "Book language code (default: 'ru')")
+      .option(
+        "--title-page",
+        "Put a title page first, showing the book's name, its author and any " +
+        "imprint details given below. Without one a reader that shows no cover " +
+        "falls back to the file name, which is why such books are listed by author alone"
+      )
+      .option("--publisher <name>", "Publisher, for the title page and the package metadata")
+      .option("--pub-date <date>", "Publication date (e.g. 2026), for the title page and metadata")
+      .option("--translator <name>", "Translator, shown on the title page and recorded as a contributor")
+      .option("--series <name>", "Series or collection the book belongs to")
+      .option("--description <text>", "One-line description for the title page and metadata")
       .option("-v, --verbose", "Show detailed progress information")
       .action(async (options) => {
         try {
@@ -1417,6 +1428,12 @@ export class EnhancedCommands {
       bookTocDepth: options.bookTocDepth ? Number.parseInt(options.bookTocDepth, 10) : undefined,
       bookTocTitle: options.tocTitle,
       epubVersion: options.epubVersion === "2" ? 2 : 3,
+      titlePage: options.titlePage === true,
+      publisher: options.publisher,
+      pubDate: options.pubDate,
+      translator: options.translator,
+      series: options.series,
+      description: options.description,
     });
 
     // Process files with dependencies.

@@ -27,6 +27,12 @@ export class EpubGenerator {
 	private bookTocDepth: number = 2;
 	private bookTocTitle: string = "Содержание";
 	private epubVersion: 2 | 3 = 3;
+	private titlePage: boolean = false;
+	private publisher?: string;
+	private pubDate?: string;
+	private translator?: string;
+	private series?: string;
+	private description?: string;
 	private chapters: Array<{
 		title: string;
 		content: TelegraphNode[];
@@ -62,6 +68,17 @@ export class EpubGenerator {
 		/** Which EPUB version the package declares: 3 (default) or 2.
 		 * Version 2 is the wider-compatible fallback for older readers. */
 		epubVersion?: 2 | 3;
+		/** Put a title page first: the book's name, its author and whatever
+		 * imprint details are given. Without one a reader that shows no cover
+		 * falls back to the file name, which is why such books appear in a
+		 * library listed by author alone. */
+		titlePage?: boolean;
+		/** Imprint details for the title page and the package metadata. */
+		publisher?: string;
+		pubDate?: string;
+		translator?: string;
+		series?: string;
+		description?: string;
 	}) {
 		this.outputPath = resolve(options.outputPath);
 		this.title = options.title;
@@ -78,6 +95,12 @@ export class EpubGenerator {
 		this.bookTocDepth = options.bookTocDepth ?? (Number.isFinite(this.tocDepth) ? this.tocDepth : 2);
 		this.bookTocTitle = options.bookTocTitle ?? "Содержание";
 		this.epubVersion = options.epubVersion ?? 3;
+		this.titlePage = options.titlePage ?? false;
+		this.publisher = options.publisher;
+		this.pubDate = options.pubDate;
+		this.translator = options.translator;
+		this.series = options.series;
+		this.description = options.description;
 	}
 
 	/**
@@ -145,7 +168,7 @@ export class EpubGenerator {
 					}
 
 					if (looksLikeTable && rows.length > 0) {
-						const headerRow = rows[0];
+						const headerRow = rows[0] ?? [];
 						const headers: string[] = [];
 						for (const cell of headerRow) {
 							const sepIndex = cell.indexOf(":");
@@ -658,6 +681,14 @@ export class EpubGenerator {
 				}
 			}
 
+			// The title page goes ahead of everything, including a contents page
+			// placed at the start: a reader opening the book should see what the
+			// book is before its table of contents.
+			if (this.titlePage) {
+				writeFileSync(join(oebpsDir, "title-page.html"), this.generateTitlePageHtml(), "utf-8");
+				htmlFiles.unshift("title-page.html");
+			}
+
 			// 4. Generate CSS
 			const cssContent = this.generateCss();
 			writeFileSync(join(oebpsDir, "style.css"), cssContent, "utf-8");
@@ -762,6 +793,10 @@ export class EpubGenerator {
 				`</li>`
 			).join("")}</ol>`;
 
+		const firstChapter = this.chapters[0];
+		const firstChapterHref = firstChapter ? `${firstChapter.id}.html` : "";
+		const firstChapterLabel = firstChapter ? firstChapter.title : "";
+
 		const roots: NavItem[] = this.chapters.map(chapter => {
 			const node: NavItem = { label: chapter.title, href: `${chapter.id}.html`, children: [] };
 			const stack: Array<{ node: NavItem; level: number }> = [{ node, level: 0 }];
@@ -781,6 +816,24 @@ export class EpubGenerator {
 			return node;
 		});
 
+		// Landmarks tell a reader where the book begins and where its title page
+		// is. Without them "go to the beginning" lands on whatever file happens
+		// to be first in the spine.
+		const landmarkItems = [
+			this.titlePage
+				? `			<li><a epub:type="titlepage" href="title-page.html">${this.escapeHtml(this.title)}</a></li>`
+				: "",
+			this.bookToc
+				? `			<li><a epub:type="toc" href="book-toc.html">${this.escapeHtml(this.bookTocTitle)}</a></li>`
+				: "",
+			firstChapterHref
+				? `			<li><a epub:type="bodymatter" href="${this.escapeHtml(this.encodeHref(firstChapterHref))}">${this.escapeHtml(firstChapterLabel)}</a></li>`
+				: "",
+		].filter(Boolean).join("\n");
+		const landmarks = landmarkItems
+			? `	<nav epub:type="landmarks" id="landmarks" hidden="hidden">\n		<h1>Ориентиры</h1>\n		<ol>\n${landmarkItems}\n		</ol>\n	</nav>\n`
+			: "";
+
 		return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${this.language}" xml:lang="${this.language}">
@@ -793,7 +846,7 @@ export class EpubGenerator {
 		<h1>${this.escapeHtml(this.bookTocTitle)}</h1>
 ${render(roots)}
 	</nav>
-</body>
+${landmarks}</body>
 </html>`;
 	}
 
@@ -819,7 +872,49 @@ ${render(roots)}
 	}
 
 	private generateCss(): string {
-		return `/* Строка переходов внутри длинной главы.
+		return `/* Титульная страница. Набрана без картинки: типографика читается на
+   любом экране, включая электронные чернила, и ничего не весит. Отступ сверху
+   задан в процентах высоты, поэтому заголовок остаётся в верхней трети и на
+   телефоне, и на планшете. */
+.title-page {
+	text-align: center;
+	margin-top: 18%;
+}
+
+.title-series {
+	font-size: 0.9em;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #555;
+	margin-bottom: 1.5em;
+}
+
+.title-name {
+	font-size: 2em;
+	line-height: 1.25;
+	margin: 0 0 0.8em;
+	page-break-after: avoid;
+}
+
+.title-author {
+	font-size: 1.15em;
+	margin: 0 0 2em;
+}
+
+.title-translator,
+.title-description {
+	font-size: 0.95em;
+	color: #444;
+	margin: 0 0 0.6em;
+}
+
+.title-imprint {
+	font-size: 0.85em;
+	color: #666;
+	margin-top: 3em;
+}
+
+/* Строка переходов внутри длинной главы.
    Набрана мельче основного текста и приглушена: это служебная строка, а не
    часть произведения. Отступы вокруг цифр делают цель достаточно крупной,
    чтобы по ней можно было попасть пальцем и на электронных чернилах. */
@@ -988,6 +1083,41 @@ blockquote code {
 	 * a browser, printing - and unwelcome as twelve thousand lines in front of
 	 * the text. Its depth therefore follows the navigation's by default.
 	 */
+	/**
+	 * The book's title page: its name, its author and whatever imprint details
+	 * were given. No image is drawn — the page is typographic, so it stays
+	 * legible at any size and adds nothing to the file.
+	 */
+	private generateTitlePageHtml(): string {
+		const lines = [
+			this.series ? `		<p class="title-series">${this.escapeHtml(this.series)}</p>` : "",
+			`		<h1 class="title-name">${this.escapeHtml(this.title)}</h1>`,
+			`		<p class="title-author">${this.escapeHtml(this.author)}</p>`,
+			this.translator
+				? `		<p class="title-translator">Перевод: ${this.escapeHtml(this.translator)}</p>`
+				: "",
+			this.description ? `		<p class="title-description">${this.escapeHtml(this.description)}</p>` : "",
+			this.publisher || this.pubDate
+				? `		<p class="title-imprint">${this.escapeHtml([this.publisher, this.pubDate].filter(Boolean).join(", "))}</p>`
+				: "",
+		].filter(Boolean).join("\n");
+
+		return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${this.language}" xml:lang="${this.language}">
+<head>
+	<meta charset="UTF-8"/>
+	<title>${this.escapeHtml(this.title)}</title>
+	<link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+	<section epub:type="titlepage" class="title-page">
+${lines}
+	</section>
+</body>
+</html>`;
+	}
+
 	private generateBookTocHtml(): string {
 		const render = (nodes: Array<{ label: string; href: string; children: any[] }>): string =>
 			`<ul>${nodes.map(node =>
@@ -1058,6 +1188,9 @@ ${render(roots)}
 			.join("\n");
 
 		const guideRefs: string[] = [];
+		if (this.titlePage) {
+			guideRefs.push(`		<reference href="title-page.html" type="title-page" title="${this.escapeHtml(this.title)}"/>`);
+		}
 		if (this.cover) {
 			const coverFilename = `cover${extname(this.cover)}`;
 			guideRefs.push(`		<reference href="${coverFilename}" type="cover" title="Cover"/>`);
@@ -1078,6 +1211,20 @@ ${render(roots)}
 			? `		<meta property="dcterms:modified">${now}</meta>\n`
 			: "";
 
+		// Imprint details belong in the package too, not only on the page: a
+		// library groups books by publisher and series, and reads them here.
+		const extraMeta = [
+			this.publisher ? `		<dc:publisher>${this.escapeHtml(this.publisher)}</dc:publisher>` : "",
+			this.pubDate ? `		<dc:date>${this.escapeHtml(this.pubDate)}</dc:date>` : "",
+			this.translator
+				? `		<dc:contributor id="translator">${this.escapeHtml(this.translator)}</dc:contributor>`
+				: "",
+			this.description ? `		<dc:description>${this.escapeHtml(this.description)}</dc:description>` : "",
+			this.series ? `		<meta property="belongs-to-collection">${this.escapeHtml(this.series)}</meta>` : "",
+		].filter(Boolean).join("\n");
+		const extraMetaBlock = extraMeta ? `${extraMeta}\n` : "";
+
+
 		return `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="${this.epubVersion}.0" unique-identifier="book-id">
 	<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -1085,7 +1232,7 @@ ${render(roots)}
 		<dc:creator>${this.escapeHtml(this.author)}</dc:creator>
 		<dc:language>${this.language}</dc:language>
 		<dc:identifier id="book-id">${this.identifier}</dc:identifier>
-${modifiedMeta}
+${extraMetaBlock}${modifiedMeta}
 	</metadata>
 	<manifest>
 ${navManifestItem}		<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
@@ -1159,11 +1306,11 @@ ${guideSection}
 					// If heading.level > stack.top.level -> child of stack.top
 					// If heading.level <= stack.top.level -> sibling of stack.top (so parent is stack.pop)
 
-					while (stack.length > 1 && stack[stack.length - 1].level >= heading.level) {
+					while (stack.length > 1 && stack[stack.length - 1]!.level >= heading.level) {
 						stack.pop();
 					}
 
-					const parent = stack[stack.length - 1];
+					const parent = stack[stack.length - 1]!;
 					const anchor = AnchorGenerator.generateAsciiAnchor(heading);
 					const newNode: NavNode = {
 						label: heading.textForAnchor,
