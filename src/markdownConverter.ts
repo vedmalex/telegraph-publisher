@@ -488,6 +488,68 @@ function stripHtmlComments(markdown: string): string {
 		.replace(/<!--[^\n]*$/gm, "");
 }
 
+/** A page marker left by PDF conversion: "<!-- Page 12 -->". */
+const PAGE_MARKER = /<!--\s*(?:Page|Страница)\s+(\d+)\s*-->/gi;
+
+/**
+ * Turns page markers into EPUB 3 page breaks.
+ *
+ * The printed page number is worth keeping — it is how a translation is
+ * checked against its source — but it is not a heading and has no business in
+ * the table of contents. EPUB has a place for exactly this: a pagebreak
+ * carries the number, readers offer "go to page", and the numbers live in
+ * their own page-list, not in the contents.
+ */
+const PAGE_PLACEHOLDER = "\u0000page:";
+
+function markPageBreaks(markdown: string): { markdown: string; pages: number[] } {
+	const pages: number[] = [];
+	const out = markdown.replace(PAGE_MARKER, (_match, digits: string) => {
+		const page = Number.parseInt(digits, 10);
+		pages.push(page);
+		// A placeholder, not the span itself: written as HTML here it would be
+		// escaped into the text and the reader would see the markup.
+		return `${PAGE_PLACEHOLDER}${page}\u0000`;
+	});
+	return { markdown: out, pages };
+}
+
+/** Replaces the placeholders left above with real page-break nodes. */
+function injectPageBreaks(nodes: (TelegraphNode | string)[]): (TelegraphNode | string)[] {
+	const out: (TelegraphNode | string)[] = [];
+	for (const node of nodes) {
+		if (typeof node === "string") {
+			if (!node.includes(PAGE_PLACEHOLDER)) {
+				out.push(node);
+				continue;
+			}
+			const parts = node.split(/\u0000page:(\d+)\u0000/);
+			parts.forEach((part, index) => {
+				if (index % 2 === 1) {
+					out.push({
+						tag: "span",
+						attrs: {
+							"epub:type": "pagebreak",
+							role: "doc-pagebreak",
+							id: `page-${part}`,
+							"aria-label": part,
+						},
+						children: [],
+					});
+				} else if (part) {
+					out.push(part);
+				}
+			});
+			continue;
+		}
+		if (node.children) {
+			node.children = injectPageBreaks(node.children);
+		}
+		out.push(node);
+	}
+	return out;
+}
+
 /**
  * Converts Markdown content directly into an array of TelegraphNode objects.
  * This function replaces the need for an intermediate HTML conversion step and 'mrkdwny' library.
@@ -525,10 +587,19 @@ export function convertMarkdownToTelegraphNodes(
 		navThreshold?: number;
 		/** Most jump points a row may hold. */
 		navMaxItems?: number;
+		/** Keep printed page numbers as EPUB page breaks instead of dropping them. */
+		pageBreaks?: boolean;
+		/** Filled with the page numbers found, for the package's page-list. */
+		pageList?: number[];
 	} = {},
 ): TelegraphNode[] {
 	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph", tocDepth = Number.POSITIVE_INFINITY, tocNested = false, tocPosition = "start", tocMode = "full", navCaption = "К тексту:", navThreshold, navMaxItems } = options;
 
+	if (options.pageBreaks) {
+		const marked = markPageBreaks(markdown);
+		markdown = marked.markdown;
+		options.pageList?.push(...marked.pages);
+	}
 	markdown = stripHtmlComments(markdown);
 
 	const nodes: TelegraphNode[] = [];
@@ -1090,7 +1161,7 @@ export function convertMarkdownToTelegraphNodes(
 	nodes.push(...tocNodes);
 
 	// Filter out any empty paragraph nodes that might have been created unnecessarily
-	return nodes.filter(
+	const cleaned = nodes.filter(
 		(node) =>
 			!(
 				node.tag === "p" &&
@@ -1099,6 +1170,10 @@ export function convertMarkdownToTelegraphNodes(
 					(node.children.length === 1 && node.children[0] === ""))
 			),
 	);
+
+	return options.pageBreaks
+		? (injectPageBreaks(cleaned) as TelegraphNode[])
+		: cleaned;
 }
 
 function processInlineMarkdown(text: string): (string | TelegraphNode)[] {

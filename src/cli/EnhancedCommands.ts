@@ -1298,6 +1298,13 @@ export class EnhancedCommands {
         "imprint details given below. Without one a reader that shows no cover " +
         "falls back to the file name, which is why such books are listed by author alone"
       )
+      .option(
+        "--page-breaks",
+        "Keep the printed page numbers from \"<!-- Page N -->\" markers as EPUB " +
+        "page breaks and list them in the navigation. The number is how a " +
+        "translation is checked against its source, but it is not a heading and " +
+        "does not belong in the table of contents"
+      )
       .option("--publisher <name>", "Publisher, for the title page and the package metadata")
       .option("--pub-date <date>", "Publication date (e.g. 2026), for the title page and metadata")
       .option("--translator <name>", "Translator, shown on the title page and recorded as a contributor")
@@ -1429,6 +1436,7 @@ export class EnhancedCommands {
       bookTocTitle: options.tocTitle,
       epubVersion: options.epubVersion === "2" ? 2 : 3,
       titlePage: options.titlePage === true,
+      pageBreaks: options.pageBreaks === true,
       publisher: options.publisher,
       pubDate: options.pubDate,
       translator: options.translator,

@@ -332,6 +332,17 @@ export class ContentProcessor {
       const trimmed = line.trim();
       if (trimmed === '') continue;
 
+      // An HTML comment is never a title: the reader never sees it. Books
+      // converted from PDF open with a page marker like "<!-- Page 1 -->",
+      // and taking it as the title put that marker in the table of contents
+      // in place of the chapter's name.
+      if (trimmed.startsWith('<!--')) continue;
+
+      // A horizontal rule is not a title either. Books converted from PDF put
+      // one between every pair of pages, so with the page markers skipped it
+      // is what the first line becomes.
+      if (/^([-*_])\1{2,}$/.test(trimmed.replace(/\s+/g, ''))) continue;
+
       // Check for markdown heading
       const headingMatch = trimmed.match(/^(#+)\s*(.*)/);
       if (headingMatch && headingMatch[2]) {

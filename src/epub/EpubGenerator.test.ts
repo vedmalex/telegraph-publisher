@@ -384,6 +384,61 @@ describe("EpubGenerator", () => {
 		});
 	});
 
+	describe("page numbers", () => {
+		const entry = (epubPath: string, name: string): string =>
+			execFileSync("unzip", ["-p", epubPath, name], { encoding: "utf-8" });
+
+		const build = async (options: Record<string, unknown>) => {
+			const testFile = join(tempDir, "paged.md");
+			TestHelpers.createTestFile(
+				testFile,
+				"<!-- Page 1 -->\n\n## Первая глава\n\nТекст.\n\n---\n\n<!-- Page 2 -->\n\nЕщё текст.\n",
+			);
+			const outputPath = join(outputDir, "paged.epub");
+			const generator = new EpubGenerator({
+				outputPath,
+				title: "Книга",
+				author: "Автор",
+				...options,
+			});
+			await generator.addChapterFromFile(testFile);
+			await generator.generate();
+			return outputPath;
+		};
+
+		it("drops page markers when page breaks are not asked for", async () => {
+			const epub = await build({});
+			expect(entry(epub, "OEBPS/chapter-1.html")).not.toContain("doc-pagebreak");
+			expect(entry(epub, "OEBPS/nav.xhtml")).not.toContain("page-list");
+		});
+
+		it("keeps printed page numbers out of the contents and in a page-list", async () => {
+			const epub = await build({ pageBreaks: true });
+
+			// The number is in the text as a page break, not as words.
+			const chapter = entry(epub, "OEBPS/chapter-1.html");
+			expect(chapter).toContain('epub:type="pagebreak"');
+			expect(chapter).toContain('id="page-1"');
+			expect(chapter).not.toContain("&lt;span");
+
+			const nav = entry(epub, "OEBPS/nav.xhtml");
+			expect(nav).toContain('epub:type="page-list"');
+			expect(nav).toContain('href="chapter-1.html#page-2"');
+
+			// …and the contents lists the chapter, not the page marker.
+			const toc = nav.slice(nav.indexOf('epub:type="toc"'), nav.indexOf("page-list"));
+			expect(toc).not.toContain("Page 1");
+			expect(toc).not.toContain("#page-1");
+		});
+
+		it("never titles a chapter with a page marker or a rule", async () => {
+			const epub = await build({ pageBreaks: true });
+			const nav = entry(epub, "OEBPS/nav.xhtml");
+			expect(nav).not.toContain("&lt;!-- Page");
+			expect(nav).toContain("Первая глава");
+		});
+	});
+
 	describe("content processing", () => {
 		it("should handle markdown formatting correctly", async () => {
 			const testFile = join(tempDir, "formatted.md");

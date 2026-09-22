@@ -28,6 +28,9 @@ export class EpubGenerator {
 	private bookTocTitle: string = "Содержание";
 	private epubVersion: 2 | 3 = 3;
 	private titlePage: boolean = false;
+	private pageBreaks: boolean = false;
+	/** Printed page number → the chapter file it falls in, for the page-list. */
+	private pageHrefs: Map<number, string> = new Map();
 	private publisher?: string;
 	private pubDate?: string;
 	private translator?: string;
@@ -73,6 +76,11 @@ export class EpubGenerator {
 		 * falls back to the file name, which is why such books appear in a
 		 * library listed by author alone. */
 		titlePage?: boolean;
+		/** Keep the printed page numbers from "<!-- Page N -->" as EPUB page
+		 * breaks, and list them in the navigation. The number is how a
+		 * translation is checked against its source, but it is not a heading
+		 * and does not belong in the table of contents. */
+		pageBreaks?: boolean;
 		/** Imprint details for the title page and the package metadata. */
 		publisher?: string;
 		pubDate?: string;
@@ -96,6 +104,7 @@ export class EpubGenerator {
 		this.bookTocTitle = options.bookTocTitle ?? "Содержание";
 		this.epubVersion = options.epubVersion ?? 3;
 		this.titlePage = options.titlePage ?? false;
+		this.pageBreaks = options.pageBreaks ?? false;
 		this.publisher = options.publisher;
 		this.pubDate = options.pubDate;
 		this.translator = options.translator;
@@ -430,6 +439,7 @@ export class EpubGenerator {
 		}
 
 		// Convert markdown to TelegraphNode[] (reusing the same converter and ToC options)
+		const pagesInChapter: number[] = [];
 		const nodesRaw = convertMarkdownToTelegraphNodes(contentWithoutDuplicateTitle, {
 			generateToc: options.generateToc !== false, // Default to true if not explicitly disabled
 			inlineToC: options.inlineToC === true, // Default to false for EPUB, true only if explicitly enabled
@@ -443,6 +453,8 @@ export class EpubGenerator {
 			navThreshold: options.navThreshold,
 			navMaxItems: options.navMaxItems,
 			target: "epub",
+			pageBreaks: this.pageBreaks,
+			pageList: pagesInChapter,
 		});
 
 		// Transform legacy list-based tables into semantic tables for EPUB
@@ -471,6 +483,12 @@ export class EpubGenerator {
 		// documents a file becomes is only known after it has been split.
 		if (isFirstOfFile) {
 			this.chapterPathMap.set(resolve(filePath), `${chapterId}.html`);
+		}
+
+		for (const page of pagesInChapter) {
+			if (!this.pageHrefs.has(page)) {
+				this.pageHrefs.set(page, `${chapterId}.html#page-${page}`);
+			}
 		}
 
 		this.chapters.push({
@@ -830,6 +848,17 @@ export class EpubGenerator {
 				? `			<li><a epub:type="bodymatter" href="${this.escapeHtml(this.encodeHref(firstChapterHref))}">${this.escapeHtml(firstChapterLabel)}</a></li>`
 				: "",
 		].filter(Boolean).join("\n");
+		// The printed page numbers go in their own list, never in the contents:
+		// a reader offers "go to page" from here, and the table of contents
+		// stays a list of sections.
+		const pageItems = [...this.pageHrefs.entries()]
+			.sort((a, b) => a[0] - b[0])
+			.map(([page, href]) => `			<li><a href="${href}">${page}</a></li>`)
+			.join("\n");
+		const pageList = pageItems
+			? `	<nav epub:type="page-list" id="page-list" hidden="hidden">\n		<h1>Страницы</h1>\n		<ol>\n${pageItems}\n		</ol>\n	</nav>\n`
+			: "";
+
 		const landmarks = landmarkItems
 			? `	<nav epub:type="landmarks" id="landmarks" hidden="hidden">\n		<h1>Ориентиры</h1>\n		<ol>\n${landmarkItems}\n		</ol>\n	</nav>\n`
 			: "";
@@ -846,7 +875,7 @@ export class EpubGenerator {
 		<h1>${this.escapeHtml(this.bookTocTitle)}</h1>
 ${render(roots)}
 	</nav>
-${landmarks}</body>
+${landmarks}${pageList}</body>
 </html>`;
 	}
 
