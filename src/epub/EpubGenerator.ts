@@ -13,6 +13,13 @@ import { PathResolver } from "../utils/PathResolver";
  * EPUB Generator that reuses the existing Telegraph publication mechanism
  * Converts TelegraphNode JSON structure to EPUB format
  */
+interface BundledImage {
+	id: string;
+	diskPath: string;
+	epubHref: string;
+	mediaType: string;
+}
+
 export class EpubGenerator {
 	private outputPath: string;
 	private title: string;
@@ -44,7 +51,9 @@ export class EpubGenerator {
 		headings: HeadingInfo[];
 		headingAnchor?: string;
 	}> = [];
-	private chapterPathMap: Map<string, string> = new Map();
+		private chapterPathMap: Map<string, string> = new Map();
+	private bundledImages: Map<string, BundledImage> = new Map();
+	private usedImageFilenames: Set<string> = new Set();
 
 	constructor(options: {
 		outputPath: string;
@@ -652,8 +661,11 @@ export class EpubGenerator {
 		// point at a file that has not been processed yet, and with splitting on
 		// its document name is not known until then.
 		const linkResolver = new LinkResolver();
+		this.bundledImages.clear();
+		this.usedImageFilenames.clear();
 		for (const chapter of this.chapters) {
 			chapter.content = await this.resolveLinksInNodes(chapter.content, chapter.sourcePath, linkResolver);
+			chapter.content = this.resolveImagesInNodes(chapter.content, chapter.sourcePath);
 		}
 
 		const epubDir = join(dirname(this.outputPath), `.epub-temp-${Date.now()}`);
@@ -731,6 +743,15 @@ export class EpubGenerator {
 					copyFileSync(this.cover, join(oebpsDir, coverFilename));
 				} else {
 					throw new Error(`Cover image file not found: ${this.cover}`);
+				}
+			}
+
+			// 7b. Copy bundled content images
+			if (this.bundledImages.size > 0) {
+				const imagesDir = join(oebpsDir, "images");
+				mkdirSync(imagesDir, { recursive: true });
+				for (const img of this.bundledImages.values()) {
+					copyFileSync(img.diskPath, join(oebpsDir, img.epubHref));
 				}
 			}
 
@@ -1101,6 +1122,17 @@ blockquote code {
 	display: block;
 	background-color: transparent;
 	padding: 0;
+}
+
+/* ===================== */
+/* Images                */
+/* ===================== */
+
+img {
+	max-width: 100%;
+	height: auto;
+	display: block;
+	margin: 1em auto;
 }`;
 	}
 
@@ -1212,6 +1244,11 @@ ${render(roots)}
 			manifestItems = `		<item id="cover" href="${coverFilename}" media-type="${this.getCoverMediaType()}" properties="cover-image"/>\n${manifestItems}`;
 		}
 
+		// Add bundled content images to manifest
+		for (const img of this.bundledImages.values()) {
+			manifestItems += `\n		<item id="${img.id}" href="${img.epubHref}" media-type="${img.mediaType}"/>`;
+		}
+
 		const spineItems = htmlFiles
 			.map(file => `		<itemref idref="${idOf(file)}"/>`)
 			.join("\n");
@@ -1278,20 +1315,152 @@ ${guideSection}
 	/**
 	 * Get media type for cover image
 	 */
-	private getCoverMediaType(): string {
-		if (!this.cover) return "image/jpeg"; // default
+	/**
+	 * Get media type for image file
+	 */
+	private getImageMediaType(filePath?: string): string {
+		if (!filePath) return "image/jpeg"; // default
 
-		const ext = extname(this.cover).toLowerCase();
+		const ext = extname(filePath).toLowerCase();
 		switch (ext) {
 			case ".jpg":
 			case ".jpeg":
 				return "image/jpeg";
 			case ".png":
 				return "image/png";
+			case ".gif":
+				return "image/gif";
+			case ".svg":
+				return "image/svg+xml";
+			case ".webp":
+				return "image/webp";
 			default:
 				return "image/jpeg"; // fallback
 		}
 	}
+
+	/**
+	 * Get media type for cover image
+	 */
+	private getCoverMediaType(): string {
+		return this.getImageMediaType(this.cover);
+	}
+
+	/**
+	 * Register local image file to be bundled in the EPUB
+	 */
+	private registerBundledImage(diskPath: string): BundledImage {
+		const resolved = resolve(diskPath);
+		const existing = this.bundledImages.get(resolved);
+		if (existing) {
+			return existing;
+		}
+
+		const baseName = basename(resolved);
+		const ext = extname(baseName);
+		const nameWithoutExt = basename(baseName, ext);
+
+		// Sanitize filename for EPUB archive safety
+		const safeBase = nameWithoutExt.replace(/[^a-zA-Z0-9._-]/g, "_") || "image";
+		let candidateFilename = `${safeBase}${ext.toLowerCase()}`;
+		let counter = 1;
+
+		while (this.usedImageFilenames.has(candidateFilename)) {
+			counter++;
+			candidateFilename = `${safeBase}-${counter}${ext.toLowerCase()}`;
+		}
+		this.usedImageFilenames.add(candidateFilename);
+
+		const epubHref = `images/${candidateFilename}`;
+		const imageId = `img-${this.bundledImages.size + 1}`;
+		const mediaType = this.getImageMediaType(resolved);
+
+		const bundled: BundledImage = {
+			id: imageId,
+			diskPath: resolved,
+			epubHref,
+			mediaType,
+		};
+
+		this.bundledImages.set(resolved, bundled);
+		return bundled;
+	}
+
+	/**
+	 * Resolve local images in nodes and register them for bundling
+	 */
+	private resolveImagesInNodes(
+		nodes: TelegraphNode[],
+		sourcePath: string
+	): TelegraphNode[] {
+		const pathResolver = PathResolver.getInstance();
+		const resolvedNodes: TelegraphNode[] = [];
+
+		for (const node of nodes) {
+			if (typeof node === "string") {
+				resolvedNodes.push(node);
+				continue;
+			}
+
+			let currentNode = { ...node };
+
+			if (currentNode.tag === "img" && currentNode.attrs?.src) {
+				const src = String(currentNode.attrs.src).trim();
+				// Check if it is an external url or data url
+				if (
+					!src.startsWith("http://") &&
+					!src.startsWith("https://") &&
+					!src.startsWith("data:")
+				) {
+					// Local image path
+					let resolvedPath = pathResolver.resolve(sourcePath, src);
+					if (!existsSync(resolvedPath)) {
+						try {
+							const decoded = decodeURIComponent(src);
+							const decodedPath = pathResolver.resolve(sourcePath, decoded);
+							if (existsSync(decodedPath)) {
+								resolvedPath = decodedPath;
+							}
+						} catch {}
+					}
+
+					if (existsSync(resolvedPath)) {
+						const bundled = this.registerBundledImage(resolvedPath);
+						currentNode = {
+							...currentNode,
+							attrs: {
+								...currentNode.attrs,
+								src: bundled.epubHref,
+							},
+						};
+					} else {
+						if (this.debug) {
+							console.warn(`[EPUB WARNING] Image not found: ${src} (resolved to ${resolvedPath})`);
+						}
+					}
+				}
+			}
+
+			// Recursively process children
+			if (currentNode.children && currentNode.children.length > 0) {
+				const resolvedChildren: (string | TelegraphNode)[] = [];
+				for (const child of currentNode.children) {
+					if (typeof child === "string") {
+						resolvedChildren.push(child);
+					} else {
+						const resolvedChildNodes = this.resolveImagesInNodes([child], sourcePath);
+						resolvedChildren.push(...resolvedChildNodes);
+					}
+				}
+				currentNode.children = resolvedChildren;
+			}
+
+			resolvedNodes.push(currentNode);
+		}
+
+		return resolvedNodes;
+	}
+
 
 	/**
 	 * Generate toc.ncx (navigation)

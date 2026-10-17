@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { TestHelpers } from "../test-utils/TestHelpers";
 import { EpubGenerator } from "./EpubGenerator";
@@ -237,6 +237,41 @@ describe("EpubGenerator", () => {
 			// Check if cover is included in EPUB
 			const epubContent = readFileSync(outputPath);
 			expect(epubContent.length).toBeGreaterThan(0);
+		});
+
+		it("should bundle local images referenced in markdown into EPUB package", async () => {
+			const imgDir = join(tempDir, "mudras");
+			mkdirSync(imgDir, { recursive: true });
+			const imagePath = join(imgDir, "cakra.png");
+			const dummyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jU77yQAAAABJRU5ErkJggg==", "base64");
+			writeFileSync(imagePath, dummyPng);
+
+			const testFile = join(tempDir, "chapter-img.md");
+			TestHelpers.createTestFile(testFile, "# Chapter 1\n\n![Cakra Mudra](./mudras/cakra.png)");
+
+			const outputPath = join(outputDir, "test-images.epub");
+			const generator = new EpubGenerator({
+				outputPath,
+				title: "Image Book",
+				author: "Author",
+			});
+
+			await generator.addChapterFromFile(testFile);
+			await generator.generate();
+
+			expect(existsSync(outputPath)).toBe(true);
+
+			const $ = (Bun as any).$;
+			const zipList = await $`unzip -l ${outputPath}`.text();
+			expect(zipList).toContain("OEBPS/images/cakra.png");
+
+			const opf = await $`unzip -p ${outputPath} OEBPS/content.opf`.text();
+			expect(opf).toContain("images/cakra.png");
+			expect(opf).toContain("image/png");
+
+			const html = await $`unzip -p ${outputPath} OEBPS/chapter-1.html`.text();
+			expect(html).toContain("images/cakra.png");
+			expect(html).toContain("Cakra Mudra");
 		});
 
 		it("should keep temporary files in debug mode", async () => {
