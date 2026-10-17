@@ -1,5 +1,7 @@
 # TASK-047 — Исправления и полная архитектура больших EPUB
 
+## Preamble
+
 Дата: 2026-10-17. Автор: планировщик Astra. Требование: **UR-002** (UR-001 superseded).
 Статус: **проект плана для передачи реализации**. Изменений product code/tests нет. DA не выполнялся; документ не означает принятую архитектуру, исправленный продукт или завершённую фазу.
 
@@ -449,3 +451,9 @@ Evidence записывать через `mb3_artifact evidence/evidence_batch` 
 * `qaLevel=STANDARD` при T4 full-spec требует refresh/согласования runtime до исполнения. В этой выдаче phases/gates не изменялись.
 
 Первичные источники использованы только для границ дизайна: Marked lexer принимает строку, возвращает tokens и поддерживает extensions — [Marked extensibility](https://marked.js.org/using_pro); spine задаёт порядок публикации, navigation document является отдельной EPUB структурой — [W3C EPUB 3.3](https://www.w3.org/TR/epub-33/) и [EPUB overview](https://www.w3.org/TR/epub-overview-33/). Нормативный предел 300KiB этими источниками не заявляется. Текущая реализация установлена чтением локального рабочего дерева и двумя микровоспроизведениями, а не предположением по документации.
+
+## Execution amendment UR-003
+
+<!-- section:Execution amendment UR-003 -->
+
+UR-003 authorizes full product implementation A+B and verification. W1 TASK-048, W2 TASK-049, W4 TASK-050 are running via native Codex subagents because T3 provider transport returns Authentication required. Gemini remains separate advisory DA via supported AGY CLI. Actual inherited model gpt-6.1-sol, runtime selector override gpt-6.1-sol/high resolved; no model impersonation. IO/session/ZIP W7 may run before W6 since all its files are new/disjoint and EpubIO contract in §5.3 is frozen; W8 waits W1/parser plus W7 interface. Existing W0–W11 ownership and all acceptance targets remain. Parent qaLevel corrected MAX through task update. Earlier phase waivers in registry are historical waivers, not DA clearance.

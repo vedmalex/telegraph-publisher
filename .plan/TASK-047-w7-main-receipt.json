@@ -1,0 +1,23 @@
+{
+  "taskId": "TASK-052",
+  "parentTaskId": "TASK-047",
+  "urRefs": [
+    "UR-003",
+    "UR-004"
+  ],
+  "verification": "main independently executed 40 pass, 0 fail,119 assertions; separate Gemini advisory review pending",
+  "sha256": {
+    "src/epub/EpubIO.ts": "2ae5fa13fc00cf29425bc5164d4b8229bcaa9cce49dcfd8d8e7741de3a5670d8",
+    "src/epub/EpubIO.test.ts": "31852681b16ca6dbe4d5f8e991e43d243f360ccae230d03c7badae32eba951e6",
+    "src/epub/RealEpubIO.ts": "d37d06fe6f65ce2bf4f2fd1edf833050015ef7635be88b357665119690b13d07",
+    "src/epub/RealEpubIO.test.ts": "3c592776365b59154dd515ccdd9b03d7e11d7904e7b4a2ddc789bba306ef7d1d",
+    "src/epub/MockEpubIO.ts": "f89d8e7b128fbad139416ba13129afe7216baf96c8226e8c89199526d1542afe",
+    "src/epub/MockEpubIO.test.ts": "7d70ea2c14e6c8222f7ee54c585b830a6d89b93c57f7d69b4135bd8b802a0af1",
+    "src/epub/EpubBuildSession.ts": "d5dee394f0d1b653535d025149a375ef79a8b4a49e6e059eaf6fcb6268bd5faa",
+    "src/epub/EpubBuildSession.test.ts": "68ae26f1d613a5859f96b975c45a3d2dc8fc1ed7609393a8ec0ddee7ff897756",
+    "src/epub/EpubSpoolStore.ts": "0524f9ad7232dfb900f7301bb7843d544f766d3ab1ce9c7a11d5d74ed0ddaa59",
+    "src/epub/EpubSpoolStore.test.ts": "fd144a00ec422982ad7c6d50dd02a8f1e5dcce7121ccbb9f0dfc0247997321b2",
+    "src/epub/EpubZipWriter.ts": "18a2e08df4d3f4394d06a2dd7fc1471f43921ee29509af6131ea3b0507b04821",
+    "src/epub/EpubZipWriter.test.ts": "39a20e9bd398866f28a90b6598a4b462da35b2be50ebaaa337d6ce3c6e7fe621"
+  }
+}

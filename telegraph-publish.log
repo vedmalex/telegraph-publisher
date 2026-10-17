@@ -1466,3 +1466,137 @@
 {"ts":"2026-10-17T02:16:22.671Z","level":"info","phase":"publish","title":"Root","ok":true}
 {"ts":"2026-10-17T02:16:22.677Z","level":"info","phase":"publish","title":"Test","ok":true}
 {"ts":"2026-10-17T02:16:22.941Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cli-debug-temp/new-debug.md","publishedCount":0}
+{"ts":"2026-10-17T02:46:15.033Z","level":"error","phase":"publish","title":"Sub Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T02:46:15.033Z","level":"error","phase":"publish","title":"Sub Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T02:46:15.035Z","level":"error","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","error":"Failed to process dependency sub-dependency.md: Failed to publish dependency /Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/sub-dependency.md: Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T02:46:15.035Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","publishedCount":0}
+{"ts":"2026-10-17T02:46:15.036Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","issues":["Unpublished dependencies: ./dependency.md"]}
+{"ts":"2026-10-17T02:46:15.253Z","level":"error","phase":"publish","title":"Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T02:46:15.253Z","level":"error","phase":"publish","title":"Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T02:46:15.266Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/t3code/.t3/userdata/antigravity-tmp/ac0a3dfd6ddd/run-KalJ0m/cache-fix-test-HD0giI/root.md","publishedCount":0}
+{"ts":"2026-10-17T02:46:15.266Z","level":"info","phase":"publish","title":"Root Document","ok":true}
+{"ts":"2026-10-17T02:46:15.275Z","level":"info","phase":"publish","title":"Regression Test","ok":true}
+{"ts":"2026-10-17T02:46:15.500Z","level":"error","phase":"editPage","path":"/test-path","error":"ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T02:46:20.515Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T02:46:20.522Z","level":"info","phase":"publish","title":"Sub Dependency","ok":true}
+{"ts":"2026-10-17T02:46:20.523Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","publishedCount":1}
+{"ts":"2026-10-17T02:46:20.523Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","issues":["Unpublished dependencies: ./sub-dependency.md"]}
+{"ts":"2026-10-17T02:46:20.527Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T02:46:20.533Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/no-links.md","publishedCount":0}
+{"ts":"2026-10-17T02:46:20.533Z","level":"info","phase":"publish","title":"File Without Links","ok":true}
+{"ts":"2026-10-17T02:46:20.577Z","level":"info","phase":"publish","title":"Leaf File","ok":true}
+{"ts":"2026-10-17T02:46:20.577Z","level":"info","phase":"publish","title":"Middle File","ok":true}
+{"ts":"2026-10-17T02:46:20.577Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":2}
+{"ts":"2026-10-17T02:46:20.578Z","level":"info","phase":"publish","title":"Root File","ok":true}
+{"ts":"2026-10-17T02:46:20.581Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T02:46:20.581Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":0}
+{"ts":"2026-10-17T02:46:20.582Z","level":"info","phase":"publish","title":"Root","ok":true}
+{"ts":"2026-10-17T02:46:20.585Z","level":"info","phase":"publish","title":"Test","ok":true}
+{"ts":"2026-10-17T02:46:20.870Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cli-debug-temp/new-debug.md","publishedCount":0}
+{"ts":"2026-10-17T03:08:23.157Z","level":"error","phase":"publish","title":"Sub Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T03:08:23.158Z","level":"error","phase":"publish","title":"Sub Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T03:08:23.160Z","level":"error","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","error":"Failed to process dependency sub-dependency.md: Failed to publish dependency /Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/sub-dependency.md: Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T03:08:23.160Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","publishedCount":0}
+{"ts":"2026-10-17T03:08:23.160Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","issues":["Unpublished dependencies: ./dependency.md"]}
+{"ts":"2026-10-17T03:08:23.395Z","level":"error","phase":"publish","title":"Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T03:08:23.395Z","level":"error","phase":"publish","title":"Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T03:08:23.401Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/t3code/.t3/userdata/antigravity-tmp/e4d159578bfd/run-i2SRo1/cache-fix-test-5sKQYW/root.md","publishedCount":0}
+{"ts":"2026-10-17T03:08:23.401Z","level":"info","phase":"publish","title":"Root Document","ok":true}
+{"ts":"2026-10-17T03:08:23.409Z","level":"info","phase":"publish","title":"Regression Test","ok":true}
+{"ts":"2026-10-17T03:08:23.643Z","level":"error","phase":"editPage","path":"/test-path","error":"ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T03:08:28.661Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T03:08:28.664Z","level":"info","phase":"publish","title":"Sub Dependency","ok":true}
+{"ts":"2026-10-17T03:08:28.664Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","publishedCount":1}
+{"ts":"2026-10-17T03:08:28.664Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","issues":["Unpublished dependencies: ./sub-dependency.md"]}
+{"ts":"2026-10-17T03:08:28.665Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T03:08:28.668Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/no-links.md","publishedCount":0}
+{"ts":"2026-10-17T03:08:28.668Z","level":"info","phase":"publish","title":"File Without Links","ok":true}
+{"ts":"2026-10-17T03:08:28.706Z","level":"info","phase":"publish","title":"Leaf File","ok":true}
+{"ts":"2026-10-17T03:08:28.707Z","level":"info","phase":"publish","title":"Middle File","ok":true}
+{"ts":"2026-10-17T03:08:28.707Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":2}
+{"ts":"2026-10-17T03:08:28.707Z","level":"info","phase":"publish","title":"Root File","ok":true}
+{"ts":"2026-10-17T03:08:28.710Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T03:08:28.711Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":0}
+{"ts":"2026-10-17T03:08:28.712Z","level":"info","phase":"publish","title":"Root","ok":true}
+{"ts":"2026-10-17T03:08:28.715Z","level":"info","phase":"publish","title":"Test","ok":true}
+{"ts":"2026-10-17T03:08:28.992Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cli-debug-temp/new-debug.md","publishedCount":0}
+{"ts":"2026-10-17T03:24:11.078Z","level":"error","phase":"publish","title":"Sub Dependency","error":"ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"}
+{"ts":"2026-10-17T03:24:11.078Z","level":"error","phase":"publish","title":"Sub Dependency","error":"ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"}
+{"ts":"2026-10-17T03:24:11.080Z","level":"error","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","error":"Failed to process dependency sub-dependency.md: Failed to publish dependency /Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/sub-dependency.md: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"}
+{"ts":"2026-10-17T03:24:11.080Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","publishedCount":0}
+{"ts":"2026-10-17T03:24:11.081Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","issues":["Unpublished dependencies: ./dependency.md"]}
+{"ts":"2026-10-17T03:24:11.345Z","level":"error","phase":"publish","title":"Dependency","error":"ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"}
+{"ts":"2026-10-17T03:24:11.345Z","level":"error","phase":"publish","title":"Dependency","error":"ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"}
+{"ts":"2026-10-17T03:24:11.350Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/t3code/.t3/userdata/antigravity-tmp/e4d159578bfd/run-i2SRo1/cache-fix-test-it4fyg/root.md","publishedCount":0}
+{"ts":"2026-10-17T03:24:11.351Z","level":"info","phase":"publish","title":"Root Document","ok":true}
+{"ts":"2026-10-17T03:24:11.359Z","level":"info","phase":"publish","title":"Regression Test","ok":true}
+{"ts":"2026-10-17T03:24:16.664Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T03:24:16.670Z","level":"info","phase":"publish","title":"Sub Dependency","ok":true}
+{"ts":"2026-10-17T03:24:16.671Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","publishedCount":1}
+{"ts":"2026-10-17T03:24:16.671Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","issues":["Unpublished dependencies: ./sub-dependency.md"]}
+{"ts":"2026-10-17T03:24:16.674Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T03:24:16.679Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/no-links.md","publishedCount":0}
+{"ts":"2026-10-17T03:24:16.679Z","level":"info","phase":"publish","title":"File Without Links","ok":true}
+{"ts":"2026-10-17T03:24:16.722Z","level":"info","phase":"publish","title":"Leaf File","ok":true}
+{"ts":"2026-10-17T03:24:16.723Z","level":"info","phase":"publish","title":"Middle File","ok":true}
+{"ts":"2026-10-17T03:24:16.724Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":2}
+{"ts":"2026-10-17T03:24:16.724Z","level":"info","phase":"publish","title":"Root File","ok":true}
+{"ts":"2026-10-17T03:24:16.725Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T03:24:16.726Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":0}
+{"ts":"2026-10-17T03:24:16.726Z","level":"info","phase":"publish","title":"Root","ok":true}
+{"ts":"2026-10-17T03:24:16.729Z","level":"info","phase":"publish","title":"Test","ok":true}
+{"ts":"2026-10-17T03:24:16.973Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cli-debug-temp/new-debug.md","publishedCount":0}
+{"ts":"2026-10-17T07:01:17.006Z","level":"error","phase":"publish","title":"Sub Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:01:17.007Z","level":"error","phase":"publish","title":"Sub Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:01:17.012Z","level":"error","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","error":"Failed to process dependency sub-dependency.md: Failed to publish dependency /Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/sub-dependency.md: Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:01:17.013Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","publishedCount":0}
+{"ts":"2026-10-17T07:01:17.015Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","issues":["Unpublished dependencies: ./dependency.md"]}
+{"ts":"2026-10-17T07:01:17.207Z","level":"error","phase":"publish","title":"Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:01:17.208Z","level":"error","phase":"publish","title":"Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:01:17.216Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/t3code/.t3/userdata/antigravity-tmp/e4d159578bfd/run-Ab7KMj/cache-fix-test-Q8YhmP/root.md","publishedCount":0}
+{"ts":"2026-10-17T07:01:17.216Z","level":"info","phase":"publish","title":"Root Document","ok":true}
+{"ts":"2026-10-17T07:01:17.226Z","level":"info","phase":"publish","title":"Regression Test","ok":true}
+{"ts":"2026-10-17T07:01:17.419Z","level":"error","phase":"editPage","path":"/test-path","error":"ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:01:22.547Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T07:01:22.563Z","level":"info","phase":"publish","title":"Sub Dependency","ok":true}
+{"ts":"2026-10-17T07:01:22.567Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","publishedCount":1}
+{"ts":"2026-10-17T07:01:22.568Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","issues":["Unpublished dependencies: ./sub-dependency.md"]}
+{"ts":"2026-10-17T07:01:22.572Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T07:01:22.595Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/no-links.md","publishedCount":0}
+{"ts":"2026-10-17T07:01:22.595Z","level":"info","phase":"publish","title":"File Without Links","ok":true}
+{"ts":"2026-10-17T07:01:23.288Z","level":"info","phase":"publish","title":"Leaf File","ok":true}
+{"ts":"2026-10-17T07:01:23.312Z","level":"info","phase":"publish","title":"Middle File","ok":true}
+{"ts":"2026-10-17T07:01:23.318Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":2}
+{"ts":"2026-10-17T07:01:23.319Z","level":"info","phase":"publish","title":"Root File","ok":true}
+{"ts":"2026-10-17T07:01:23.360Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T07:01:23.375Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":0}
+{"ts":"2026-10-17T07:01:23.376Z","level":"info","phase":"publish","title":"Root","ok":true}
+{"ts":"2026-10-17T07:01:23.410Z","level":"info","phase":"publish","title":"Test","ok":true}
+{"ts":"2026-10-17T07:01:24.975Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cli-debug-temp/new-debug.md","publishedCount":0}
+{"ts":"2026-10-17T07:09:21.399Z","level":"error","phase":"publish","title":"Sub Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:09:21.400Z","level":"error","phase":"publish","title":"Sub Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:09:21.403Z","level":"error","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","error":"Failed to process dependency sub-dependency.md: Failed to publish dependency /Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/sub-dependency.md: Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:09:21.403Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","publishedCount":0}
+{"ts":"2026-10-17T07:09:21.404Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-link-diagnosis/root.md","issues":["Unpublished dependencies: ./dependency.md"]}
+{"ts":"2026-10-17T07:09:21.593Z","level":"error","phase":"publish","title":"Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:09:21.594Z","level":"error","phase":"publish","title":"Dependency","error":"Telegraph API error: ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:09:21.604Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/t3code/.t3/userdata/antigravity-tmp/ac0a3dfd6ddd/run-BqejAR/cache-fix-test-UFhGiO/root.md","publishedCount":0}
+{"ts":"2026-10-17T07:09:21.604Z","level":"info","phase":"publish","title":"Root Document","ok":true}
+{"ts":"2026-10-17T07:09:21.620Z","level":"info","phase":"publish","title":"Regression Test","ok":true}
+{"ts":"2026-10-17T07:09:21.822Z","level":"error","phase":"editPage","path":"/test-path","error":"ACCESS_TOKEN_INVALID"}
+{"ts":"2026-10-17T07:09:26.844Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T07:09:26.850Z","level":"info","phase":"publish","title":"Sub Dependency","ok":true}
+{"ts":"2026-10-17T07:09:26.852Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","publishedCount":1}
+{"ts":"2026-10-17T07:09:26.853Z","level":"error","phase":"validation","file":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/dependency.md","issues":["Unpublished dependencies: ./sub-dependency.md"]}
+{"ts":"2026-10-17T07:09:26.856Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T07:09:26.864Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-unified-pipeline/no-links.md","publishedCount":0}
+{"ts":"2026-10-17T07:09:26.864Z","level":"info","phase":"publish","title":"File Without Links","ok":true}
+{"ts":"2026-10-17T07:09:26.902Z","level":"info","phase":"publish","title":"Leaf File","ok":true}
+{"ts":"2026-10-17T07:09:26.903Z","level":"info","phase":"publish","title":"Middle File","ok":true}
+{"ts":"2026-10-17T07:09:26.903Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":2}
+{"ts":"2026-10-17T07:09:26.904Z","level":"info","phase":"publish","title":"Root File","ok":true}
+{"ts":"2026-10-17T07:09:26.906Z","level":"info","phase":"publish","title":"Dependency","ok":true}
+{"ts":"2026-10-17T07:09:26.907Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cache-sync/root.md","publishedCount":0}
+{"ts":"2026-10-17T07:09:26.907Z","level":"info","phase":"publish","title":"Root","ok":true}
+{"ts":"2026-10-17T07:09:26.912Z","level":"info","phase":"publish","title":"Test","ok":true}
+{"ts":"2026-10-17T07:09:27.242Z","level":"info","phase":"dependencies","rootFile":"/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher/test-cli-debug-temp/new-debug.md","publishedCount":0}

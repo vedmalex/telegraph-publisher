@@ -1,0 +1,30 @@
+{
+  "head": "38aae95606206b1e8eba56d15cdcdaf3f29c4fa7",
+  "status": " M .telegraph-pages-cache.json\n M memory-bank/system/current-context.md\n M memory-bank/system/current-task.txt\n M memory-bank/system/task-counter.txt\n M memory-bank/system/tasks-registry.jsonl\n M memory-bank/tasks/2026-10-17_TASK-047_epub/artifact-events/context.jsonl\n M memory-bank/tasks/2026-10-17_TASK-047_epub/artifact-events/plan.jsonl\n M memory-bank/tasks/2026-10-17_TASK-047_epub/artifact-events/requests.jsonl\n M memory-bank/tasks/2026-10-17_TASK-047_epub/event-counter.txt\n M memory-bank/tasks/2026-10-17_TASK-047_epub/plan.md\n M memory-bank/tasks/2026-10-17_TASK-047_epub/requests.md\n M src/markdownConverter.ts\n M telegraph-publish.log\n M test-nested-links/.telegraph-pages-cache.json\n?? .plan/TASK-047-gemini-resume.md\n?? .plan/TASK-047-resume-baseline.json\n?? .plan/test-report-w1.xml\n?? memory-bank/tasks/2026-10-17_TASK-047_epub/_task.md\n?? memory-bank/tasks/2026-10-17_TASK-047_epub/artifact-events/implementation.jsonl\n?? memory-bank/tasks/2026-10-17_TASK-047_epub/artifact-events/tech_spec.jsonl\n?? memory-bank/tasks/2026-10-17_TASK-047_epub/context.md\n?? memory-bank/tasks/2026-10-17_TASK-047_epub/external-review/\n?? memory-bank/tasks/2026-10-17_TASK-047_epub/implementation.md\n?? memory-bank/tasks/2026-10-17_TASK-047_epub/tech_spec.md\n?? memory-bank/tasks/2026-10-17_TASK-048_w1-epub-ast-renderer-verification-and-re/\n?? memory-bank/tasks/2026-10-17_TASK-049_w2-epub-source-fragment-anchor-registry/\n?? memory-bank/tasks/2026-10-17_TASK-050_w4-epub-options-diagnostics-cli-parser/\n?? memory-bank/tasks/2026-10-17_TASK-051_w3-semantic-epub-navigation-and-inline-s/\n?? memory-bank/tasks/2026-10-17_TASK-052_w7-epub-io-session-spool-streaming-zip-a/\n?? memory-bank/tasks/2026-10-17_TASK-053_w5-epub-final-xhtml-renderer-and-exact-b/\n?? memory-bank/tasks/2026-10-17_TASK-054_w8-epub-incremental-block-framer-streami/\n?? src/cli/EpubCliOptions.test.ts\n?? src/cli/EpubCliOptions.ts\n?? src/epub/EpubAnchorRegistry.test.ts\n?? src/epub/EpubAnchorRegistry.ts\n?? src/epub/EpubBuildSession.ts\n?? src/epub/EpubDiagnostics.test.ts\n?? src/epub/EpubDiagnostics.ts\n?? src/epub/EpubIO.ts\n?? src/epub/EpubMarkdownDocument.test.ts\n?? src/epub/EpubMarkdownDocument.ts\n?? src/epub/EpubNavigation.test.ts\n?? src/epub/EpubNavigation.ts\n?? src/epub/EpubOptions.test.ts\n?? src/epub/EpubOptions.ts\n?? src/epub/EpubSpoolStore.ts\n?? src/epub/EpubTokenRenderer.test.ts\n?? src/epub/EpubTokenRenderer.ts\n?? src/epub/EpubTypes.ts\n?? src/epub/MockEpubIO.ts\n?? src/epub/RealEpubIO.ts\n?? src/markdownConverter.epub.test.ts\n",
+  "sha256": {
+    "src/epub/EpubMarkdownDocument.ts": "b9b7497f73a5fd1fb8f892e391809638281c8479a291273d427bd3acb2972433",
+    "src/epub/EpubAnchorRegistry.ts": "c7741f5ca029db85a779cff3e94f9a50d91de1c72215237254e3050ad037efe0",
+    "src/epub/RealEpubIO.ts": "89a90c470aad2edd1d6b5466d98710a30a16593d338d6f6dfc23c67cad51c907",
+    "src/epub/EpubTypes.ts": "0a6d7db07cedbf1b5b757cec0a4a0c25ef378270990f01dfa030ddf3ec582bcf",
+    "src/epub/EpubGenerator.test.ts": "52ef2f3f9fba55e21ecae3ddac4e9544d604b94246879c408bf00602dab24787",
+    "src/epub/EpubOptions.ts": "d276eb4bd58fcef3381e6484aaa152a26998cb5e24e35100baaf6538ec0fda2e",
+    "src/epub/EpubNavigation.test.ts": "999ee1c0eecd38699027425105e3f5d0902aac09214ea5643fc97a785600d1f6",
+    "src/epub/EpubDiagnostics.ts": "dd92ea821f7ccd07f16f3a80f61de588b08dd69d9a1f40476840a4c0de32057a",
+    "src/epub/EpubSpoolStore.ts": "f680445c9e0d9e9de848b4c1904fbd885ddb1116ba9d72f3eb0935d9740cf5bf",
+    "src/epub/EpubTokenRenderer.test.ts": "80270ef6b0797f4785c44f10eced195fb76bd1c98b33dfb674946a5b58ef0917",
+    "src/epub/MockEpubIO.ts": "ecb7d51470735b8b36431090ccbcd1b4015647990395552742775ff4a4163310",
+    "src/epub/EpubGenerator.ts": "6ae4c0405732a44e588ed2ef618fa90261d3b6ce510344279d652bf4823d354c",
+    "src/epub/EpubBuildSession.ts": "421b51a4129fa0bf5b009b701bf0ff8708079b64d2aa20256e6a5631af5f851a",
+    "src/epub/EpubIO.ts": "61ad2893b6b29926a64b75e18e07c92bf9913d35acc2a5339eff3015b20f5c03",
+    "src/epub/EpubTokenRenderer.ts": "069a0ae89f45a890d0aac38ba871b58a0943b10bb763b8c2e56fbfd731d10031",
+    "src/epub/EpubMarkdownDocument.test.ts": "274684dd09435bc8105d025b9f6e124406c2e9bf0fbcc917d12d5b0384f23ad9",
+    "src/epub/EpubOptions.test.ts": "57b99d10a99da9a21aadd37c81089ba55d0f94082108b207ada68afff4798889",
+    "src/epub/EpubDiagnostics.test.ts": "daac6cf48077681806fa3903547b9e644ea60caf3f2ac5894e3fe594171367ab",
+    "src/epub/EpubNavigation.ts": "20bb0c587b9cef728a4952d6e6eccc4b409ee8b7c5f41dba4b24e514328de83c",
+    "src/epub/EpubAnchorRegistry.test.ts": "a73039e064ffd5c6e4e6fde6237bb50aebbb7e94068248348c5b48be3901d1c1",
+    "src/markdownConverter.ts": "4c0004f18dba8647c2d3489ecc8f08bc201c341198017c5c5b14f6ebd41aeb5f",
+    "src/markdownConverter.epub.test.ts": "834d25b1d00e89e8beb50c6f9d7a9ce9b64f90bc8b46304169f1e59a0e813dd7",
+    "src/cli/EpubCliOptions.ts": "2a56c23d3e34e89728feebf8373be3f7e0bd41587e209d88746e0d298aad834b",
+    "src/cli/EpubCliOptions.test.ts": "efce9c0e17b1064eeed6fbc436647ee15a1a28bab07210c04033b1eb1eb81e87"
+  }
+}

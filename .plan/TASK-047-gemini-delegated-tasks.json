@@ -1,0 +1,26 @@
+[
+  {
+    "unit": "gemini_w6_w9",
+    "taskId": "node:delegated-task:command%3Amcp%3A9fd17177-290d-460b-a6fa-031f0c2bdf09%3Adelegate-task%3Atask047-gemini-w6-w9-integration-round1",
+    "childThreadId": "thread:delegated-task:command%3Amcp%3A9fd17177-290d-460b-a6fa-031f0c2bdf09%3Adelegate-task%3Atask047-gemini-w6-w9-integration-round1",
+    "status": "completed",
+    "providerInstanceId": "antigravity_5",
+    "model": "gemini-3.8-flash-high"
+  },
+  {
+    "unit": "gemini_w10",
+    "taskId": "node:delegated-task:command%3Amcp%3A9fd17177-290d-460b-a6fa-031f0c2bdf09%3Adelegate-task%3Atask047-gemini-w10-verification-round1",
+    "childThreadId": "thread:delegated-task:command%3Amcp%3A9fd17177-290d-460b-a6fa-031f0c2bdf09%3Adelegate-task%3Atask047-gemini-w10-verification-round1",
+    "status": "completed",
+    "providerInstanceId": "antigravity_4",
+    "model": "gemini-3.8-flash-high"
+  },
+  {
+    "unit": "gemini_w11",
+    "taskId": "node:delegated-task:command%3Amcp%3Aca4c1572-972c-451b-9fd7-2be8c3f607b7%3Adelegate-task%3Atask047-gemini-w11-docs-round1",
+    "childThreadId": "thread:delegated-task:command%3Amcp%3Aca4c1572-972c-451b-9fd7-2be8c3f607b7%3Adelegate-task%3Atask047-gemini-w11-docs-round1",
+    "status": "running",
+    "providerInstanceId": "antigravity_3",
+    "model": "gemini-3.8-flash-high"
+  }
+]

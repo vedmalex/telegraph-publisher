@@ -1,0 +1,19 @@
+{
+  "taskId": "node:delegated-task:command%3Amcp%3A6c7b5f8e-7d21-446c-9760-34aa51c7e806%3Adelegate-task%3Atask047-gemini-w5-repair-round2",
+  "childThreadId": "thread:delegated-task:command%3Amcp%3A6c7b5f8e-7d21-446c-9760-34aa51c7e806%3Adelegate-task%3Atask047-gemini-w5-repair-round2",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253A6c7b5f8e-7d21-446c-9760-34aa51c7e806%253Adelegate-task%253Atask047-gemini-w5-repair-round2:ordinal:1",
+  "childNodeId": "node:delegated-task:command%3Amcp%3A6c7b5f8e-7d21-446c-9760-34aa51c7e806%3Adelegate-task%3Atask047-gemini-w5-repair-round2",
+  "status": "running",
+  "workState": "working",
+  "hasPendingChildRuns": false,
+  "latestTerminalRunId": null,
+  "latestTerminalStatus": null,
+  "latestTerminalSummary": null,
+  "latestTerminalResultContextTransferId": null,
+  "providerInstanceId": "antigravity_2",
+  "model": "gemini-3.8-flash-high",
+  "summary": null,
+  "resultContextTransferId": null,
+  "hasPendingQuestion": false,
+  "waitTimedOut": false
+}
