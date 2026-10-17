@@ -12,8 +12,8 @@ coverage
 
 # logs
 logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+*.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # dotenv environment variable files
 .env
@@ -21,6 +21,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.test.local
 .env.production.local
 .env.local
+gist.env
+*.env
 
 # caches
 .eslintcache
@@ -33,8 +35,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Finder (MacOS) folder config
 .DS_Store
 
-# MB3 memory-bank
-memory-bank/
-
-gist.env
-*.env
+# MB3 query-index projection (TASK-537 F-TS-2, gitignored disposable read-model + metrics)
+memory-bank/system/query-index/

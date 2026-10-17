@@ -1,0 +1,122 @@
+{
+  "schema": "mb3-critic.review-wrapper/v1",
+  "schema_envelope": {
+    "schema": "mb3-critic.review/v2",
+    "verdict": "REVISE",
+    "lens": "Completeness",
+    "ur_traceability": [
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "goal": "Create DST harness for telegraph-publisher",
+        "evidence": "Step 4: DstHarness class in plan.md wires MockDstIO into pipeline under test"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "goal": "File I/O interception",
+        "evidence": "Step 2: MockDstIO virtual FS (Map<string, Uint8Array>) covers all 13 file operations from creative design"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "goal": "External API interception (Telegra.ph)",
+        "evidence": "Step 2: MockDstIO.fetch with httpHandlers registration map"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "PARTIAL",
+        "goal": "Deterministic simulation testing of CLI pipeline",
+        "evidence": "Infrastructure built (interface+mock+harness), but actual pipeline-level testing deferred to Phase 3+. Only DependencyManager injection in Phase 2 scope. No follow-up task tracking."
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "PARTIAL",
+        "goal": "Pipeline coverage: publish, EPUB, link validation, dependency tree",
+        "evidence": "Only dependency tree (DependencyManager) in Phase 2 scope. Publish, EPUB, link validation deferred to follow-up tasks (Phase 3+) without explicit tracking."
+      }
+    ],
+    "findings": [
+      {
+        "id": "F-PLAN-001",
+        "title": "UR-002 goal: pipeline-level deterministic simulation testing deferred without follow-up tracking",
+        "severity": "HIGH",
+        "challenge": "UR-002 requires 'детерминированное симуляционное тестирование CLI-пайплайна' — the plan builds harness infrastructure but defers actual pipeline-level testing to Phase 3+ without listing concrete follow-up tasks or TASK-ID references for the deferred coverage (publish, EPUB, link validation).",
+        "alternative": "Either (a) add a 'Deferred Scope' section listing each pipeline module, the target phase, and expected follow-up task ID/name, or (b) expand Phase 2 scope to include at least one non-DependencyManager integration test proving the harness works for other pipeline stages.",
+        "risk": "Without explicit follow-up tracking, deferred pipeline testing may become indefinitely postponed or fragmented across uncoordinated tasks. Harness integration value unproven beyond DependencyManager until someone picks it up later. Severity: HIGH, Likelihood: MEDIUM.",
+        "artifact_ref": "plan.md — Scope: 'Phases 1–2 of the CREATIVE design (TASK-002). Phases 3–6 deferred to follow-up tasks.'"
+      },
+      {
+        "id": "F-PLAN-002",
+        "title": "UR-002 goal: pipeline coverage incomplete (3 of 4 pipeline modules deferred)",
+        "severity": "HIGH",
+        "challenge": "UR-002 explicitly lists 'публикация, EPUB, валидация ссылок, дерево зависимостей' as the pipeline scope. The plan covers only 'дерево зависимостей' (DependencyManager). Publish, EPUB, and link validation are absent from Phase 2 scope with no concrete follow-up plan or acceptance criteria for when DST coverage is 'complete'.",
+        "alternative": "Add a 'Deferred Scope' section mapping each deferred module to a specific future task: e.g., 'Phase 3 — Module-level interception for links, cache, publisher (see creative.md §14 Phase 3)'. Track in PLAN's UR-002 reference section.",
+        "risk": "User expectation is full pipeline DST coverage. A plan covering 1/4 pipeline modules risks expectation mismatch and fragmented implementation across future tasks without coordination. Severity: HIGH, Likelihood: MEDIUM.",
+        "artifact_ref": "plan.md — 'Requirements (UR refs)' section"
+      },
+      {
+        "id": "F-PLAN-003",
+        "title": "DstHarness injection point underspecified",
+        "severity": "MEDIUM",
+        "challenge": "Step 4 says 'Starts with DependencyManager injection (Phase 2 scope)' but doesn't specify HOW DependencyManager receives DstIO — constructor injection? Optional parameter? Setter method? Module-level monkey-patch? The existing DependencyManager likely uses direct node:fs calls; the refactoring pattern is not described.",
+        "alternative": "Specify the DI pattern explicitly: e.g., 'DependencyManager constructor will accept optional DstIO parameter; when provided, file operations route through dstIO instead of direct node:fs calls. Default behavior (null/undefined dstIO) preserves backward compatibility with existing code.'",
+        "risk": "Implementer must guess the DI pattern, risking inconsistent approach, excessive refactoring, or a pattern that doesn't compose well with other pipeline modules in later phases. Severity: MEDIUM, Likelihood: HIGH.",
+        "artifact_ref": "plan.md — Step 4: DstHarness description"
+      },
+      {
+        "id": "F-PLAN-004",
+        "title": "vi.mock governance checklist referenced but absent",
+        "severity": "MEDIUM",
+        "challenge": "Plan's Risks section states 'vi.mock governance — checklist tracked via PLAN' but no checklist exists in the plan artifact. Creative design (Section 3) establishes a governance rule that vi.mock is temporary for legacy modules and removed upon DstIO migration, but the plan provides no implementation mechanism.",
+        "alternative": "Add a governance checklist: (a) inventory current vi.mock usage per module, (b) migration priority order to DstIO, (c) removal criteria and owner per module, (d) gate that prevents new vi.mock on new code.",
+        "risk": "Without explicit checklist, vi.mock will persist indefinitely as 'temporary' measure, undermining DST determinism guarantees and allowing new vi.mock patterns to proliferate. Severity: MEDIUM, Likelihood: HIGH.",
+        "artifact_ref": "plan.md — Risks section"
+      },
+      {
+        "id": "F-PLAN-005",
+        "title": "Existing TestHelpers integration strategy not addressed",
+        "severity": "MEDIUM",
+        "challenge": "Creative design Section 12 explicitly defines DstHarness's relationship to existing TestHelpers (coexistence/complement, not replacement). The plan does not mention TestHelpers at all — no coexistence guidance, no migration path, no decision on when to use which.",
+        "alternative": "Add a brief section: 'TestHelpers continues for isolated unit tests on real FS; DstHarness replaces it for integration pipeline tests requiring determinism. Per-module migration tracked in vi.mock governance checklist.'",
+        "risk": "Developers may create duplicate test infrastructure, misuse DstHarness for unit tests (losing real FS accuracy), or continue relying on TestHelpers for integration tests (losing determinism). Severity: MEDIUM, Likelihood: MEDIUM.",
+        "artifact_ref": "plan.md — no mention of TestHelpers; creative.md Section 12"
+      },
+      {
+        "id": "F-PLAN-006",
+        "title": "Self-tests missing DstHarness integration test",
+        "severity": "MEDIUM",
+        "challenge": "Step 5 (Self-tests) lists 8 categories — all unit-level (seed determinism, FS roundtrip, HTTP mock, tick clock, PRNG, isolation, readdir sorting, fault injection). No test for DstHarness.getDependencyManager() or any harness-level integration wiring.",
+        "alternative": "Add: 'DstHarness + DependencyManager integration: create harness with MockDstIO, add test files via addFile, run DM.resolveAll(), verify resolved dependency tree matches expected structure.'",
+        "risk": "The harness→DependencyManager integration path is untested until Phase 3; a wiring defect (wrong injection point, missing method, interface mismatch) would surface weeks later in a different task. Severity: MEDIUM, Likelihood: MEDIUM.",
+        "artifact_ref": "plan.md — Step 5 test list"
+      },
+      {
+        "id": "F-PLAN-007",
+        "title": "No acceptance criteria / Definition of Done per step",
+        "severity": "LOW",
+        "challenge": "Five implementation steps lack explicit 'done' criteria. E.g., Step 2 'MockDstIO' — done when all 22 methods compile? All unit tests pass? Error parity verified against RealDstIO? All edge cases covered?",
+        "alternative": "Add acceptance bullets per step: e.g., 'Step 2 done when: (a) all DstIO methods implemented in MockDstIO, (b) all self-tests pass with 3 seed values, (c) error parity proven by running same test suite against Mock+Real.'",
+        "risk": "Steps may be considered 'done' prematurely with incomplete implementations, passing hidden gaps to integration phase. Severity: LOW, Likelihood: MEDIUM.",
+        "artifact_ref": "plan.md — Steps 1-5"
+      },
+      {
+        "id": "F-PLAN-008",
+        "title": "Dynamic import bypass deferred without interim testing strategy",
+        "severity": "LOW",
+        "challenge": "Creative design notes PdfGenerator.findChromePath and SvgGenerator.findChromePath use dynamic import (const { existsSync } = await import('node:fs')) which bypasses DI. Plan acknowledges this but defers to Phase 3 without documenting interim strategy for testing.",
+        "alternative": "Document interim strategy in plan: 'Until Phase 3 refactor, augment puppeteer vi.mock to stub findChromePath returning a known path, enabling DstHarness tests for PDF/SVG generation.'",
+        "risk": "If Phase 3 is delayed, PDF and SVG modules remain untestable under DST harness. Severity: LOW, Likelihood: LOW.",
+        "artifact_ref": "plan.md — Risks section: 'Dynamic import bypass in PdfGenerator.findChromePath — deferred to Phase 3'"
+      }
+    ],
+    "task_id": "TASK-003",
+    "phase": "PLAN",
+    "rationale": "Two user goals from UR-002 are PARTIALLY covered: pipeline-level deterministic simulation testing (publish/EPUB/link validation) is deferred to Phase 3+ with no follow-up tracking, and pipeline coverage only includes dependency tree. Per DA rules PARTIAL→HIGH→REVISE. Additionally 4 MEDIUM-severity completeness gaps (injection pattern underspecified, vi.mock governance absent, TestHelpers integration missing, no harness integration test) further support REVISE. LOW items are advisory carry-forward.",
+    "projectDir": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher"
+  },
+  "runtime_ts": "2026-06-24T17:34:31.686Z",
+  "runtime_validated_at": "2026-06-24T17:34:31.686Z",
+  "platform": "opencode",
+  "agent_supplied_ts": null
+}

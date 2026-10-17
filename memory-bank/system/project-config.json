@@ -1,0 +1,15 @@
+{
+  "sourceRoots": [
+    "src/",
+    "lib/"
+  ],
+  "excludePatterns": [
+    "node_modules",
+    "dist",
+    ".git",
+    "*.lock"
+  ],
+  "projectName": "telegraph-publisher",
+  "projectRoot": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher",
+  "mbPlacement": "embedded"
+}

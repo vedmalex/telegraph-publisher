@@ -1,0 +1,116 @@
+{
+  "schema": "mb3-critic.review-wrapper/v1",
+  "schema_envelope": {
+    "schema": "mb3-critic.review/v2",
+    "verdict": "REVISE",
+    "lens": "PLAN FIDELITY",
+    "ur_traceability": [
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "Create DST harness for telegraph-publisher",
+        "evidence": "DstIO.ts (interface + 6 types), MockDstIO.ts (all 20 methods), RealDstIO.ts (all 20 methods + DstError wrapping), DstHarness.ts (factory wiring) all exist at src/dst/"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "File I/O interception (~250 IO calls)",
+        "evidence": "MockDstIO virtual FS (Map<string, Uint8Array>): readFile, readFileBuffer, writeFile, writeFileBuffer, exists, mkdir, readdir, stat, lstat, unlink, copyFile, rm, watch"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "External API interception (Telegra.ph fetch)",
+        "evidence": "MockDstIO.fetch with httpHandlers registration map; ENETDOWN on unregistered URL"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "Seedable deterministic PRNG + tick clock",
+        "evidence": "MockDstIO: xoshiro128** via BigInt (initPrng/nextPrng), tick(ms) clock, seed defaults to 42"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "External process mock (ImageMagick exec)",
+        "evidence": "MockDstIO.exec with addExecHandler registration map"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "Crypto deterministic hash",
+        "evidence": "MockDstIO.hash via node:crypto createHash (deterministic pure function)"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "Env pinning",
+        "evidence": "MockDstIO.setEnv/getEnv for process.env interception with real process.env fallback"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "Per-test isolation (beforeEach/afterEach reset)",
+        "evidence": "MockDstIO.reset() clears all state: files, symlinks, handlers, callbacks, env, ops, clock=0; DstHarness.reset() delegates; DstHarness.test.ts beforeEach/afterEach pattern"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "Pipeline coverage within TASK-003: dependency tree (DependencyManager)",
+        "evidence": "DstHarness.getDependencyManager() → new DependencyManager(config, pathResolver, dstIO); DstHarness.test.ts 3 integration tests; DependencyManager.test.ts 4 DST injection tests"
+      },
+      {
+        "ur_id": "UR-002",
+        "status": "COVERED",
+        "user_goal": "Pipeline coverage: publish, EPUB, link validation",
+        "evidence": "Explicitly deferred to Phases 3-6 with TASK-PENDING tracking in plan.md lines 13-17; scope bounded within TASK-003 to dependency tree only"
+      }
+    ],
+    "findings": [
+      {
+        "id": "F-IMP-08",
+        "title": "MockDstIO.randomId() not fully deterministic — violates PRNG contract",
+        "severity": "MEDIUM",
+        "challenge": "Plan.md line 129 specifies 'randomId: UUID v4 from PRNG' (fully deterministic from seeded PRNG). Creative.md line 67 says 'seedable.' However, MockDstIO.ts lines 250-254 implement randomId() as: `const hex = Math.floor(this.nextPrng() * 0xffffffff).toString(16).padStart(8, '0'); return \\`${hex}-${randomUUID().slice(9)}\\`;` — only the first 8 hex chars (5%) come from the PRNG; the remaining 28 chars come from real `crypto.randomUUID()`. This means two DST sessions with the same seed produce DIFFERENT randomId values for the 28 non-deterministic characters, breaking the core DST property of full replay reproducibility.",
+        "alternative": "Replace with fully PRNG-based UUID v4 generator: generate all 32 hex characters from xoshiro128** PRNG (consuming 16 x 32-bit PRNG values per UUID), format as UUID v4 with correct version (4) and variant bits (10xx), returning a fully deterministic UUID.",
+        "risk": "Any test using randomId() will be non-deterministic and unreproducible between runs. As DST harness adoption grows (Phases 3-6), this latent non-determinism will cause flaky tests that pass/fail depending on real crypto entropy. Severity: MEDIUM, Likelihood: HIGH (any code path using randomId under DST).",
+        "artifact_ref": "src/dst/MockDstIO.ts:250-254"
+      },
+      {
+        "id": "F-IMP-06",
+        "title": "MockDstIO.stat() does not resolve symlinks (carry-forward from previous review)",
+        "severity": "LOW",
+        "challenge": "MockDstIO.statImpl when called with isLstat=false (stat) does not check the symlinks map — it only checks this.files. When a path exists only as a symlink entry (via addSymlink) with no corresponding file entry, stat() throws ENOENT. On a real filesystem, stat() follows symlinks to the target file.",
+        "alternative": "Enhance statImpl's `isLstat=false` path to check symlinks map, resolve the target path via addSymlink mapping, and return the target file's stats if it exists.",
+        "risk": "If future code uses stat() (not just lstat) in a DST-testable path, MockDstIO would produce different results than a real filesystem.",
+        "artifact_ref": "src/dst/MockDstIO.ts:137-162"
+      },
+      {
+        "id": "F-IMP-07",
+        "title": "createNode() duplicates metadata parsing logic (carry-forward from previous review)",
+        "severity": "LOW",
+        "challenge": "DependencyManager.createNode() has two code paths: (a) the DstIO-aware path (lines 256-269) that re-reads file content via fsReadFile and manually parses metadata via MetadataManager.parseMetadata/validateMetadata, and (b) the non-DstIO path (lines 270-274) that delegates to MetadataManager.getPublicationStatus/getPublicationInfo. The DstIO-aware path duplicates parsing logic that already exists in those MetadataManager static methods.",
+        "alternative": "Refactor MetadataManager.getPublicationStatus and getPublicationInfo to accept an optional DstIO parameter, or add a static factory method taking content string instead of file path, so the DstIO-aware path can reuse them.",
+        "risk": "Low in current scope — both paths work correctly. Maintenance divergence risk over time as metadata rules evolve.",
+        "artifact_ref": "src/dependencies/DependencyManager.ts:255-274"
+      },
+      {
+        "id": "F-IMP-09",
+        "title": "UNABLE TO VERIFY: test suite execution",
+        "severity": "LOW",
+        "challenge": "Step 6 of the review instructions requires running `bun test src/dst/DstHarness.test.ts src/dependencies/DependencyManager.test.ts`. No shell tool is available in this environment to execute the test suite. Static analysis confirms structural correctness (all imports resolve, interfaces match, method signatures align), but runtime verification cannot be provided.",
+        "alternative": "Execute the test command in a context with shell access: `bun test src/dst/DstHarness.test.ts src/dependencies/DependencyManager.test.ts`",
+        "risk": "Latent runtime errors (import resolution failures, runtime type errors, mock behavior mismatches) could exist that are invisible to static analysis. Unlikely given structural consistency but impossible to rule out without execution.",
+        "artifact_ref": "src/dst/DstHarness.test.ts, src/dependencies/DependencyManager.test.ts"
+      }
+    ],
+    "task_id": "TASK-003",
+    "phase": "IMPLEMENT",
+    "rationale": "Previous findings F-IMP-01 through F-IMP-05 are all resolved (error parity via rethrow(), constructor signature in tech_spec, resolveAll→buildDependencyTree, DST injection tests added, live DstError import). F-IMP-06 and F-IMP-07 remain LOW and carry forward. However, a NEW MEDIUM-severity finding F-IMP-08 was discovered: MockDstIO.randomId() uses real crypto.randomUUID() for 28/36 characters, violating the plan's deterministic UUID specification. Per S3 matrix, one MEDIUM finding forces REVISE. Tests could not be executed because no shell tool is available in this environment — static analysis confirms structural correctness.",
+    "projectDir": "/Users/vedmalex/work/BhaktiVaibhava/telegraph-publisher"
+  },
+  "runtime_ts": "2026-06-24T17:56:00.266Z",
+  "runtime_validated_at": "2026-06-24T17:56:00.266Z",
+  "platform": "opencode",
+  "agent_supplied_ts": null
+}

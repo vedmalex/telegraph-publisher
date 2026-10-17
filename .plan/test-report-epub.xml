@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="28" assertions="62" failures="0" skipped="0" time="1.239211">
+  <testsuite name="src/epub/EpubGenerator.test.ts" file="src/epub/EpubGenerator.test.ts" tests="28" assertions="62" failures="0" skipped="0" time="1.226569" hostname="MacBook-Air-Aleksej.local">
+    <testsuite name="EpubGenerator" file="src/epub/EpubGenerator.test.ts" line="8" tests="28" assertions="62" failures="0" skipped="0" time="0" hostname="MacBook-Air-Aleksej.local">
+      <testsuite name="constructor" file="src/epub/EpubGenerator.test.ts" line="21" tests="3" assertions="3" failures="0" skipped="0" time="0" hostname="MacBook-Air-Aleksej.local">
+        <testcase name="should create EpubGenerator with required options" classname="constructor &gt; EpubGenerator" time="0.000773" file="src/epub/EpubGenerator.test.ts" line="22" assertions="1" />
+        <testcase name="should create EpubGenerator with optional language" classname="constructor &gt; EpubGenerator" time="0.000281" file="src/epub/EpubGenerator.test.ts" line="33" assertions="1" />
+        <testcase name="should create EpubGenerator with optional identifier" classname="constructor &gt; EpubGenerator" time="0.000236" file="src/epub/EpubGenerator.test.ts" line="45" assertions="1" />
+      </testsuite>
+      <testsuite name="addChapterFromFile" file="src/epub/EpubGenerator.test.ts" line="58" tests="4" assertions="4" failures="0" skipped="0" time="0.212" hostname="MacBook-Air-Aleksej.local">
+        <testcase name="should add chapter from markdown file" classname="addChapterFromFile &gt; EpubGenerator" time="0.035698" file="src/epub/EpubGenerator.test.ts" line="59" assertions="1" />
+        <testcase name="should add chapter with metadata title" classname="addChapterFromFile &gt; EpubGenerator" time="0.116354" file="src/epub/EpubGenerator.test.ts" line="79" assertions="1" />
+        <testcase name="should add multiple chapters" classname="addChapterFromFile &gt; EpubGenerator" time="0.031521" file="src/epub/EpubGenerator.test.ts" line="105" assertions="1" />
+        <testcase name="should process chapter with TOC options" classname="addChapterFromFile &gt; EpubGenerator" time="0.030731" file="src/epub/EpubGenerator.test.ts" line="125" assertions="1" />
+      </testsuite>
+      <testsuite name="generate" file="src/epub/EpubGenerator.test.ts" line="147" tests="8" assertions="21" failures="0" skipped="0" time="0.327" hostname="MacBook-Air-Aleksej.local">
+        <testcase name="should generate valid EPUB file" classname="generate &gt; EpubGenerator" time="0.030065" file="src/epub/EpubGenerator.test.ts" line="148" assertions="3" />
+        <testcase name="should generate EPUB with multiple chapters" classname="generate &gt; EpubGenerator" time="0.033465" file="src/epub/EpubGenerator.test.ts" line="172" assertions="3" />
+        <testcase name="should generate EPUB with custom language" classname="generate &gt; EpubGenerator" time="0.032337" file="src/epub/EpubGenerator.test.ts" line="197" assertions="1" />
+        <testcase name="should generate EPUB with cover image" classname="generate &gt; EpubGenerator" time="0.03018" file="src/epub/EpubGenerator.test.ts" line="215" assertions="2" />
+        <testcase name="should bundle local images referenced in markdown into EPUB package" classname="generate &gt; EpubGenerator" time="0.114095" file="src/epub/EpubGenerator.test.ts" line="242" assertions="6" />
+        <testcase name="should keep temporary files in debug mode" classname="generate &gt; EpubGenerator" time="0.02953" file="src/epub/EpubGenerator.test.ts" line="277" assertions="1" />
+        <testcase name="should write debug JSON for chapter content when debug is enabled" classname="generate &gt; EpubGenerator" time="0.03126" file="src/epub/EpubGenerator.test.ts" line="303" assertions="4" />
+        <testcase name="should generate EPUB with custom identifier" classname="generate &gt; EpubGenerator" time="0.028422" file="src/epub/EpubGenerator.test.ts" line="331" assertions="1" />
+      </testsuite>
+      <testsuite name="title page" file="src/epub/EpubGenerator.test.ts" line="350" tests="4" assertions="16" failures="0" skipped="0" time="0.287" hostname="MacBook-Air-Aleksej.local">
+        <testcase name="omits the title page unless asked for one" classname="title page &gt; EpubGenerator" time="0.057766" file="src/epub/EpubGenerator.test.ts" line="370" assertions="1" />
+        <testcase name="puts the title page first and names the book on it" classname="title page &gt; EpubGenerator" time="0.082501" file="src/epub/EpubGenerator.test.ts" line="375" assertions="5" />
+        <testcase name="records the imprint details it was given" classname="title page &gt; EpubGenerator" time="0.082371" file="src/epub/EpubGenerator.test.ts" line="391" assertions="7" />
+        <testcase name="marks the title page and the body in the landmarks" classname="title page &gt; EpubGenerator" time="0.066852" file="src/epub/EpubGenerator.test.ts" line="413" assertions="3" />
+      </testsuite>
+      <testsuite name="page numbers" file="src/epub/EpubGenerator.test.ts" line="422" tests="3" assertions="11" failures="0" skipped="0" time="0.225" hostname="MacBook-Air-Aleksej.local">
+        <testcase name="drops page markers when page breaks are not asked for" classname="page numbers &gt; EpubGenerator" time="0.083372" file="src/epub/EpubGenerator.test.ts" line="444" assertions="2" />
+        <testcase name="keeps printed page numbers out of the contents and in a page-list" classname="page numbers &gt; EpubGenerator" time="0.085192" file="src/epub/EpubGenerator.test.ts" line="450" assertions="7" />
+        <testcase name="never titles a chapter with a page marker or a rule" classname="page numbers &gt; EpubGenerator" time="0.057281" file="src/epub/EpubGenerator.test.ts" line="469" assertions="2" />
+      </testsuite>
+      <testsuite name="content processing" file="src/epub/EpubGenerator.test.ts" line="477" tests="3" assertions="3" failures="0" skipped="0" time="0.087" hostname="MacBook-Air-Aleksej.local">
+        <testcase name="should handle markdown formatting correctly" classname="content processing &gt; EpubGenerator" time="0.029876" file="src/epub/EpubGenerator.test.ts" line="478" assertions="1" />
+        <testcase name="should handle file without metadata" classname="content processing &gt; EpubGenerator" time="0.029887" file="src/epub/EpubGenerator.test.ts" line="504" assertions="1" />
+        <testcase name="should handle empty file gracefully" classname="content processing &gt; EpubGenerator" time="0.029662" file="src/epub/EpubGenerator.test.ts" line="522" assertions="1" />
+      </testsuite>
+      <testsuite name="error handling" file="src/epub/EpubGenerator.test.ts" line="540" tests="3" assertions="4" failures="0" skipped="0" time="0" hostname="MacBook-Air-Aleksej.local">
+        <testcase name="should throw error when file does not exist" classname="error handling &gt; EpubGenerator" time="0.000897" file="src/epub/EpubGenerator.test.ts" line="541" assertions="1" />
+        <testsuite name="CSS and diacritics support" file="src/epub/EpubGenerator.test.ts" line="554" tests="2" assertions="3" failures="0" skipped="0" time="0.061" hostname="MacBook-Air-Aleksej.local">
+          <testcase name="should support Sanskrit text with IAST diacritics in code elements" classname="CSS and diacritics support &gt; error handling &gt; EpubGenerator" time="0.031305" file="src/epub/EpubGenerator.test.ts" line="555" assertions="2" />
+          <testcase name="should generate CSS with proper font support for diacritics" classname="CSS and diacritics support &gt; error handling &gt; EpubGenerator" time="0.030229" file="src/epub/EpubGenerator.test.ts" line="583" assertions="1" />
+        </testsuite>
+      </testsuite>
+    </testsuite>
+  </testsuite>
+</testsuites>
