@@ -1,6 +1,9 @@
 import type { TelegraphNode } from "./telegraphPublisher"; // Import TelegraphNode interface
 import { AnchorGenerator, type HeadingInfo } from "./utils/AnchorGenerator"; // Import unified anchor generator
 import { buildSectionNav, renderSectionNavNodes } from "./navigation/sectionNav";
+import { parseEpubMarkdown } from "./epub/EpubMarkdownDocument";
+import { renderEpubTokens } from "./epub/EpubTokenRenderer";
+import type { EpubRenderContext, OutlineNode } from "./epub/EpubTypes";
 
 /**
  * Validates cleaned content to ensure it does not contain unsupported syntax, like raw HTML tags.
@@ -637,6 +640,73 @@ export function convertMarkdownToTelegraphNodes(
 		pageList?: number[];
 	} = {},
 ): TelegraphNode[] {
+	if (options.target === "epub") {
+		const {
+			generateToc = true,
+			inlineToC = true,
+			tocTitle,
+			tocSeparators = true,
+			tocDepth = Number.POSITIVE_INFINITY,
+			tocNested = false,
+			tocPosition = "start",
+			tocMode = "full",
+			navCaption = "К тексту:",
+			navThreshold,
+			navMaxItems,
+			pageBreaks = false,
+			pageList,
+		} = options;
+
+		const parsed = parseEpubMarkdown(markdown, "epub-source", { pageBreaks });
+
+		if (pageBreaks && pageList) {
+			for (const page of parsed.pages) {
+				pageList.push(page.pageNumber);
+			}
+		}
+
+		const context: EpubRenderContext = {
+			sourceKey: "epub-source",
+			anchors: parsed.anchors,
+			definitions: parsed.definitions,
+			pageBreaks,
+			epubVersion: 3,
+		};
+
+		const contentNodes: TelegraphNode[] = [];
+		for (const unit of parsed.units) {
+			const payload = parsed.payloadStore.get(unit.payloadRef);
+			if (payload?.tokens) {
+				contentNodes.push(...renderEpubTokens(payload.tokens, context));
+			}
+		}
+
+		if (generateToc && inlineToC && tocMode !== "none") {
+   const flatten=(items:OutlineNode[]):OutlineNode[]=>items.flatMap(n=>[n,...flatten(n.children)]);
+   const headings=flatten(parsed.outline).filter(n=>n.level<=tocDepth);
+   const counts=new Map<number,number>();for(const h of headings)counts.set(h.level,(counts.get(h.level)??0)+1);
+   const level=[...counts].sort((a,b)=>b[1]-a[1]||a[0]-b[0])[0]?.[0];
+   const row=headings.filter(h=>h.level===level);
+   const infos=row.map(h=>AnchorGenerator.extractHeadingInfo(["","#".repeat(h.level),h.label] as unknown as RegExpMatchArray));
+   const milestones=buildSectionNav(infos,{threshold:navThreshold,maxItems:navMaxItems,asciiAnchors:true});
+   const useBlocks=tocMode==="blocks" || (tocMode==="auto" && milestones!==null);
+   const tocNodes:TelegraphNode[]=[];
+   if(useBlocks){
+    if(milestones)tocNodes.push(...renderSectionNavNodes(milestones.map(item=>({...item,anchor:row[item.ordinal-1]!.id})),navCaption,tocPosition==="end"?"end":"start"));
+   } else if(headings.length>=2){
+    const list=(items:OutlineNode[]):TelegraphNode[]=>items.flatMap(h=>h.level>tocDepth?list(h.children):[{tag:"li",children:[{tag:"a",attrs:{href:`#${h.id}`},children:[h.label]},...(tocNested&&h.children.length?[{tag:"ul",children:list(h.children)}]:[])]}]);
+    if(tocSeparators)tocNodes.push({tag:"hr"});
+    if(tocTitle?.trim())tocNodes.push({tag:"h3",children:[tocTitle]});
+    tocNodes.push({tag:"ul",children:list(tocNested?parsed.outline:headings.map(h=>({...h,children:[]})))});
+    if(tocSeparators)tocNodes.push({tag:"hr"});
+   }
+   if(tocPosition!=="end")contentNodes.unshift(...tocNodes);
+   if(tocPosition==="end" || tocPosition==="both")contentNodes.push(...tocNodes);
+  }
+
+		return contentNodes;
+	}
+
 	const { generateToc = true, inlineToC = true, tocTitle, tocSeparators = true, target = "telegraph", tocDepth = Number.POSITIVE_INFINITY, tocNested = false, tocPosition = "start", tocMode = "full", navCaption = "К тексту:", navThreshold, navMaxItems } = options;
 
 	if (options.pageBreaks) {

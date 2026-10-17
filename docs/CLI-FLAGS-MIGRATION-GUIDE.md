@@ -2,7 +2,13 @@
 
 ## Overview
 
-This guide covers the CLI flags refactoring implemented in `telegraph-publisher` v2.0. The changes unify flag functionality, improve consistency, and enhance the user experience while maintaining backward compatibility.
+This guide covers the CLI flag changes, new defaults, and migration paths in `telegraph-publisher` v2.0:
+1. **Telegraph Publishing Changes** (Unified `--force` flag, enhanced flag propagation)
+2. **EPUB Generation Changes** (Default 300 KiB chapter auto-splitting, `--no-auto-split`, exit codes 0/1/2, new diagnostics)
+
+---
+
+# Part 1: Telegraph Publishing Changes
 
 ## 🚀 What Changed
 
@@ -54,230 +60,120 @@ telegraph-publisher pub --file article.md --force
 }
 ```
 
-## 📋 Migration Steps
+---
 
-### Step 1: Update Command Usage
+# Part 2: EPUB Generation Migration (v2.0)
 
-Replace any usage of the deprecated `--force-republish` flag:
+## 📚 What Changed in EPUB Generation
 
-```bash
-# ❌ Old (will show helpful error message)
-telegraph-publisher pub --file article.md --force-republish
+### 1. Default Automatic Chapter Splitting at 300 KiB
 
-# ✅ New
-telegraph-publisher pub --file article.md --force
-```
+#### Legacy Behavior
+In previous versions, `telegraph-publisher epub` produced **one XHTML document per input file** unless `--split-at` was explicitly supplied. When compiling large books (e.g. whole scriptures, commentaries, large anthologies), a single 15–50 MB file resulted in an enormous XHTML document. This caused e-readers (Kindle, Kobo, PocketBook) to freeze, drop pages, or crash.
 
-### Step 2: Review Automation Scripts
-
-If you have automation scripts or CI/CD pipelines using the old flag:
-
-```bash
-# Update build scripts
-sed -i 's/--force-republish/--force/g' build.sh
-
-# Update GitHub Actions
-sed -i 's/--force-republish/--force/g' .github/workflows/publish.yml
-```
-
-### Step 3: Update Configuration (Optional)
-
-If you have a custom `telegraph.config.json` with `maxDependencyDepth: 1`, you can now:
-
-1. **Remove the setting** to use the new default (20)
-2. **Keep your custom value** if you prefer specific depth control
-
-## 🔧 New CLI Flag Behavior
-
-### `--force` Flag (Unified)
-
-The `--force` flag now combines the functionality of both previous flags:
-
-**What it does:**
-- ✅ Bypasses link verification (original `--force` behavior)
-- ✅ Forces republication of unchanged files (original `--force-republish` behavior)  
-- ✅ Propagates through entire dependency chain
-- ✅ **NEVER creates new pages** for already published content (uses edit path)
-
-**Usage examples:**
-```bash
-# Force republish a single file
-telegraph-publisher pub --file article.md --force
-
-# Force republish with dependencies
-telegraph-publisher pub --file article.md --force --with-dependencies
-
-# Debug mode with force (shows what would be published)
-telegraph-publisher pub --file article.md --force --debug
-```
-
-### Enhanced Flag Propagation
-
-All flags now propagate consistently:
-
-```bash
-# Debug mode applies to root file AND all dependencies
-telegraph-publisher pub --file article.md --debug --with-dependencies
-
-# Force behavior applies to entire dependency tree
-telegraph-publisher pub --file article.md --force --with-dependencies
-
-# Dry-run mode applies throughout the chain
-telegraph-publisher pub --file article.md --dry-run --with-dependencies
-```
-
-## 🛡️ Safety Guarantees
-
-### Critical Behavior Preservation
-
-**The `--force` flag maintains these important safety guarantees:**
-
-1. **Never creates duplicate pages** - Always uses existing edit paths for published content
-2. **Preserves metadata** - Existing publication data is maintained
-3. **Predictable behavior** - Same behavior whether file is new or already published
-
-### Error Handling
-
-If you accidentally use the old flag, you'll see a helpful migration message:
-
-```
-❌ Deprecated Flag Used: --force-republish
-
-The flag '--force-republish' has been removed to simplify the CLI interface.
-
-✅ Migration Guide:
-   Old: telegraph-publisher pub --file example.md --force-republish
-   New: telegraph-publisher pub --file example.md --force
-
-📖 The '--force' flag now handles both:
-   • Bypassing link verification (original --force behavior)
-   • Forcing republication of unchanged files (original --force-republish behavior)
-
-For more information, run: telegraph-publisher pub --help
-```
-
-## 📚 API Changes (for Developers)
-
-### New TypeScript Interfaces
-
-If you're using the API programmatically:
-
-```typescript
-// New unified options interface
-interface PublishDependenciesOptions {
-  dryRun?: boolean;
-  debug?: boolean;
-  force?: boolean;          // Unified flag
-  generateAside?: boolean;
-  tocTitle?: string;
-  tocSeparators?: boolean;
-}
-
-// Updated method signature
-async publishDependencies(
-  filePath: string,
-  username: string,
-  options: PublishDependenciesOptions = {}
-): Promise<{ success: boolean; error?: string; publishedFiles?: string[] }>
-```
-
-### Migration for Programmatic Usage
-
-```typescript
-// ❌ Old API usage
-await publisher.publishDependencies(
-  'article.md',
-  'author',
-  true,  // dryRun
-  true,  // generateAside
-  'Contents', // tocTitle
-  true   // tocSeparators
-);
-
-// ✅ New API usage
-await publisher.publishDependencies(
-  'article.md',
-  'author',
-  {
-    dryRun: true,
-    force: true,          // Unified force flag
-    generateAside: true,
-    tocTitle: 'Contents',
-    tocSeparators: true
-  }
-);
-```
-
-### Options Builder Pattern
-
-For complex scenarios, use the builder pattern:
-
-```typescript
-import { PublishOptionsBuilder } from 'telegraph-publisher';
-
-const options = PublishOptionsBuilder.create()
-  .force(true)
-  .debug(true)
-  .tableOfContents({
-    enabled: true,
-    title: 'Table of Contents',
-    separators: false
-  })
-  .buildValidated();
-
-await publisher.publishDependencies('article.md', 'author', options);
-```
-
-## 🔍 Troubleshooting
-
-### Common Issues
-
-**Q: I'm getting "deprecated flag" errors**
-- **A:** Replace `--force-republish` with `--force` in your commands
-
-**Q: Force flag behavior seems different**
-- **A:** The new `--force` combines both old flags' functionality. It should work the same or better.
-
-**Q: My dependencies aren't being force-published**
-- **A:** Ensure you're using `--with-dependencies` along with `--force`
-
-**Q: Performance seems slower with the new defaults**
-- **A:** The new default `maxDependencyDepth: 20` processes more dependencies. You can override this in your config if needed.
-
-### Getting Help
-
-```bash
-# View all available options
-telegraph-publisher pub --help
-
-# Check current configuration
-telegraph-publisher config show
-
-# Test with dry-run mode
-telegraph-publisher pub --file article.md --dry-run --force
-```
-
-## 📈 Benefits Summary
-
-### For Users
-- ✅ **Simpler CLI** - Fewer flags to remember
-- ✅ **Consistent behavior** - Flags work the same across all files
-- ✅ **Better error messages** - Helpful migration guidance
-- ✅ **More powerful defaults** - Process more dependencies by default
-
-### For Developers
-- ✅ **Type-safe APIs** - Better TypeScript support
-- ✅ **Clean architecture** - Improved code organization
-- ✅ **Better testing** - Comprehensive test coverage
-- ✅ **Maintainable code** - Cleaner patterns and structures
-
-## 🔗 Additional Resources
-
-- [CLI Reference](./CLI-REFERENCE.md) - Complete flag documentation
-- [API Documentation](./API-REFERENCE.md) - Programmatic usage guide
-- [Configuration Guide](./CONFIGURATION.md) - Setup and customization
-- [Examples](./EXAMPLES.md) - Common usage patterns
+#### Current Behavior (v2.0)
+- **Automatic 300 KiB chapter splitting is enabled by default**: any logical chapter whose final serialized XHTML exceeds **307,200 UTF-8 bytes** (300 KiB) is automatically split at safe atomic unit boundaries (preferring headings, then paragraph breaks).
+- **All cross-references and internal links are automatically rewritten**: links like `[link](#anchor)` or `[link](file.md#sec)` continue pointing to the exact split sub-chapter (`chapter-1_sub2.html#anchor`).
+- **Atomic units are preserved**: tables, code blocks, lists, blockquotes, and verses/shlokas are never cut in the middle.
 
 ---
 
-**Need help?** If you encounter any issues during migration, please [open an issue](https://github.com/your-repo/telegraph-publisher/issues) with your specific use case. 
+## 🛠️ How to Preserve Legacy Behavior
+
+If your publishing workflow relies on older single-file outputs or strict manual-only splitting:
+
+### Scenario A: Preserve Single File per Input (Disable Auto-Split)
+
+Pass the `--no-auto-split` flag:
+
+```bash
+# ❌ Legacy command (previously produced a single monolithic chapter)
+telegraph-publisher epub -f large-book.md -a "Author" -o book.epub
+
+# ✅ In v2.0, to keep the single monolithic chapter without splitting:
+telegraph-publisher epub -f large-book.md -a "Author" -o book.epub --no-auto-split
+```
+
+### Scenario B: Preserve Manual Heading-Only Splitting
+
+If you previously used `--split-at` and do not want sub-splitting of chapters exceeding 300 KiB:
+
+```bash
+# ❌ Legacy command
+telegraph-publisher epub -f book.md -a "Author" --split-at 2 -o book.epub
+
+# ✅ In v2.0, to preserve manual H2 splitting without 300 KiB sub-splitting:
+telegraph-publisher epub -f book.md -a "Author" --split-at 2 --no-auto-split -o book.epub
+```
+
+---
+
+## ⚙️ New EPUB Command Flags
+
+| New Flag | Type / Format | Default | Description |
+|---|---|---|---|
+| `--max-chapter-size <size>` | Bytes, KiB, MiB (e.g. `300KiB`, `500KB`, `250000`) | `300KiB` (307 200 B) | Configures chapter size threshold. Range: `4096` to `2147483647` bytes. |
+| `--no-auto-split` | Boolean flag | `false` | Disables size-based chapter splitting. Mutually exclusive with `--max-chapter-size`. |
+| `--oversize-policy <mode>` | `warn` \| `error` | `warn` | Action when an indivisible unit (e.g. large table) exceeds the chapter budget. |
+| `--strict-links` | Boolean flag | `false` | Fails the build with exit code 1 if any internal anchor is unresolved. |
+| `--epub-report <path>` | File path | None | Outputs detailed JSON build report with file sizes, counts, and diagnostics. |
+| `--epub-dry-run` | Boolean flag | `false` | Analyzes chapters, headings, layout, and links without generating the `.epub` file. |
+
+### Flag Incompatibilities
+
+> [!WARNING]
+> Combining `--max-chapter-size` with `--no-auto-split` is invalid because they express contradictory intent. This triggers an option error (`E_OPTION`) and exits with code `2`.
+
+---
+
+## 🚦 Standardized Exit Codes
+
+In automation and CI/CD pipelines, exit codes allow scripts to distinguish between configuration errors and build failures:
+
+| Exit Code | Meaning | Examples / Scenarios |
+|---|---|---|
+| `0` | **Success** | EPUB generated successfully, or `--epub-dry-run` completed without errors. |
+| `1` | **Build / File Error** | Input file missing (`ENOENT`), strict link failure (`E_LINK_UNRESOLVED`), oversize block in strict mode (`E_OVERSIZE`), corrupted archive. |
+| `2` | **Option Validation Error** | Invalid byte size format, unknown enum value, `--max-chapter-size` combined with `--no-auto-split`, missing required `-a / --author`. |
+
+### Script Example Handling Exit Codes
+
+```bash
+#!/usr/bin/env bash
+telegraph-publisher epub -f manuscript.md -a "Author" --strict-links --epub-report build/report.json
+EXIT_STATUS=$?
+
+case $EXIT_STATUS in
+  0)
+    echo "✅ EPUB build succeeded!"
+    ;;
+  1)
+    echo "❌ Build error: broken links or oversize content. Inspect build/report.json."
+    exit 1
+    ;;
+  2)
+    echo "⚠️ CLI Option error: check flag arguments."
+    exit 2
+    ;;
+esac
+```
+
+---
+
+## 📋 Quick Command Comparison Table
+
+| Use Case | Legacy (v1.x) | Recommended (v2.0) |
+|---|---|---|
+| **Standard EPUB build** | `telegraph-publisher epub -f book.md -a "Author"` | `telegraph-publisher epub -f book.md -a "Author"` *(now auto-splits at 300 KiB)* |
+| **Keep legacy single file** | `telegraph-publisher epub -f book.md -a "Author"` | `telegraph-publisher epub -f book.md -a "Author" --no-auto-split` |
+| **Heading split only** | `telegraph-publisher epub -f book.md -a "Author" --split-at 2` | `telegraph-publisher epub -f book.md -a "Author" --split-at 2 --no-auto-split` |
+| **Custom chapter limit** | *Not supported* | `telegraph-publisher epub -f book.md -a "Author" --max-chapter-size 500KiB` |
+| **Strict CI verification** | *Not supported* | `telegraph-publisher epub -f book.md -a "Author" --strict-links --oversize-policy error` |
+| **Preview without writing**| *Not supported* | `telegraph-publisher epub -f book.md -a "Author" --epub-dry-run --epub-report report.json` |
+
+---
+
+## 🔗 Additional Resources
+
+- [Large Books & Streaming Guide](./EPUB-LARGE-BOOKS.md) - Complete technical guide on 300 KiB slicing and memory architecture
+- [API Reference](./API-REFERENCE.md) - Programmatic API documentation for `EpubGenerator`

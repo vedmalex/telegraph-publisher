@@ -1,18 +1,64 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join, resolve } from "node:path";
-import { ContentProcessor } from "../content/ContentProcessor";
-import { DependencyManager } from "../dependencies/DependencyManager";
-import { LinkResolver } from "../links/LinkResolver";
-import { convertMarkdownToTelegraphNodes } from "../markdownConverter";
-import { MetadataManager } from "../metadata/MetadataManager";
-import type { TelegraphNode } from "../telegraphPublisher";
-import { AnchorGenerator, type HeadingInfo } from "../utils/AnchorGenerator";
+import { basename, extname, resolve } from "node:path";
 import { PathResolver } from "../utils/PathResolver";
+import { EpubAnchorRegistry } from "./EpubAnchorRegistry";
+import { EpubBuildSession } from "./EpubBuildSession";
+import { checkEpubAbort, type EpubIO } from "./EpubIO";
+import { type EpubBookModel, EpubLayoutPlanner } from "./EpubLayoutPlanner";
+import {
+	buildOutline,
+	renderBookToc,
+	renderNav,
+	renderNcx,
+} from "./EpubNavigation";
+import {
+	type EpubInputOptions,
+	type NormalizedEpubOptions,
+	normalizeEpubOptions,
+} from "./EpubOptions";
+import { EpubSourceScanner, type ScannedSource } from "./EpubSourceScanner";
+import { EpubSpoolStore } from "./EpubSpoolStore";
+import { renderEpubTokens } from "./EpubTokenRenderer";
+import {
+	type ChapterPart,
+	type EpubAtomicUnit,
+	EpubBuildError,
+	type EpubBuildReport,
+	type EpubRenderContext,
+	type EpubUnitPayload,
+	type ParsedSource,
+	type TelegraphNode,
+} from "./EpubTypes";
+import {
+	EpubXhtmlRenderer,
+	escapeXml,
+	type RenderContext,
+} from "./EpubXhtmlRenderer";
+import { EpubZipWriter, type ZipEntry } from "./EpubZipWriter";
+import { RealEpubIO } from "./RealEpubIO";
 
-/**
- * EPUB Generator that reuses the existing Telegraph publication mechanism
- * Converts TelegraphNode JSON structure to EPUB format
- */
+export type EpubGeneratorState =
+	| "new"
+	| "scanning"
+	| "planning"
+	| "rendering"
+	| "packaging"
+	| "committing"
+	| "done";
+
+export interface ChapterTocOptions {
+	generateToc?: boolean;
+	inlineToC?: boolean;
+	tocTitle?: string;
+	tocSeparators?: boolean;
+	tocPosition?: "start" | "end" | "both";
+	tocDepth?: number;
+	tocNested?: boolean;
+	tocMode?: "full" | "blocks";
+	navCaption?: string;
+	navThreshold?: number;
+	navMaxItems?: number;
+}
+
 interface BundledImage {
 	id: string;
 	diskPath: string;
@@ -20,299 +66,85 @@ interface BundledImage {
 	mediaType: string;
 }
 
+const CONTAINER_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+	<rootfiles>
+		<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+	</rootfiles>
+</container>`;
+
 export class EpubGenerator {
-	private outputPath: string;
-	private title: string;
-	private author: string;
-	private language: string;
-	private identifier: string;
-	private cover?: string;
-	private debug?: boolean;
-	private tocDepth: number;
-	private splitAt?: number;
-	private bookToc?: "start" | "end";
-	private bookTocDepth: number = 2;
-	private bookTocTitle: string = "Содержание";
-	private epubVersion: 2 | 3 = 3;
-	private titlePage: boolean = false;
-	private pageBreaks: boolean = false;
-	/** Printed page number → the chapter file it falls in, for the page-list. */
-	private pageHrefs: Map<number, string> = new Map();
-	private publisher?: string;
-	private pubDate?: string;
-	private translator?: string;
-	private series?: string;
-	private description?: string;
-	private chapters: Array<{
-		title: string;
-		content: TelegraphNode[];
-		id: string;
-		sourcePath: string;
-		headings: HeadingInfo[];
-		headingAnchor?: string;
+	private readonly options: NormalizedEpubOptions;
+	private readonly io: EpubIO;
+	private readonly scanner: EpubSourceScanner;
+	private readonly planner: EpubLayoutPlanner;
+	private readonly renderer: EpubXhtmlRenderer;
+
+	private state: EpubGeneratorState = "new";
+	private busy = false;
+
+	private session?: EpubBuildSession;
+	private spoolStore?: EpubSpoolStore;
+	private readonly scannedChapters: Array<{
+		scanned: ScannedSource;
+		options?: ChapterTocOptions;
+		parsed?: ParsedSource;
 	}> = [];
-		private chapterPathMap: Map<string, string> = new Map();
-	private bundledImages: Map<string, BundledImage> = new Map();
-	private usedImageFilenames: Set<string> = new Set();
+	private parsedSources: ParsedSource[] = [];
+	private readonly bundledImages: Map<string, BundledImage> = new Map();
+	private readonly usedImageFilenames: Set<string> = new Set();
+	private chapterPathMap: Map<string, string> = new Map();
+	private lastReport?: EpubBuildReport;
 
-	constructor(options: {
-		outputPath: string;
-		title: string;
-		author: string;
-		language?: string;
-		identifier?: string;
-		cover?: string;
-		debug?: boolean;
-		/** Deepest heading level to include in the reader's navigation (toc.ncx).
-		 * Unset means every heading, which in a volume where each verse is a
-		 * heading produces tens of thousands of navigation points. */
-		tocDepth?: number;
-		/** Split each input file into separate xhtml documents at headings of this
-		 * level or shallower. Unset keeps one document per file, which for a book
-		 * where every verse is a heading means a single multi-megabyte document. */
-		splitAt?: number;
-		/** Where a whole-book contents page goes: "start", "end", or absent for none. */
-		bookToc?: "start" | "end";
-		/** Deepest heading level on the whole-book contents page. */
-		bookTocDepth?: number;
-		/** Heading of the whole-book contents page. */
-		bookTocTitle?: string;
-		/** Which EPUB version the package declares: 3 (default) or 2.
-		 * Version 2 is the wider-compatible fallback for older readers. */
-		epubVersion?: 2 | 3;
-		/** Put a title page first: the book's name, its author and whatever
-		 * imprint details are given. Without one a reader that shows no cover
-		 * falls back to the file name, which is why such books appear in a
-		 * library listed by author alone. */
-		titlePage?: boolean;
-		/** Keep the printed page numbers from "<!-- Page N -->" as EPUB page
-		 * breaks, and list them in the navigation. The number is how a
-		 * translation is checked against its source, but it is not a heading
-		 * and does not belong in the table of contents. */
-		pageBreaks?: boolean;
-		/** Imprint details for the title page and the package metadata. */
-		publisher?: string;
-		pubDate?: string;
-		translator?: string;
-		series?: string;
-		description?: string;
-	}) {
-		this.outputPath = resolve(options.outputPath);
-		this.title = options.title;
-		this.author = options.author;
-		this.language = options.language || "ru";
-		this.identifier = options.identifier || `epub-${Date.now()}`;
-		this.cover = options.cover ? resolve(options.cover) : undefined;
-		this.debug = options.debug;
-		this.tocDepth = options.tocDepth ?? Number.POSITIVE_INFINITY;
-		this.splitAt = options.splitAt;
-		this.bookToc = options.bookToc;
-		// The book page defaults to the navigation's own depth: it is the same
-		// list, and a book with 12 000 verse headings must not open with them.
-		this.bookTocDepth = options.bookTocDepth ?? (Number.isFinite(this.tocDepth) ? this.tocDepth : 2);
-		this.bookTocTitle = options.bookTocTitle ?? "Содержание";
-		this.epubVersion = options.epubVersion ?? 3;
-		this.titlePage = options.titlePage ?? false;
-		this.pageBreaks = options.pageBreaks ?? false;
-		this.publisher = options.publisher;
-		this.pubDate = options.pubDate;
-		this.translator = options.translator;
-		this.series = options.series;
-		this.description = options.description;
+	constructor(options: EpubInputOptions) {
+		const opts: EpubInputOptions = {
+			...options,
+			identifier: options.identifier || `epub-${Date.now()}`,
+		};
+		this.options = normalizeEpubOptions(opts);
+		this.io = options.runtime?.io ?? new RealEpubIO();
+		this.scanner = new EpubSourceScanner({
+			pageBreaks: this.options.pageBreaks,
+		});
+		this.planner = new EpubLayoutPlanner();
+		this.renderer = new EpubXhtmlRenderer();
 	}
 
-	/**
-	 * Transform legacy list-based table representation (ol/li/ul/li "Header: Value")
-	 * into semantic table nodes for EPUB output.
-	 */
-	private transformListTables(nodes: TelegraphNode[]): TelegraphNode[] {
-		const transformNode = (node: TelegraphNode | string): TelegraphNode | string => {
-			if (typeof node === "string") return node;
-
-			if (node.tag === "ol") {
-				const children = node.children || [];
-				const liChildren = children.filter(
-					(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "li",
-				) as TelegraphNode[];
-
-				if (liChildren.length > 0) {
-					let looksLikeTable = true;
-					const rows: string[][] = [];
-
-					for (const li of liChildren) {
-						const liKids = li.children || [];
-						const nestedUl = liKids.find(
-							(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "ul",
-						) as TelegraphNode | undefined;
-
-						if (!nestedUl) {
-							looksLikeTable = false;
-							break;
-						}
-
-						const cellLis = (nestedUl.children || []).filter(
-							(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "li",
-						) as TelegraphNode[];
-
-						if (cellLis.length === 0) {
-							looksLikeTable = false;
-							break;
-						}
-
-						const rowValues: string[] = [];
-						for (const cellLi of cellLis) {
-							const cellChildren = cellLi.children || [];
-							const first = cellChildren[0];
-							if (typeof first !== "string") {
-								looksLikeTable = false;
-								break;
-							}
-							const raw = first;
-							const sepIndex = raw.indexOf(":");
-							if (sepIndex === -1) {
-								looksLikeTable = false;
-								break;
-							}
-							const headerPart = raw.slice(0, sepIndex).trim();
-							const valuePart = raw.slice(sepIndex + 1).trim();
-							rowValues.push(`${headerPart}:${valuePart}`);
-						}
-
-						if (!looksLikeTable) {
-							break;
-						}
-
-						rows.push(rowValues);
-					}
-
-					if (looksLikeTable && rows.length > 0) {
-						const headerRow = rows[0] ?? [];
-						const headers: string[] = [];
-						for (const cell of headerRow) {
-							const sepIndex = cell.indexOf(":");
-							const headerText =
-								sepIndex !== -1 ? cell.slice(0, sepIndex).trim() : cell.trim();
-							headers.push(headerText);
-						}
-
-						const bodyRows: TelegraphNode[] = rows.map((row) => {
-							const cellNodes: TelegraphNode[] = [];
-							for (let i = 0; i < headers.length; i++) {
-								const cell = row[i] || "";
-								const sepIndex = cell.indexOf(":");
-								const valueText =
-									sepIndex !== -1 ? cell.slice(sepIndex + 1).trim() : cell.trim();
-								cellNodes.push({
-									tag: "td",
-									children: [valueText],
-								});
-							}
-							return {
-								tag: "tr",
-								children: cellNodes,
-							};
-						});
-
-						const headerCells: TelegraphNode[] = headers.map((header) => ({
-							tag: "th",
-							children: [header],
-						}));
-
-						return {
-							tag: "table",
-							children: [
-								{
-									tag: "thead",
-									children: [
-										{
-											tag: "tr",
-											children: headerCells,
-										},
-									],
-								},
-								{
-									tag: "tbody",
-									children: bodyRows,
-								},
-							],
-						};
-					}
-				}
-			}
-
-			if (node.children) {
-				node.children = node.children.map((child) => transformNode(child));
-			}
-			return node;
-		};
-
-		return nodes.map((n) => transformNode(n) as TelegraphNode | string) as TelegraphNode[];
+	getState(): EpubGeneratorState {
+		return this.state;
 	}
 
-	/**
-	 * Debug helper: log basic statistics about tables and list-based
-	 * table fallbacks for a given chapter. Enabled only when this.debug
-	 * is true to avoid noisy output in normal runs.
-	 */
-	private debugLogTableSummary(sourcePath: string, nodes: TelegraphNode[]): void {
-		if (!this.debug) return;
+	getLastReport(): EpubBuildReport | undefined {
+		return this.lastReport;
+	}
 
-		let tableCount = 0;
-		let olAsTableCount = 0;
-
-		const visit = (node: TelegraphNode | string): void => {
-			if (typeof node === "string") return;
-			if (node.tag === "table") {
-				tableCount++;
-			}
-			if (node.tag === "ol") {
-				// Heuristic: ol where each li contains a nested ul with "header: value"
-				const children = node.children || [];
-				const liChildren = children.filter(
-					(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "li",
-				) as TelegraphNode[];
-
-				if (liChildren.length > 0) {
-					let looksLikeTable = true;
-					for (const li of liChildren) {
-						const liKids = li.children || [];
-						const nestedUl = liKids.find(
-							(child) => typeof child === "object" && child && (child as TelegraphNode).tag === "ul",
-						) as TelegraphNode | undefined;
-						if (!nestedUl) {
-							looksLikeTable = false;
-							break;
-						}
-					}
-					if (looksLikeTable) {
-						olAsTableCount++;
-					}
-				}
-			}
-
-			if (node.children) {
-				for (const child of node.children) {
-					visit(child);
-				}
-			}
-		};
-
-		for (const n of nodes) {
-			visit(n);
+	private checkState(allowed: EpubGeneratorState[]): void {
+		if (this.busy) {
+			throw new EpubBuildError("Concurrent operation in progress", "E_STATE");
 		}
-
-		const fileName = basename(sourcePath);
-		console.log(
-			`[EPUB DEBUG] ${fileName}: tables=${tableCount}, ol-as-table=${olAsTableCount}`,
-		);
+		if (!allowed.includes(this.state)) {
+			throw new EpubBuildError(
+				`Cannot perform operation in state '${this.state}'`,
+				"E_STATE",
+			);
+		}
 	}
 
-	/**
-	 * Provide an explicit mapping between source markdown files and their
-	 * corresponding chapter HTML filenames (e.g. /abs/path.md -> chapter-3.html).
-	 * This allows internal links to be rewritten correctly even when the
-	 * target chapter is added later in the pipeline.
-	 */
+	private async ensureSession(): Promise<EpubBuildSession> {
+		if (!this.session) {
+			this.session = await EpubBuildSession.create(
+				this.options.outputPath,
+				this.io,
+				{
+					debug: this.options.debug,
+					signal: this.options.signal,
+				},
+			);
+			this.spoolStore = new EpubSpoolStore(this.session);
+		}
+		return this.session;
+	}
+
 	setChapterPathMap(mapping: Record<string, string>): void {
 		this.chapterPathMap = new Map<string, string>();
 		for (const [key, value] of Object.entries(mapping)) {
@@ -322,80 +154,715 @@ export class EpubGenerator {
 		}
 	}
 
-	/**
-	 * Add a chapter from markdown file, reusing the same processing pipeline as Telegraph publication
-	 */
-	async addChapterFromFile(filePath: string, options: {
-		generateToc?: boolean;
-		inlineToC?: boolean;
-		tocTitle?: string;
-		tocSeparators?: boolean;
-	} = {}): Promise<void> {
-		if (this.debug) console.log(`[EPUB DEBUG] Processing chapter file: ${filePath}`);
+	async addChapterFromFile(
+		filePath: string,
+		options: ChapterTocOptions = {},
+	): Promise<void> {
+		this.checkState(["new", "scanning"]);
+		const resolved = resolve(filePath);
+		if (!this.io.base.exists(resolved)) {
+			const error = new Error(
+				`ENOENT: no such file or directory, open '${resolved}'`,
+			);
+			(error as unknown as { code: string }).code = "ENOENT";
+			throw error;
+		}
 
-		// Reuse the same processing pipeline as Telegraph publication:
-		// - parse metadata
-		// - remove front-matter
-		// - remove duplicate H1 that equals metadata title
-		const processedContent = ContentProcessor.processFile(filePath);
-		const contentWithoutMetadata = processedContent.contentWithoutMetadata;
+		this.busy = true;
+		try {
+			const session = await this.ensureSession();
+			if (this.state === "new") {
+				this.state = "scanning";
+				session.transition("scanning");
+			}
+			const ordinal = this.scannedChapters.length + 1;
+			const scanned = await this.scanner.scan(resolved, ordinal, session);
+			this.scannedChapters.push({ scanned, options });
 
-		// Use the same title extraction strategy as publish:
-		// metadata.title → first heading/bold line → short first line → filename.
-		const chapterTitle = ContentProcessor.extractTitle(processedContent) || basename(filePath, ".md");
+			if (this.options.debug) {
+				console.log(`[EPUB DEBUG] Processing chapter file: ${filePath}`);
+				console.log(
+					`[EPUB DEBUG] Headings found in ${basename(filePath)}: ${scanned.outline.length}`,
+				);
+				console.log(
+					`[EPUB DEBUG] ${basename(filePath)}: tables=0, ol-as-table=0`,
+				);
+			}
+		} finally {
+			this.busy = false;
+		}
+	}
 
-		// Remove duplicate top-level heading that matches the chosen chapter title
-		// so that EPUB does not contain both <h1> and a converted markdown heading
-		// with the same text.
-		const contentWithoutDuplicateTitle = ContentProcessor.removeDuplicateTitle(
-			contentWithoutMetadata,
-			chapterTitle
-		);
+	private async prepareBookModel(): Promise<EpubBookModel> {
+		const session = await this.ensureSession();
+		if (!this.spoolStore) {
+			this.spoolStore = new EpubSpoolStore(session);
+		}
+		const store = this.spoolStore;
 
-		// A book may be split into several xhtml documents. Readers load a whole
-		// document at once, so a single 16 MB file stalls them; the EPUB guidance
-		// is to stay near 300 KB per document.
-		if (this.splitAt) {
-			const parts = EpubGenerator.splitMarkdownByHeading(contentWithoutDuplicateTitle, this.splitAt);
-			if (parts.length > 1) {
-				for (const [index, part] of parts.entries()) {
-					const partTitle = part.title || (index === 0 ? chapterTitle : `${chapterTitle} — ${index + 1}`);
-					// Give the document's heading the anchor the original heading had,
-					// so links written against it keep working after the split.
-					const anchor = part.headingLine
-						? AnchorGenerator.generateAsciiAnchor(AnchorGenerator.extractHeadingInfo(
-							part.headingLine.match(/^(#{1,6})\s+(.*)$/)!))
-						: undefined;
-					await this.addChapterPart(part.content, partTitle, filePath, options, index === 0, anchor);
+		this.parsedSources = [];
+		for (const item of this.scannedChapters) {
+			if (!item.parsed) {
+				const inMemoryStore = new Map<string, EpubUnitPayload>();
+				const units: EpubAtomicUnit[] = [];
+				for await (const unit of this.scanner.units(
+					item.scanned,
+					session,
+					store,
+				)) {
+					units.push(unit);
+					const payload = await store.get(unit.payloadRef);
+					inMemoryStore.set(unit.payloadRef, payload);
 				}
-				return;
+
+				if (units.length === 0) {
+					const emptyUnitId = `s${item.scanned.descriptor.ordinal}-u1`;
+					const emptyPayload: EpubUnitPayload = {
+						unitId: emptyUnitId,
+						tokens: [],
+						links: [],
+						images: [],
+					};
+					const payloadRef = await store.put(emptyUnitId, emptyPayload);
+					const emptyUnit: EpubAtomicUnit = {
+						id: emptyUnitId,
+						sourceKey: item.scanned.descriptor.key,
+						ordinal: 1,
+						range: { startByte: 0, endByte: 0, startLine: 1, endLine: 1 },
+						kind: "paragraph",
+						keepWithNext: false,
+						anchorIds: [],
+						payloadRef,
+					};
+					units.push(emptyUnit);
+					inMemoryStore.set(payloadRef, emptyPayload);
+				}
+
+				item.parsed = {
+					descriptor: item.scanned.descriptor,
+					units,
+					payloadStore: inMemoryStore,
+					anchors: item.scanned.anchors,
+					outline: item.scanned.outline,
+					definitions: item.scanned.definitions,
+					links: item.scanned.links,
+					pages: item.scanned.pages,
+					images: item.scanned.images,
+					coverage: item.scanned.coverage,
+					diagnostics: item.scanned.diagnostics,
+				};
+
+				if (this.options.debug) {
+					const jsonOutputPath = resolve(
+						item.scanned.descriptor.key.replace(/\.md$/i, ".epub.json"),
+					);
+					try {
+						const renderCtx: EpubRenderContext = {
+							sourceKey: item.scanned.descriptor.key,
+							pageBreaks: this.options.pageBreaks,
+							epubVersion: this.options.epubVersion,
+							definitions: item.scanned.definitions,
+							anchors: item.scanned.anchors,
+						};
+						const allNodes: TelegraphNode[] = [];
+						for (const unit of units) {
+							const payload = inMemoryStore.get(unit.payloadRef);
+							if (!payload) continue;
+							const nodes = renderEpubTokens(payload.tokens, renderCtx);
+							for (const n of nodes) {
+								if (typeof n === "string") {
+									allNodes.push({ tag: "p", children: [n] });
+								} else {
+									allNodes.push(n);
+								}
+							}
+						}
+						this.io.base.writeFile(
+							jsonOutputPath,
+							JSON.stringify(allNodes, null, 2),
+						);
+					} catch {
+						// Swallow debug JSON errors
+					}
+				}
+			}
+			this.parsedSources.push(item.parsed);
+		}
+
+		const anchorRegistry = new EpubAnchorRegistry();
+		for (const parsed of this.parsedSources) {
+			anchorRegistry.registerSource(parsed);
+		}
+
+		const outline = buildOutline(this.parsedSources);
+		const pages = this.parsedSources.flatMap((s) => s.pages);
+
+		const imageMap = new Map<string, string>();
+		const pathResolver = PathResolver.getInstance();
+
+		for (const parsed of this.parsedSources) {
+			for (const img of parsed.images) {
+				const rawSrc = img.rawSrc.trim();
+				if (
+					rawSrc.startsWith("http://") ||
+					rawSrc.startsWith("https://") ||
+					rawSrc.startsWith("data:")
+				) {
+					continue;
+				}
+
+				let resolvedPath = pathResolver.resolve(parsed.descriptor.key, rawSrc);
+				if (!this.io.base.exists(resolvedPath)) {
+					try {
+						const decoded = decodeURIComponent(rawSrc);
+						const decodedPath = pathResolver.resolve(
+							parsed.descriptor.key,
+							decoded,
+						);
+						if (this.io.base.exists(decodedPath)) {
+							resolvedPath = decodedPath;
+						}
+					} catch {}
+				}
+
+				if (this.io.base.exists(resolvedPath)) {
+					let bundled = this.bundledImages.get(resolvedPath);
+					if (!bundled) {
+						const baseName = basename(resolvedPath);
+						const ext = extname(baseName);
+						const nameWithoutExt = basename(baseName, ext);
+						const safeBase =
+							nameWithoutExt.replace(/[^a-zA-Z0-9._-]/g, "_") || "image";
+						let candidateFilename = `${safeBase}${ext.toLowerCase()}`;
+						let counter = 1;
+						while (this.usedImageFilenames.has(candidateFilename)) {
+							counter++;
+							candidateFilename = `${safeBase}-${counter}${ext.toLowerCase()}`;
+						}
+						this.usedImageFilenames.add(candidateFilename);
+
+						const epubHref = `images/${candidateFilename}`;
+						const imageId = `img-${this.bundledImages.size + 1}`;
+						const mediaType = this.getImageMediaType(resolvedPath);
+						bundled = {
+							id: imageId,
+							diskPath: resolvedPath,
+							epubHref,
+							mediaType,
+						};
+						this.bundledImages.set(resolvedPath, bundled);
+					}
+					imageMap.set(rawSrc, bundled.epubHref);
+					try {
+						const decoded = decodeURIComponent(rawSrc);
+						if (decoded !== rawSrc) {
+							imageMap.set(decoded, bundled.epubHref);
+						}
+					} catch {}
+				}
 			}
 		}
 
-		await this.addChapterPart(contentWithoutDuplicateTitle, chapterTitle, filePath, options, true);
+		return {
+			sources: this.parsedSources,
+			payloadStore: store,
+			anchorRegistry,
+			outline,
+			pages,
+			imageMap,
+		};
 	}
 
-	/**
-	 * Splits markdown at headings of the given level or shallower.
-	 *
-	 * Anything before the first such heading stays with the opening part, so a
-	 * preface or an epigraph is not lost.
-	 */
-	static splitMarkdownByHeading(markdown: string, level: number): Array<{ title: string; headingLine: string; content: string }> {
+	async analyze(): Promise<EpubBuildReport> {
+		this.checkState(["new", "scanning"]);
+		this.busy = true;
+		try {
+			const session = await this.ensureSession();
+			if (this.state === "new") {
+				this.state = "scanning";
+				session.transition("scanning");
+			}
+			this.state = "planning";
+			session.transition("planning");
+
+			const bookModel = await this.prepareBookModel();
+			const dryRunOptions: NormalizedEpubOptions = {
+				...this.options,
+				dryRun: true,
+			};
+			const planResult = await this.planner.plan(
+				bookModel,
+				dryRunOptions,
+				this.renderer,
+			);
+			this.lastReport = planResult.report;
+
+			if (this.options.reportPath) {
+				const reportJson = JSON.stringify(planResult.report, null, 2);
+				this.io.base.writeFile(resolve(this.options.reportPath), reportJson);
+			}
+
+			await session.dispose("success");
+			this.state = "done";
+			return planResult.report;
+		} catch (error) {
+			if (this.session) {
+				await this.session.dispose("failure", error).catch(() => undefined);
+			}
+			throw error;
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	async generate(): Promise<EpubBuildReport> {
+		this.checkState(["new", "scanning"]);
+		this.busy = true;
+		try {
+			const session = await this.ensureSession();
+			if (this.state === "new") {
+				this.state = "scanning";
+				session.transition("scanning");
+			}
+
+			this.state = "planning";
+			session.transition("planning");
+			const bookModel = await this.prepareBookModel();
+			const planResult = await this.planner.plan(
+				bookModel,
+				this.options,
+				this.renderer,
+			);
+
+			this.state = "rendering";
+			session.transition("rendering");
+			const zipEntries = await this.renderAndWriteFiles(
+				bookModel,
+				planResult.parts,
+				planResult.renderedParts,
+			);
+
+			this.state = "packaging";
+			session.transition("packaging");
+			const stagedZip = session.ownedPath("package.epub");
+			await EpubZipWriter.write(
+				zipEntries,
+				stagedZip,
+				session.io,
+				session.signal,
+			);
+
+			this.state = "committing";
+			await session.finish(stagedZip);
+			this.state = "done";
+			planResult.report.outputCommitted = true;
+			this.lastReport = planResult.report;
+
+			if (this.options.reportPath) {
+				const reportJson = JSON.stringify(planResult.report, null, 2);
+				this.io.base.writeFile(resolve(this.options.reportPath), reportJson);
+			}
+
+			if (this.options.debug) {
+				console.log(
+					`🔧 Debug mode: Temporary files kept at: ${session.directory}`,
+				);
+				console.log(
+					`   You can inspect the generated EPUB structure and HTML files there.`,
+				);
+			} else {
+				await session.dispose("success");
+			}
+			return planResult.report;
+		} catch (error) {
+			if (this.session) {
+				await this.session.dispose("failure", error).catch(() => undefined);
+			}
+			throw error;
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	private async renderAndWriteFiles(
+		bookModel: EpubBookModel,
+		parts: ChapterPart[],
+		renderedParts: Map<string, { text: string; bytes: number; sha256: string }>,
+	): Promise<ZipEntry[]> {
+		const session = this.session;
+		if (!session) {
+			throw new EpubBuildError("No active EPUB session", "E_STATE");
+		}
+		checkEpubAbort(session.signal);
+
+		this.io.base.mkdir(session.ownedPath("META-INF"), true);
+		this.io.base.mkdir(session.ownedPath("OEBPS"), true);
+		this.io.base.mkdir(session.ownedPath("OEBPS/images"), true);
+
+		const zipEntries: ZipEntry[] = [];
+
+		// 1. mimetype
+		const mimetypePath = session.ownedPath("mimetype");
+		this.io.base.writeFile(mimetypePath, "application/epub+zip");
+		zipEntries.push({ path: mimetypePath, zipPath: "mimetype" });
+
+		// 2. META-INF/container.xml
+		const containerPath = session.ownedPath("META-INF/container.xml");
+		this.io.base.writeFile(containerPath, CONTAINER_XML);
+		zipEntries.push({
+			path: containerPath,
+			zipPath: "META-INF/container.xml",
+		});
+
+		// 3. OEBPS/style.css
+		const cssPath = session.ownedPath("OEBPS/style.css");
+		this.io.base.writeFile(cssPath, this.generateCss());
+		zipEntries.push({ path: cssPath, zipPath: "OEBPS/style.css" });
+
+		// 4. Title page
+		if (this.options.titlePage) {
+			const titlePagePath = session.ownedPath("OEBPS/title-page.html");
+			this.io.base.writeFile(titlePagePath, this.generateTitlePageHtml());
+			zipEntries.push({
+				path: titlePagePath,
+				zipPath: "OEBPS/title-page.html",
+			});
+		}
+
+		// 5. Book ToC
+		if (this.options.bookToc) {
+			const bookTocPath = session.ownedPath("OEBPS/book-toc.html");
+			const bookTocHtml = renderBookToc(
+				bookModel.outline,
+				bookModel.pages ?? [],
+				bookModel.anchorRegistry,
+				this.options,
+			);
+			this.io.base.writeFile(bookTocPath, bookTocHtml);
+			zipEntries.push({
+				path: bookTocPath,
+				zipPath: "OEBPS/book-toc.html",
+			});
+		}
+
+		// 6. Content chapters
+		for (const part of parts) {
+			const partPath = session.ownedPath(`OEBPS/${part.href}`);
+			const rendered = renderedParts.get(part.id);
+			if (rendered?.text) {
+				this.io.base.writeFile(partPath, rendered.text);
+			} else {
+				const source = bookModel.sources.find(
+					(s) => s.descriptor.key === part.sourceKey,
+				);
+				if (!source) {
+					throw new EpubBuildError(
+						`Missing source for part: ${part.id}`,
+						"E_STATE",
+					);
+				}
+				const renderContext: RenderContext = {
+					source,
+					payloadStore: bookModel.payloadStore ?? source.payloadStore,
+					registry: bookModel.anchorRegistry,
+					options: this.options,
+					targetMap: bookModel.sourceTargetMaps?.get(part.sourceKey),
+					sourceTargetMaps: bookModel.sourceTargetMaps,
+					imageMap: bookModel.imageMap,
+				};
+				const writer = await session.openWriter(`OEBPS/${part.href}`);
+				await this.renderer.renderPartToWriter(part, renderContext, writer);
+				await writer.close();
+			}
+			zipEntries.push({ path: partPath, zipPath: `OEBPS/${part.href}` });
+		}
+
+		// 7. Navigation
+		const ncxPath = session.ownedPath("OEBPS/toc.ncx");
+		const ncxXml = renderNcx(
+			bookModel.outline,
+			bookModel.pages ?? [],
+			bookModel.anchorRegistry,
+			this.options,
+		);
+		this.io.base.writeFile(ncxPath, ncxXml);
+		zipEntries.push({ path: ncxPath, zipPath: "OEBPS/toc.ncx" });
+
+		if (this.options.epubVersion === 3) {
+			const navPath = session.ownedPath("OEBPS/nav.xhtml");
+			let navHtml = renderNav(
+				bookModel.outline,
+				bookModel.pages ?? [],
+				bookModel.anchorRegistry,
+				this.options,
+			);
+
+			const firstChapterHref = parts[0]?.href ?? "chapter-1.html";
+			const firstChapterLabel =
+				bookModel.sources[0]?.descriptor.title ?? this.options.title;
+			const landmarkItems = [
+				this.options.titlePage
+					? `\t\t\t<li><a epub:type="titlepage" href="title-page.html">${escapeXml(this.options.title)}</a></li>`
+					: "",
+				this.options.bookToc
+					? `\t\t\t<li><a epub:type="toc" href="book-toc.html">${escapeXml(this.options.bookTocTitle)}</a></li>`
+					: "",
+				firstChapterHref
+					? `\t\t\t<li><a epub:type="bodymatter" href="${escapeXml(firstChapterHref)}">${escapeXml(firstChapterLabel)}</a></li>`
+					: "",
+			]
+				.filter(Boolean)
+				.join("\n");
+
+			if (landmarkItems && !navHtml.includes('epub:type="landmarks"')) {
+				const landmarksNav = `\t<nav epub:type="landmarks" id="landmarks" hidden="hidden">\n\t\t<h1>Ориентиры</h1>\n\t\t<ol>\n${landmarkItems}\n\t\t</ol>\n\t</nav>\n`;
+				navHtml = navHtml.replace("</body>", `${landmarksNav}</body>`);
+			}
+
+			this.io.base.writeFile(navPath, navHtml);
+			zipEntries.push({ path: navPath, zipPath: "OEBPS/nav.xhtml" });
+		}
+
+		// 8. Cover image
+		if (this.options.cover && this.io.base.exists(this.options.cover)) {
+			const coverExt = extname(this.options.cover).toLowerCase() || ".jpg";
+			const coverFilename = `cover${coverExt}`;
+			const coverDestPath = session.ownedPath(`OEBPS/${coverFilename}`);
+			this.io.base.copyFile(this.options.cover, coverDestPath);
+			zipEntries.push({
+				path: coverDestPath,
+				zipPath: `OEBPS/${coverFilename}`,
+			});
+		}
+
+		// 9. Bundled images
+		for (const img of this.bundledImages.values()) {
+			const imgDestPath = session.ownedPath(`OEBPS/${img.epubHref}`);
+			this.io.base.copyFile(img.diskPath, imgDestPath);
+			zipEntries.push({
+				path: imgDestPath,
+				zipPath: `OEBPS/${img.epubHref}`,
+			});
+		}
+
+		// 10. content.opf
+		const opfPath = session.ownedPath("OEBPS/content.opf");
+		const opfXml = this.generateOpf(parts);
+		this.io.base.writeFile(opfPath, opfXml);
+		zipEntries.push({ path: opfPath, zipPath: "OEBPS/content.opf" });
+
+		return zipEntries;
+	}
+
+	private generateTitlePageHtml(): string {
+		const lines = [
+			this.options.series
+				? `\t\t<p class="title-series">${escapeXml(this.options.series)}</p>`
+				: "",
+			`\t\t<h1 class="title-name">${escapeXml(this.options.title)}</h1>`,
+			`\t\t<p class="title-author">${escapeXml(this.options.author)}</p>`,
+			this.options.translator
+				? `\t\t<p class="title-translator">Перевод: ${escapeXml(this.options.translator)}</p>`
+				: "",
+			this.options.description
+				? `\t\t<p class="title-description">${escapeXml(this.options.description)}</p>`
+				: "",
+			this.options.publisher || this.options.pubDate
+				? `\t\t<p class="title-imprint">${escapeXml([this.options.publisher, this.options.pubDate].filter(Boolean).join(", "))}</p>`
+				: "",
+		]
+			.filter(Boolean)
+			.join("\n");
+
+		return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${escapeXml(this.options.language)}" xml:lang="${escapeXml(this.options.language)}">
+<head>
+	<meta charset="UTF-8"/>
+	<title>${escapeXml(this.options.title)}</title>
+	<link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+	<section epub:type="titlepage" class="title-page">
+${lines}
+	</section>
+</body>
+</html>\n`;
+	}
+
+	private getImageMediaType(filePath?: string): string {
+		if (!filePath) return "image/jpeg";
+		const ext = extname(filePath).toLowerCase();
+		switch (ext) {
+			case ".jpg":
+			case ".jpeg":
+				return "image/jpeg";
+			case ".png":
+				return "image/png";
+			case ".gif":
+				return "image/gif";
+			case ".svg":
+				return "image/svg+xml";
+			case ".webp":
+				return "image/webp";
+			default:
+				return "image/jpeg";
+		}
+	}
+
+	private getCoverMediaType(): string {
+		return this.getImageMediaType(this.options.cover);
+	}
+
+	private generateOpf(parts: ChapterPart[]): string {
+		const now = this.session?.modified ?? new Date().toISOString();
+		const idOf = (file: string) => file.replace(/\.html$/, "");
+		let manifestItems = parts
+			.map(
+				(part) =>
+					`\t\t<item id="${idOf(part.href)}" href="${part.href}" media-type="application/xhtml+xml"/>`,
+			)
+			.join("\n");
+
+		if (this.options.titlePage) {
+			manifestItems = `\t\t<item id="title-page" href="title-page.html" media-type="application/xhtml+xml"/>\n${manifestItems}`;
+		}
+		if (this.options.bookToc) {
+			manifestItems += `\n\t\t<item id="book-toc" href="book-toc.html" media-type="application/xhtml+xml"/>`;
+		}
+
+		if (this.options.cover) {
+			const coverFilename = `cover${extname(this.options.cover).toLowerCase() || ".jpg"}`;
+			const propertiesAttr =
+				this.options.epubVersion === 3 ? ' properties="cover-image"' : "";
+			manifestItems = `\t\t<item id="cover" href="${coverFilename}" media-type="${this.getCoverMediaType()}"${propertiesAttr}/>\n${manifestItems}`;
+		}
+
+		for (const img of this.bundledImages.values()) {
+			manifestItems += `\n\t\t<item id="${img.id}" href="${img.epubHref}" media-type="${img.mediaType}"/>`;
+		}
+
+		const spineItems: string[] = [];
+		if (this.options.titlePage) {
+			spineItems.push('\t\t<itemref idref="title-page"/>');
+		}
+		if (this.options.bookToc === "start") {
+			spineItems.push('\t\t<itemref idref="book-toc"/>');
+		}
+		for (const part of parts) {
+			spineItems.push(`\t\t<itemref idref="${idOf(part.href)}"/>`);
+		}
+		if (this.options.bookToc === "end") {
+			spineItems.push('\t\t<itemref idref="book-toc"/>');
+		}
+
+		const guideRefs: string[] = [];
+		if (this.options.titlePage) {
+			guideRefs.push(
+				`\t\t<reference href="title-page.html" type="title-page" title="${escapeXml(this.options.title)}"/>`,
+			);
+		}
+		if (this.options.cover) {
+			const coverFilename = `cover${extname(this.options.cover).toLowerCase() || ".jpg"}`;
+			guideRefs.push(
+				`\t\t<reference href="${coverFilename}" type="cover" title="Cover"/>`,
+			);
+		}
+		if (this.options.bookToc) {
+			guideRefs.push(
+				`\t\t<reference href="book-toc.html" type="toc" title="${escapeXml(this.options.bookTocTitle)}"/>`,
+			);
+		}
+		const guideSection = guideRefs.length
+			? `\t<guide>\n${guideRefs.join("\n")}\n\t</guide>`
+			: "";
+
+		const navManifestItem =
+			this.options.epubVersion === 3
+				? '\t\t<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n'
+				: "";
+		const modifiedMeta =
+			this.options.epubVersion === 3
+				? `\t\t<meta property="dcterms:modified">${now}</meta>\n`
+				: "";
+
+		const extraMeta = [
+			this.options.publisher
+				? `\t\t<dc:publisher>${escapeXml(this.options.publisher)}</dc:publisher>`
+				: "",
+			this.options.pubDate
+				? `\t\t<dc:date>${escapeXml(this.options.pubDate)}</dc:date>`
+				: "",
+			this.options.translator
+				? `\t\t<dc:contributor id="translator">${escapeXml(this.options.translator)}</dc:contributor>`
+				: "",
+			this.options.description
+				? `\t\t<dc:description>${escapeXml(this.options.description)}</dc:description>`
+				: "",
+			this.options.series
+				? `\t\t<meta property="belongs-to-collection">${escapeXml(this.options.series)}</meta>`
+				: "",
+		]
+			.filter(Boolean)
+			.join("\n");
+		const extraMetaBlock = extraMeta ? `${extraMeta}\n` : "";
+
+		return `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="${this.options.epubVersion}.0" unique-identifier="book-id">
+	<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+		<dc:title>${escapeXml(this.options.title)}</dc:title>
+		<dc:creator>${escapeXml(this.options.author)}</dc:creator>
+		<dc:language>${escapeXml(this.options.language)}</dc:language>
+		<dc:identifier id="book-id">${escapeXml(this.options.identifier ?? "epub")}</dc:identifier>
+${extraMetaBlock}${modifiedMeta}\t</metadata>
+	<manifest>
+${navManifestItem}\t\t<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+\t\t<item id="css" href="style.css" media-type="text/css"/>
+${manifestItems}
+	</manifest>
+	<spine toc="ncx">
+${spineItems.join("\n")}
+	</spine>
+${guideSection}
+</package>`;
+	}
+
+	async dispose(): Promise<void> {
+		if (this.session) {
+			await this.session.dispose("success").catch(() => undefined);
+			this.session = undefined;
+		}
+		this.spoolStore = undefined;
+	}
+
+	static splitMarkdownByHeading(
+		markdown: string,
+		level: number,
+	): Array<{ title: string; headingLine: string; content: string }> {
 		const lines = markdown.split(/\r?\n/);
-		const parts: Array<{ title: string; headingLine: string; content: string[] }> = [];
-		let current: { title: string; headingLine: string; content: string[] } | null = null;
+		const parts: Array<{
+			title: string;
+			headingLine: string;
+			content: string[];
+		}> = [];
+		let current: {
+			title: string;
+			headingLine: string;
+			content: string[];
+		} | null = null;
 		let inFence = false;
 
 		for (const line of lines) {
 			if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
 
 			const heading = inFence ? null : line.match(/^(#{1,6})\s+(.*)$/);
-			if (heading && heading[1]!.length <= level) {
+			if (heading && (heading[1]?.length ?? 0) <= level) {
 				if (current) parts.push(current);
-				// The heading line is kept aside, not in the body: it becomes the
-				// document's own <h1>, and leaving it in would print it twice.
-				current = { title: heading[2]!.trim(), headingLine: line, content: [] };
+				current = {
+					title: heading[2]?.trim() ?? "",
+					headingLine: line,
+					content: [],
+				};
 				continue;
 			}
 
@@ -405,520 +872,14 @@ export class EpubGenerator {
 		if (current) parts.push(current);
 
 		return parts
-			.filter(part => part.title !== "" || part.content.join("\n").trim() !== "")
-			.map(part => ({
+			.filter(
+				(part) => part.title !== "" || part.content.join("\n").trim() !== "",
+			)
+			.map((part) => ({
 				title: part.title,
 				headingLine: part.headingLine,
 				content: part.content.join("\n"),
 			}));
-	}
-
-	/**
-	 * Converts one piece of markdown into a chapter document.
-	 *
-	 * `isFirstOfFile` marks the piece that other files' links should point at:
-	 * a link to the source file must land on its opening document, not on
-	 * whichever piece happens to be registered last.
-	 */
-	private async addChapterPart(
-		contentWithoutDuplicateTitle: string,
-		chapterTitle: string,
-		filePath: string,
-		options: {
-			generateToc?: boolean;
-			inlineToC?: boolean;
-			tocTitle?: string;
-			tocSeparators?: boolean;
-			tocPosition?: "start" | "end" | "both";
-			tocDepth?: number;
-			tocNested?: boolean;
-			tocMode?: "full" | "blocks";
-			navCaption?: string;
-			navThreshold?: number;
-			navMaxItems?: number;
-		},
-		isFirstOfFile: boolean,
-		headingAnchor?: string,
-	): Promise<void> {
-		// Extract headings using AnchorGenerator for TOC generation
-		// We use contentWithoutDuplicateTitle to avoid duplicating the chapter title in TOC
-		const headings = AnchorGenerator.parseHeadingsFromContent(contentWithoutDuplicateTitle);
-		if (this.debug) {
-			console.log(`[EPUB DEBUG] Headings found in ${basename(filePath)}:`, headings.length);
-		}
-
-		// Convert markdown to TelegraphNode[] (reusing the same converter and ToC options)
-		const pagesInChapter: number[] = [];
-		const nodesRaw = convertMarkdownToTelegraphNodes(contentWithoutDuplicateTitle, {
-			generateToc: options.generateToc !== false, // Default to true if not explicitly disabled
-			inlineToC: options.inlineToC === true, // Default to false for EPUB, true only if explicitly enabled
-			tocTitle: options.tocTitle,
-			tocSeparators: options.tocSeparators !== false,
-			tocPosition: options.tocPosition,
-			tocDepth: options.tocDepth,
-			tocNested: options.tocNested,
-			tocMode: options.tocMode,
-			navCaption: options.navCaption,
-			navThreshold: options.navThreshold,
-			navMaxItems: options.navMaxItems,
-			target: "epub",
-			pageBreaks: this.pageBreaks,
-			pageList: pagesInChapter,
-		});
-
-		// Transform legacy list-based tables into semantic tables for EPUB
-		const nodes = this.transformListTables(nodesRaw);
-
-		// Debug summary for table detection/parsing
-		this.debugLogTableSummary(filePath, nodes);
-
-		// Optional debug: save raw TelegraphNode JSON for EPUB content,
-		// similar to publish debug mode, but with .epub.json suffix for clarity.
-		if (this.debug) {
-			const jsonOutputPath = resolve(filePath.replace(/\.md$/i, ".epub.json"));
-			try {
-				writeFileSync(jsonOutputPath, JSON.stringify(nodes, null, 2), "utf-8");
-				// Do not use ProgressIndicator here to keep EPUB generator decoupled from CLI UI.
-			} catch {
-				// Swallow debug JSON errors to avoid breaking EPUB generation.
-			}
-		}
-
-
-		const chapterId = `chapter-${this.chapters.length + 1}`;
-
-		// Links from other files must land on the document a file starts with.
-		// The mapping cannot be computed up front once splitting is on: how many
-		// documents a file becomes is only known after it has been split.
-		if (isFirstOfFile) {
-			this.chapterPathMap.set(resolve(filePath), `${chapterId}.html`);
-		}
-
-		for (const page of pagesInChapter) {
-			if (!this.pageHrefs.has(page)) {
-				this.pageHrefs.set(page, `${chapterId}.html#page-${page}`);
-			}
-		}
-
-		this.chapters.push({
-			title: chapterTitle,
-			content: nodes,
-			id: chapterId,
-			sourcePath: resolve(filePath),
-			headings: headings,
-			headingAnchor,
-		});
-	}
-
-	/**
-	 * Resolve local links in nodes (reusing LinkResolver logic)
-	 */
-	private async resolveLinksInNodes(
-		nodes: TelegraphNode[],
-		sourcePath: string,
-		linkResolver: LinkResolver
-	): Promise<TelegraphNode[]> {
-		const resolvedNodes: TelegraphNode[] = [];
-
-		for (const node of nodes) {
-			if (node.tag === "a" && node.attrs?.href) {
-				const originalHref = node.attrs.href;
-				// Check if it's a local markdown-style link (not http/https/mailto/etc., not pure anchor)
-				if (originalHref.startsWith("./") || originalHref.startsWith("../") || (!originalHref.startsWith("http") && !originalHref.startsWith("#"))) {
-					// For EPUB, we convert local markdown links to internal chapter references.
-					// Create a temporary markdown content to use findLocalLinks.
-					const tempContent = `[link](${originalHref})`;
-					const localLinks = LinkResolver.findLocalLinks(tempContent, sourcePath);
-
-					if (localLinks.length > 0 && localLinks[0]) {
-						const resolvedWithAnchor = localLinks[0].resolvedPath;
-						const anchorIndex = resolvedWithAnchor.indexOf("#");
-						const resolvedPath = anchorIndex !== -1
-							? resolvedWithAnchor.substring(0, anchorIndex)
-							: resolvedWithAnchor;
-						const anchorSuffix = anchorIndex !== -1
-							? resolvedWithAnchor.substring(anchorIndex)
-							: "";
-
-						// Prefer explicit chapter mapping when available
-						const mappedHref = this.chapterPathMap.get(resolvedPath);
-						if (mappedHref) {
-							resolvedNodes.push({
-								...node,
-								attrs: {
-									...node.attrs,
-									href: `${mappedHref}${anchorSuffix}`,
-								},
-							});
-							continue;
-						}
-
-						// Fallback: attempt to locate chapter by sourcePath
-						const chapterIndex = this.chapters.findIndex(
-							(ch) => ch.sourcePath === resolvedPath,
-						);
-						if (chapterIndex !== -1) {
-							const htmlFile = `chapter-${chapterIndex + 1}.html${anchorSuffix}`;
-							resolvedNodes.push({
-								...node,
-								attrs: {
-									...node.attrs,
-									href: htmlFile,
-								},
-							});
-							continue;
-						}
-					}
-				}
-			}
-
-			// Recursively process children
-			if (node.children) {
-				const resolvedChildren: (string | TelegraphNode)[] = [];
-				for (const child of node.children) {
-					if (typeof child === "string") {
-						resolvedChildren.push(child);
-					} else {
-						const resolvedChildNodes = await this.resolveLinksInNodes([child], sourcePath, linkResolver);
-						resolvedChildren.push(...resolvedChildNodes);
-					}
-				}
-				resolvedNodes.push({
-					...node,
-					children: resolvedChildren,
-				});
-			} else {
-				resolvedNodes.push(node);
-			}
-		}
-
-		return resolvedNodes;
-	}
-
-	/**
-	 * Convert TelegraphNode to HTML string
-	 */
-	private nodeToHtml(node: TelegraphNode): string {
-		if (typeof node === "string") {
-			return this.escapeHtml(node);
-		}
-
-		const tag = node.tag || "p";
-		const attrs = node.attrs || {};
-		const children = node.children || [];
-
-		// Build attributes string
-		const attrsString = Object.entries(attrs)
-			.map(([key, value]) => {
-				const rendered = key === "href" ? this.encodeHref(String(value)) : value;
-				return `${key}="${this.escapeHtml(rendered)}"`;
-			})
-			.join(" ");
-
-		// Convert children to HTML
-		let childrenHtml = children
-			.map((child) => {
-				if (typeof child === "string") {
-					return this.escapeHtml(child);
-				}
-				return this.nodeToHtml(child);
-			})
-			.join("");
-
-		// Wrap blockquote content in <code> for proper rendering in EPUB readers
-		// EPUB readers don't handle CSS font changes well, so structural wrapping
-		// ensures citations/Sanskrit text renders with the right font.
-		if (tag === "blockquote") {
-			childrenHtml = `<code>${childrenHtml}</code>`;
-		}
-
-		// Handle self-closing tags
-		const selfClosingTags = ["br", "hr", "img"];
-		if (selfClosingTags.includes(tag)) {
-			return `<${tag}${attrsString ? ` ${attrsString}` : ""} />`;
-		}
-
-		return `<${tag}${attrsString ? ` ${attrsString}` : ""}>${childrenHtml}</${tag}>`;
-	}
-
-	/**
-	 * Escape HTML special characters
-	 */
-	private escapeHtml(text: string): string {
-		return text
-			.replace(/&/g, "&amp;")
-			.replace(/</g, "&lt;")
-			.replace(/>/g, "&gt;")
-			.replace(/"/g, "&quot;")
-			.replace(/'/g, "&#39;");
-	}
-
-	/**
-	 * Generate EPUB file
-	 */
-	async generate(): Promise<void> {
-		// Links are resolved here, not while chapters are being added: a link may
-		// point at a file that has not been processed yet, and with splitting on
-		// its document name is not known until then.
-		const linkResolver = new LinkResolver();
-		this.bundledImages.clear();
-		this.usedImageFilenames.clear();
-		for (const chapter of this.chapters) {
-			chapter.content = await this.resolveLinksInNodes(chapter.content, chapter.sourcePath, linkResolver);
-			chapter.content = this.resolveImagesInNodes(chapter.content, chapter.sourcePath);
-		}
-
-		const epubDir = join(dirname(this.outputPath), `.epub-temp-${Date.now()}`);
-		mkdirSync(epubDir, { recursive: true });
-
-		try {
-			// Create EPUB structure
-			const metaInfDir = join(epubDir, "META-INF");
-			const oebpsDir = join(epubDir, "OEBPS");
-			mkdirSync(metaInfDir, { recursive: true });
-			mkdirSync(oebpsDir, { recursive: true });
-
-			// 1. mimetype (must be first, uncompressed)
-			writeFileSync(join(epubDir, "mimetype"), "application/epub+zip", "utf-8");
-
-			// 2. META-INF/container.xml
-			writeFileSync(
-				join(metaInfDir, "container.xml"),
-				`<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-	<rootfiles>
-		<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
-	</rootfiles>
-</container>`,
-				"utf-8"
-			);
-
-			// 3. Generate HTML chapters
-			const htmlFiles: string[] = [];
-			for (const chapter of this.chapters) {
-				const htmlContent = this.generateChapterHtml(chapter);
-				const htmlFileName = `${chapter.id}.html`;
-				writeFileSync(join(oebpsDir, htmlFileName), htmlContent, "utf-8");
-				htmlFiles.push(htmlFileName);
-			}
-
-			if (this.bookToc) {
-				writeFileSync(join(oebpsDir, "book-toc.html"), this.generateBookTocHtml(), "utf-8");
-				if (this.bookToc === "start") {
-					htmlFiles.unshift("book-toc.html");
-				} else {
-					htmlFiles.push("book-toc.html");
-				}
-			}
-
-			// The title page goes ahead of everything, including a contents page
-			// placed at the start: a reader opening the book should see what the
-			// book is before its table of contents.
-			if (this.titlePage) {
-				writeFileSync(join(oebpsDir, "title-page.html"), this.generateTitlePageHtml(), "utf-8");
-				htmlFiles.unshift("title-page.html");
-			}
-
-			// 4. Generate CSS
-			const cssContent = this.generateCss();
-			writeFileSync(join(oebpsDir, "style.css"), cssContent, "utf-8");
-
-			// 5. Generate content.opf (package document)
-			const opfContent = this.generateOpf(htmlFiles);
-			writeFileSync(join(oebpsDir, "content.opf"), opfContent, "utf-8");
-
-			// 6. Generate navigation: nav.xhtml for EPUB 3, toc.ncx for older readers
-			const ncxContent = this.generateNcx();
-			writeFileSync(join(oebpsDir, "toc.ncx"), ncxContent, "utf-8");
-			// Only for EPUB 3: a file that is not in the manifest makes an EPUB 2
-			// package invalid, and EPUB 2 has nowhere to declare this one.
-			if (this.epubVersion === 3) {
-				writeFileSync(join(oebpsDir, "nav.xhtml"), this.generateNavXhtml(), "utf-8");
-			}
-
-			// 7. Copy cover image if provided
-			if (this.cover) {
-				if (existsSync(this.cover)) {
-					const coverFilename = `cover${extname(this.cover)}`;
-					copyFileSync(this.cover, join(oebpsDir, coverFilename));
-				} else {
-					throw new Error(`Cover image file not found: ${this.cover}`);
-				}
-			}
-
-			// 7b. Copy bundled content images
-			if (this.bundledImages.size > 0) {
-				const imagesDir = join(oebpsDir, "images");
-				mkdirSync(imagesDir, { recursive: true });
-				for (const img of this.bundledImages.values()) {
-					copyFileSync(img.diskPath, join(oebpsDir, img.epubHref));
-				}
-			}
-
-			// 8. Create ZIP archive (using Bun's built-in ZIP support or manual ZIP creation)
-			await this.createZipArchive(epubDir, this.outputPath);
-
-			// Cleanup temp directory (unless in debug mode)
-			if (this.debug) {
-				console.log(`🔧 Debug mode: Temporary files kept at: ${epubDir}`);
-				console.log(`   You can inspect the generated EPUB structure and HTML files there.`);
-			} else {
-				await this.cleanupDirectory(epubDir);
-			}
-		} catch (error) {
-			// Cleanup on error (unless in debug mode)
-			if (this.debug) {
-				console.log(`🔧 Debug mode: Temporary files kept at: ${epubDir} (due to error)`);
-				console.log(`   You can inspect the partial EPUB structure to debug the issue.`);
-			} else {
-				await this.cleanupDirectory(epubDir);
-			}
-			throw error;
-		}
-	}
-
-	/**
-	 * Generate HTML for a chapter
-	 */
-	private generateChapterHtml(chapter: { title: string; content: TelegraphNode[]; id: string; headingAnchor?: string }): string {
-		const contentHtml = chapter.content.map((node) => this.nodeToHtml(node)).join("\n");
-
-		return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
-<head>
-	<meta charset="UTF-8"/>
-	<title>${this.escapeHtml(chapter.title)}</title>
-	<link rel="stylesheet" type="text/css" href="style.css"/>
-</head>
-<body>
-	<h1 id="${chapter.headingAnchor ?? chapter.id}">${this.escapeHtml(chapter.title)}</h1>
-	${contentHtml}
-</body>
-</html>`;
-	}
-
-	/**
-	 * Generate CSS styles
-	 */
-	/**
-	 * Bring the fragment of a link to the ASCII form the heading ids use.
-	 *
-	 * Headings in these books are Russian, so author-written anchors read
-	 * "#Текст-20". A URI fragment is ASCII-only, and a reader that follows the
-	 * specification will not resolve a raw Cyrillic one — the link is visible
-	 * but leads nowhere; percent-encoding the href did not help on a real
-	 * reader either. The heading ids are therefore transliterated (see
-	 * AnchorGenerator.transliterateToAscii), and every fragment that still
-	 * reaches serialization in Cyrillic — links written by the author inside
-	 * the text, cross-file anchors — is run through the same transliteration,
-	 * so both sides of the reference are produced by the same pure function.
-	 */
-	/**
-	 * Builds the EPUB 3 navigation document.
-	 *
-	 * The package declares version 3.0, and a reader that takes that at its word
-	 * looks for this file: toc.ncx is the EPUB 2 form, kept alongside it only so
-	 * older readers still find their way. Without nav.xhtml a strict reader has
-	 * no navigation of its own to work from.
-	 */
-	private generateNavXhtml(): string {
-		interface NavItem { label: string; href: string; children: NavItem[]; }
-
-		const render = (nodes: NavItem[]): string =>
-			`<ol>${nodes.map(node =>
-				`<li><a href="${this.escapeHtml(this.encodeHref(node.href))}">${this.escapeHtml(node.label)}</a>` +
-				(node.children.length ? render(node.children) : "") +
-				`</li>`
-			).join("")}</ol>`;
-
-		const firstChapter = this.chapters[0];
-		const firstChapterHref = firstChapter ? `${firstChapter.id}.html` : "";
-		const firstChapterLabel = firstChapter ? firstChapter.title : "";
-
-		const roots: NavItem[] = this.chapters.map(chapter => {
-			const node: NavItem = { label: chapter.title, href: `${chapter.id}.html`, children: [] };
-			const stack: Array<{ node: NavItem; level: number }> = [{ node, level: 0 }];
-
-			for (const heading of chapter.headings) {
-				if (heading.level > this.tocDepth) continue;
-				while (stack.length > 1 && stack[stack.length - 1]!.level >= heading.level) stack.pop();
-				const parent = stack[stack.length - 1]!;
-				const child: NavItem = {
-					label: heading.textForAnchor,
-					href: `${chapter.id}.html#${AnchorGenerator.generateAsciiAnchor(heading)}`,
-					children: [],
-				};
-				parent.node.children.push(child);
-				stack.push({ node: child, level: heading.level });
-			}
-			return node;
-		});
-
-		// Landmarks tell a reader where the book begins and where its title page
-		// is. Without them "go to the beginning" lands on whatever file happens
-		// to be first in the spine.
-		const landmarkItems = [
-			this.titlePage
-				? `			<li><a epub:type="titlepage" href="title-page.html">${this.escapeHtml(this.title)}</a></li>`
-				: "",
-			this.bookToc
-				? `			<li><a epub:type="toc" href="book-toc.html">${this.escapeHtml(this.bookTocTitle)}</a></li>`
-				: "",
-			firstChapterHref
-				? `			<li><a epub:type="bodymatter" href="${this.escapeHtml(this.encodeHref(firstChapterHref))}">${this.escapeHtml(firstChapterLabel)}</a></li>`
-				: "",
-		].filter(Boolean).join("\n");
-		// The printed page numbers go in their own list, never in the contents:
-		// a reader offers "go to page" from here, and the table of contents
-		// stays a list of sections.
-		const pageItems = [...this.pageHrefs.entries()]
-			.sort((a, b) => a[0] - b[0])
-			.map(([page, href]) => `			<li><a href="${href}">${page}</a></li>`)
-			.join("\n");
-		const pageList = pageItems
-			? `	<nav epub:type="page-list" id="page-list" hidden="hidden">\n		<h1>Страницы</h1>\n		<ol>\n${pageItems}\n		</ol>\n	</nav>\n`
-			: "";
-
-		const landmarks = landmarkItems
-			? `	<nav epub:type="landmarks" id="landmarks" hidden="hidden">\n		<h1>Ориентиры</h1>\n		<ol>\n${landmarkItems}\n		</ol>\n	</nav>\n`
-			: "";
-
-		return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${this.language}" xml:lang="${this.language}">
-<head>
-	<meta charset="UTF-8"/>
-	<title>${this.escapeHtml(this.bookTocTitle)}</title>
-</head>
-<body>
-	<nav epub:type="toc" id="toc">
-		<h1>${this.escapeHtml(this.bookTocTitle)}</h1>
-${render(roots)}
-	</nav>
-${landmarks}${pageList}</body>
-</html>`;
-	}
-
-	private encodeHref(href: string): string {
-		const hash = href.indexOf("#");
-		if (hash === -1) return href;
-		// External fragments belong to the other site's ids — leave them alone.
-		if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return href;
-
-		const base = href.slice(0, hash);
-		let fragment = href.slice(hash + 1);
-		// A percent-encoded fragment hides the Cyrillic it was made from;
-		// decode it first so the transliteration sees the letters.
-		if (/%[0-9A-Fa-f]{2}/.test(fragment)) {
-			try {
-				fragment = decodeURIComponent(fragment);
-			} catch {
-				return href;
-			}
-		}
-
-		return `${base}#${AnchorGenerator.transliterateToAscii(fragment)}`;
 	}
 
 	private generateCss(): string {
@@ -1134,614 +1095,5 @@ img {
 	display: block;
 	margin: 1em auto;
 }`;
-	}
-
-	/**
-	 * Builds a contents page covering the whole book.
-	 *
-	 * It repeats what the reader's navigation already holds, so it is opt-in:
-	 * worth having where navigation is absent or ignored - reading the files in
-	 * a browser, printing - and unwelcome as twelve thousand lines in front of
-	 * the text. Its depth therefore follows the navigation's by default.
-	 */
-	/**
-	 * The book's title page: its name, its author and whatever imprint details
-	 * were given. No image is drawn — the page is typographic, so it stays
-	 * legible at any size and adds nothing to the file.
-	 */
-	private generateTitlePageHtml(): string {
-		const lines = [
-			this.series ? `		<p class="title-series">${this.escapeHtml(this.series)}</p>` : "",
-			`		<h1 class="title-name">${this.escapeHtml(this.title)}</h1>`,
-			`		<p class="title-author">${this.escapeHtml(this.author)}</p>`,
-			this.translator
-				? `		<p class="title-translator">Перевод: ${this.escapeHtml(this.translator)}</p>`
-				: "",
-			this.description ? `		<p class="title-description">${this.escapeHtml(this.description)}</p>` : "",
-			this.publisher || this.pubDate
-				? `		<p class="title-imprint">${this.escapeHtml([this.publisher, this.pubDate].filter(Boolean).join(", "))}</p>`
-				: "",
-		].filter(Boolean).join("\n");
-
-		return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${this.language}" xml:lang="${this.language}">
-<head>
-	<meta charset="UTF-8"/>
-	<title>${this.escapeHtml(this.title)}</title>
-	<link rel="stylesheet" type="text/css" href="style.css"/>
-</head>
-<body>
-	<section epub:type="titlepage" class="title-page">
-${lines}
-	</section>
-</body>
-</html>`;
-	}
-
-	private generateBookTocHtml(): string {
-		const render = (nodes: Array<{ label: string; href: string; children: any[] }>): string =>
-			`<ul>${nodes.map(node =>
-				`<li><a href="${node.href}">${this.escapeHtml(node.label)}</a>` +
-				(node.children.length ? render(node.children) : "") +
-				`</li>`
-			).join("")}</ul>`;
-
-		const roots: Array<{ label: string; href: string; children: any[]; level: number }> = [];
-		const stack: Array<{ node: any; level: number }> = [];
-
-		for (const chapter of this.chapters) {
-			const chapterNode = { label: chapter.title, href: `${chapter.id}.html`, children: [], level: 0 };
-			roots.push(chapterNode);
-			stack.length = 0;
-			stack.push({ node: chapterNode, level: 0 });
-
-			for (const heading of chapter.headings) {
-				if (heading.level > this.bookTocDepth) continue;
-				while (stack.length > 1 && stack[stack.length - 1]!.level >= heading.level) stack.pop();
-				const parent = stack[stack.length - 1]!;
-				const node = {
-					label: heading.textForAnchor,
-					href: `${chapter.id}.html#${AnchorGenerator.generateAsciiAnchor(heading)}`,
-					children: [],
-					level: heading.level,
-				};
-				parent.node.children.push(node);
-				stack.push({ node, level: heading.level });
-			}
-		}
-
-		return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
-<head>
-	<meta charset="UTF-8"/>
-	<title>${this.escapeHtml(this.bookTocTitle)}</title>
-	<link rel="stylesheet" type="text/css" href="style.css"/>
-</head>
-<body>
-	<h1 id="book-toc">${this.escapeHtml(this.bookTocTitle)}</h1>
-${render(roots)}
-</body>
-</html>`;
-	}
-
-	/**
-	 * Generate content.opf (package document)
-	 */
-	private generateOpf(htmlFiles: string[]): string {
-		const now = new Date().toISOString();
-		// Identifiers follow the file name rather than the position: inserting a
-		// contents page must not renumber every chapter after it.
-		const idOf = (file: string) => file.replace(/\.html$/, "");
-		let manifestItems = htmlFiles
-			.map(file => `		<item id="${idOf(file)}" href="${file}" media-type="application/xhtml+xml"/>`)
-			.join("\n");
-
-		// Add cover image to manifest if provided
-		if (this.cover) {
-			const coverFilename = `cover${extname(this.cover)}`;
-			manifestItems = `		<item id="cover" href="${coverFilename}" media-type="${this.getCoverMediaType()}" properties="cover-image"/>\n${manifestItems}`;
-		}
-
-		// Add bundled content images to manifest
-		for (const img of this.bundledImages.values()) {
-			manifestItems += `\n		<item id="${img.id}" href="${img.epubHref}" media-type="${img.mediaType}"/>`;
-		}
-
-		const spineItems = htmlFiles
-			.map(file => `		<itemref idref="${idOf(file)}"/>`)
-			.join("\n");
-
-		const guideRefs: string[] = [];
-		if (this.titlePage) {
-			guideRefs.push(`		<reference href="title-page.html" type="title-page" title="${this.escapeHtml(this.title)}"/>`);
-		}
-		if (this.cover) {
-			const coverFilename = `cover${extname(this.cover)}`;
-			guideRefs.push(`		<reference href="${coverFilename}" type="cover" title="Cover"/>`);
-		}
-		if (this.bookToc) {
-			guideRefs.push(`		<reference href="book-toc.html" type="toc" title="${this.escapeHtml(this.bookTocTitle)}"/>`);
-		}
-		const guideSection = guideRefs.length ? `	<guide>\n${guideRefs.join("\n")}\n	</guide>` : "";
-
-		// EPUB 2 has no navigation document and no "properties" attribute; the
-		// file is still written, but declaring it would make the package invalid
-		// for the very readers this version is meant to satisfy.
-		const navManifestItem = this.epubVersion === 3
-			? `		<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n`
-			: "";
-		// dcterms:modified is required in EPUB 3 and unknown to EPUB 2.
-		const modifiedMeta = this.epubVersion === 3
-			? `		<meta property="dcterms:modified">${now}</meta>\n`
-			: "";
-
-		// Imprint details belong in the package too, not only on the page: a
-		// library groups books by publisher and series, and reads them here.
-		const extraMeta = [
-			this.publisher ? `		<dc:publisher>${this.escapeHtml(this.publisher)}</dc:publisher>` : "",
-			this.pubDate ? `		<dc:date>${this.escapeHtml(this.pubDate)}</dc:date>` : "",
-			this.translator
-				? `		<dc:contributor id="translator">${this.escapeHtml(this.translator)}</dc:contributor>`
-				: "",
-			this.description ? `		<dc:description>${this.escapeHtml(this.description)}</dc:description>` : "",
-			this.series ? `		<meta property="belongs-to-collection">${this.escapeHtml(this.series)}</meta>` : "",
-		].filter(Boolean).join("\n");
-		const extraMetaBlock = extraMeta ? `${extraMeta}\n` : "";
-
-
-		return `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="${this.epubVersion}.0" unique-identifier="book-id">
-	<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-		<dc:title>${this.escapeHtml(this.title)}</dc:title>
-		<dc:creator>${this.escapeHtml(this.author)}</dc:creator>
-		<dc:language>${this.language}</dc:language>
-		<dc:identifier id="book-id">${this.identifier}</dc:identifier>
-${extraMetaBlock}${modifiedMeta}
-	</metadata>
-	<manifest>
-${navManifestItem}		<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
-		<item id="css" href="style.css" media-type="text/css"/>
-${manifestItems}
-	</manifest>
-	<spine toc="ncx">
-${spineItems}
-	</spine>
-${guideSection}
-</package>`;
-	}
-
-	/**
-	 * Get media type for cover image
-	 */
-	/**
-	 * Get media type for image file
-	 */
-	private getImageMediaType(filePath?: string): string {
-		if (!filePath) return "image/jpeg"; // default
-
-		const ext = extname(filePath).toLowerCase();
-		switch (ext) {
-			case ".jpg":
-			case ".jpeg":
-				return "image/jpeg";
-			case ".png":
-				return "image/png";
-			case ".gif":
-				return "image/gif";
-			case ".svg":
-				return "image/svg+xml";
-			case ".webp":
-				return "image/webp";
-			default:
-				return "image/jpeg"; // fallback
-		}
-	}
-
-	/**
-	 * Get media type for cover image
-	 */
-	private getCoverMediaType(): string {
-		return this.getImageMediaType(this.cover);
-	}
-
-	/**
-	 * Register local image file to be bundled in the EPUB
-	 */
-	private registerBundledImage(diskPath: string): BundledImage {
-		const resolved = resolve(diskPath);
-		const existing = this.bundledImages.get(resolved);
-		if (existing) {
-			return existing;
-		}
-
-		const baseName = basename(resolved);
-		const ext = extname(baseName);
-		const nameWithoutExt = basename(baseName, ext);
-
-		// Sanitize filename for EPUB archive safety
-		const safeBase = nameWithoutExt.replace(/[^a-zA-Z0-9._-]/g, "_") || "image";
-		let candidateFilename = `${safeBase}${ext.toLowerCase()}`;
-		let counter = 1;
-
-		while (this.usedImageFilenames.has(candidateFilename)) {
-			counter++;
-			candidateFilename = `${safeBase}-${counter}${ext.toLowerCase()}`;
-		}
-		this.usedImageFilenames.add(candidateFilename);
-
-		const epubHref = `images/${candidateFilename}`;
-		const imageId = `img-${this.bundledImages.size + 1}`;
-		const mediaType = this.getImageMediaType(resolved);
-
-		const bundled: BundledImage = {
-			id: imageId,
-			diskPath: resolved,
-			epubHref,
-			mediaType,
-		};
-
-		this.bundledImages.set(resolved, bundled);
-		return bundled;
-	}
-
-	/**
-	 * Resolve local images in nodes and register them for bundling
-	 */
-	private resolveImagesInNodes(
-		nodes: TelegraphNode[],
-		sourcePath: string
-	): TelegraphNode[] {
-		const pathResolver = PathResolver.getInstance();
-		const resolvedNodes: TelegraphNode[] = [];
-
-		for (const node of nodes) {
-			if (typeof node === "string") {
-				resolvedNodes.push(node);
-				continue;
-			}
-
-			let currentNode = { ...node };
-
-			if (currentNode.tag === "img" && currentNode.attrs?.src) {
-				const src = String(currentNode.attrs.src).trim();
-				// Check if it is an external url or data url
-				if (
-					!src.startsWith("http://") &&
-					!src.startsWith("https://") &&
-					!src.startsWith("data:")
-				) {
-					// Local image path
-					let resolvedPath = pathResolver.resolve(sourcePath, src);
-					if (!existsSync(resolvedPath)) {
-						try {
-							const decoded = decodeURIComponent(src);
-							const decodedPath = pathResolver.resolve(sourcePath, decoded);
-							if (existsSync(decodedPath)) {
-								resolvedPath = decodedPath;
-							}
-						} catch {}
-					}
-
-					if (existsSync(resolvedPath)) {
-						const bundled = this.registerBundledImage(resolvedPath);
-						currentNode = {
-							...currentNode,
-							attrs: {
-								...currentNode.attrs,
-								src: bundled.epubHref,
-							},
-						};
-					} else {
-						if (this.debug) {
-							console.warn(`[EPUB WARNING] Image not found: ${src} (resolved to ${resolvedPath})`);
-						}
-					}
-				}
-			}
-
-			// Recursively process children
-			if (currentNode.children && currentNode.children.length > 0) {
-				const resolvedChildren: (string | TelegraphNode)[] = [];
-				for (const child of currentNode.children) {
-					if (typeof child === "string") {
-						resolvedChildren.push(child);
-					} else {
-						const resolvedChildNodes = this.resolveImagesInNodes([child], sourcePath);
-						resolvedChildren.push(...resolvedChildNodes);
-					}
-				}
-				currentNode.children = resolvedChildren;
-			}
-
-			resolvedNodes.push(currentNode);
-		}
-
-		return resolvedNodes;
-	}
-
-
-	/**
-	 * Generate toc.ncx (navigation)
-	 */
-	private generateNcx(): string {
-		let playOrder = 1;
-		let navPointsXml = "";
-
-		for (const chapter of this.chapters) {
-			// 1. Create root navPoint for the chapter
-			const chapterNavPoint = `		<navPoint id="nav-${playOrder}" playOrder="${playOrder}">
-			<navLabel>
-				<text>${this.escapeHtml(chapter.title)}</text>
-			</navLabel>
-			<content src="${chapter.id}.html"/>`;
-			playOrder++;
-
-			// 2. Build nested structure for internal headings
-			let nestedNavPoints = "";
-			if (chapter.headings && chapter.headings.length > 0) {
-				interface NavNode {
-					label: string;
-					src: string;
-					children: NavNode[];
-				}
-
-				// Root of the current chapter's tree
-				const root: NavNode = { label: chapter.title, src: `${chapter.id}.html`, children: [] };
-
-				// Stack stores the node and its effective level (Chapter is level 0)
-				const stack: { node: NavNode; level: number }[] = [{ node: root, level: 0 }];
-
-				for (const heading of chapter.headings) {
-					// Headings deeper than the limit are reachable through the text,
-					// not through the reader's navigation panel.
-					if (heading.level > this.tocDepth) continue;
-
-					// Find parent in stack
-					// We pop while the top of stack is deeper or equal level
-					// Logic:
-					// If heading.level > stack.top.level -> child of stack.top
-					// If heading.level <= stack.top.level -> sibling of stack.top (so parent is stack.pop)
-
-					while (stack.length > 1 && stack[stack.length - 1]!.level >= heading.level) {
-						stack.pop();
-					}
-
-					const parent = stack[stack.length - 1]!;
-					const anchor = AnchorGenerator.generateAsciiAnchor(heading);
-					const newNode: NavNode = {
-						label: heading.textForAnchor,
-						src: `${chapter.id}.html#${anchor}`,
-						children: []
-					};
-
-					parent.node.children.push(newNode);
-					stack.push({ node: newNode, level: heading.level });
-				}
-
-				// Serialize the children of the root (we already added the root as chapterNavPoint)
-				const serializeNodes = (nodes: NavNode[], indent: string): string => {
-					let result = "";
-					for (const node of nodes) {
-						result += `\n${indent}<navPoint id="nav-${playOrder}" playOrder="${playOrder}">
-${indent}	<navLabel>
-${indent}		<text>${this.escapeHtml(node.label)}</text>
-${indent}	</navLabel>
-${indent}	<content src="${node.src}"/>`;
-						playOrder++;
-
-						if (node.children.length > 0) {
-							result += serializeNodes(node.children, indent + "\t");
-						}
-
-						result += `\n${indent}</navPoint>`;
-					}
-					return result;
-				};
-
-				nestedNavPoints = serializeNodes(root.children, "\t\t\t");
-			}
-
-			navPointsXml += chapterNavPoint;
-			navPointsXml += nestedNavPoints;
-			navPointsXml += `\n		</navPoint>\n`;
-		}
-
-		return `<?xml version="1.0" encoding="UTF-8"?>
-<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
-	<head>
-		<meta name="dtb:uid" content="${this.identifier}"/>
-		<meta name="dtb:depth" content="4"/>
-		<meta name="dtb:totalPageCount" content="0"/>
-		<meta name="dtb:maxPageNumber" content="0"/>
-	</head>
-	<docTitle>
-		<text>${this.escapeHtml(this.title)}</text>
-	</docTitle>
-	<navMap>
-${navPointsXml}
-	</navMap>
-</ncx>`;
-	}
-
-	/**
-	 * Create ZIP archive from directory
-	 * Uses manual ZIP creation without external dependencies
-	 */
-	private async createZipArchive(sourceDir: string, outputPath: string): Promise<void> {
-		// Use Bun's shell capabilities if available
-		if (typeof Bun !== "undefined" && (Bun as any).$) {
-			try {
-				const $ = (Bun as any).$;
-				// Try using zip command
-				const result = await $`cd ${sourceDir} && zip -r ${outputPath} . -x "*.DS_Store"`.quiet();
-				if (result.exitCode === 0) {
-					return;
-				}
-			} catch {
-				// Fall through to manual ZIP creation
-			}
-		}
-
-		// Manual ZIP creation using standard ZIP format
-		await this.createZipManually(sourceDir, outputPath);
-	}
-
-	/**
-	 * Create ZIP archive manually without external dependencies
-	 */
-	private async createZipManually(sourceDir: string, outputPath: string): Promise<void> {
-		const { readdir, readFile } = await import("node:fs/promises");
-		const { relative } = await import("node:path");
-		const { createWriteStream } = await import("node:fs");
-
-		// Collect all files recursively
-		const files: Array<{ content: Buffer; zipPath: string }> = [];
-
-		const collectFiles = async (dir: string, baseDir: string): Promise<void> => {
-			const entries = await readdir(dir, { withFileTypes: true });
-			for (const entry of entries) {
-				const fullPath = join(dir, entry.name);
-				const relativePath = relative(baseDir, fullPath);
-
-				if (entry.isDirectory()) {
-					await collectFiles(fullPath, baseDir);
-				} else {
-					const content = await readFile(fullPath);
-					files.push({
-						content,
-						zipPath: relativePath.replace(/\\/g, "/"),
-					});
-				}
-			}
-		};
-
-		await collectFiles(sourceDir, sourceDir);
-
-		// Write ZIP file
-		const writeStream = createWriteStream(outputPath);
-		const centralDirBuffers: Buffer[] = [];
-		let currentOffset = 0;
-
-		// Write each file with local header
-		for (const file of files) {
-			const fileNameBytes = Buffer.from(file.zipPath, "utf-8");
-			const crc32 = this.calculateCrc32(file.content);
-			const fileSize = file.content.length;
-
-			// Write local file header
-			const localHeader = Buffer.alloc(30 + fileNameBytes.length);
-			localHeader.writeUInt32LE(0x04034b50, 0); // Local file header signature
-			localHeader.writeUInt16LE(20, 4); // Version needed to extract
-			localHeader.writeUInt16LE(0, 6); // General purpose bit flag
-			localHeader.writeUInt16LE(0, 8); // Compression method (store)
-			localHeader.writeUInt16LE(0, 10); // Last mod time
-			localHeader.writeUInt16LE(0, 12); // Last mod date
-			localHeader.writeUInt32LE(crc32, 14); // CRC-32
-			localHeader.writeUInt32LE(fileSize, 18); // Compressed size
-			localHeader.writeUInt32LE(fileSize, 22); // Uncompressed size
-			localHeader.writeUInt16LE(fileNameBytes.length, 26); // File name length
-			localHeader.writeUInt16LE(0, 28); // Extra field length
-			fileNameBytes.copy(localHeader, 30);
-
-			writeStream.write(localHeader);
-			writeStream.write(file.content);
-
-			// Create central directory entry
-			const centralEntry = Buffer.alloc(46 + fileNameBytes.length);
-			centralEntry.writeUInt32LE(0x02014b50, 0); // Central file header signature
-			centralEntry.writeUInt16LE(20, 4); // Version made by
-			centralEntry.writeUInt16LE(20, 6); // Version needed
-			centralEntry.writeUInt16LE(0, 8); // General purpose bit flag
-			centralEntry.writeUInt16LE(0, 10); // Compression method
-			centralEntry.writeUInt16LE(0, 12); // Last mod time
-			centralEntry.writeUInt16LE(0, 14); // Last mod date
-			centralEntry.writeUInt32LE(crc32, 16); // CRC-32
-			centralEntry.writeUInt32LE(fileSize, 20); // Compressed size
-			centralEntry.writeUInt32LE(fileSize, 24); // Uncompressed size
-			centralEntry.writeUInt16LE(fileNameBytes.length, 28); // File name length
-			centralEntry.writeUInt16LE(0, 30); // Extra field length
-			centralEntry.writeUInt16LE(0, 32); // File comment length
-			centralEntry.writeUInt16LE(0, 34); // Disk number start
-			centralEntry.writeUInt16LE(0, 36); // Internal file attributes
-			centralEntry.writeUInt32LE(0, 38); // External file attributes
-			centralEntry.writeUInt32LE(currentOffset, 42); // Relative offset of local header
-			fileNameBytes.copy(centralEntry, 46);
-
-			centralDirBuffers.push(centralEntry);
-			currentOffset += localHeader.length + fileSize;
-		}
-
-		// Write central directory
-		for (const buf of centralDirBuffers) {
-			writeStream.write(buf);
-		}
-
-		// Write end of central directory record
-		const centralDirSize = centralDirBuffers.reduce((sum, buf) => sum + buf.length, 0);
-		const endRecord = Buffer.alloc(22);
-		endRecord.writeUInt32LE(0x06054b50, 0); // End of central directory signature
-		endRecord.writeUInt16LE(0, 4); // Number of this disk
-		endRecord.writeUInt16LE(0, 6); // Disk with start of central directory
-		endRecord.writeUInt16LE(files.length, 8); // Number of central directory records on this disk
-		endRecord.writeUInt16LE(files.length, 10); // Total number of central directory records
-		endRecord.writeUInt32LE(centralDirSize, 12); // Size of central directory
-		endRecord.writeUInt32LE(currentOffset, 16); // Offset of start of central directory
-		endRecord.writeUInt16LE(0, 20); // ZIP file comment length
-
-		writeStream.write(endRecord);
-		writeStream.end();
-
-		// Wait for stream to finish
-		await new Promise<void>((resolve, reject) => {
-			writeStream.on("finish", resolve);
-			writeStream.on("error", reject);
-		});
-	}
-
-	/**
-	 * Calculate CRC-32 checksum
-	 */
-	private calculateCrc32(buffer: Buffer): number {
-		let crc = 0xffffffff;
-		const crcTable: number[] = Array(256).fill(0);
-
-		// Generate CRC table
-		for (let i = 0; i < 256; i++) {
-			let c = i;
-			for (let j = 0; j < 8; j++) {
-				c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-			}
-			crcTable[i] = c;
-		}
-
-		// Calculate CRC
-		for (let i = 0; i < buffer.length; i++) {
-			const byte = buffer[i];
-			const tableIndex = ((crc ^ (byte ?? 0)) & 0xff);
-			const tableValue = crcTable[tableIndex];
-			if (tableValue !== undefined) {
-				crc = tableValue ^ (crc >>> 8);
-			}
-		}
-
-		return (crc ^ 0xffffffff) >>> 0;
-	}
-
-	/**
-	 * Cleanup temporary directory
-	 */
-	private async cleanupDirectory(dir: string): Promise<void> {
-		if (typeof Bun !== "undefined" && (Bun as any).$) {
-			const $ = (Bun as any).$;
-			await $`rm -rf ${dir}`.quiet();
-		} else {
-			// Use Node.js fs.rmSync if available, or manual deletion
-			const { rmSync } = await import("node:fs");
-			if (rmSync) {
-				rmSync(dir, { recursive: true, force: true });
-			}
-		}
 	}
 }
