@@ -78,7 +78,7 @@ export class SvgGenerator {
       this.renderHeightPx = hMm * this.MM_TO_PX;
     }
 
-    this.marginPx = (options.margin ?? 5) * this.MM_TO_PX;
+    this.marginPx = (options.margin ?? 3) * this.MM_TO_PX;
     this.fontSizePt = options.fontSize || 10;
   }
 

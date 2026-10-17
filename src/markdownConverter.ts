@@ -74,138 +74,76 @@ export function extractTitleAndContent(markdown: string): {
 	return { title, content: remainingContent };
 }
 
-/**
- * Parses a Markdown table and converts it to a nested list structure.
- * @param tableLines Array of lines that form the table
- * @returns TelegraphNode representing the nested list structure
- */
+/** Split only unescaped pipes, preserving empty cells and optional outer borders. */
+function splitTableRow(line: string): string[] {
+	const source = line.trim();
+	const cells: string[] = [];
+	let cell = "";
+	let leadingBorder = false;
+	let trailingBorder = false;
+	for (let i = 0; i < source.length; i++) {
+		const char = source[i]!;
+		if (char !== "|") {
+			cell += char;
+			continue;
+		}
+		let backslashes = 0;
+		for (let j = i - 1; j >= 0 && source[j] === "\\"; j--) backslashes++;
+		if (backslashes % 2 === 1) {
+			// Consume the pipe escape, retaining all other backslashes.
+			cell = cell.slice(0, -1) + "|";
+			continue;
+		}
+		if (i === 0) leadingBorder = true;
+		if (i === source.length - 1) trailingBorder = true;
+		cells.push(cell.trim());
+		cell = "";
+	}
+	cells.push(cell.trim());
+	if (leadingBorder) cells.shift();
+	if (trailingBorder) cells.pop();
+	return cells;
+}
+
+function isTableDelimiter(line: string): boolean {
+	const cells = splitTableRow(line);
+	return line.includes("|") && cells.length > 0 &&
+		cells.every(cell => /^:?-{3,}:?$/.test(cell));
+}
+
+/** Render tables without discarding empty headers or surplus row values. */
 function parseTable(tableLines: string[], asHtmlTable: boolean = false): TelegraphNode {
-	if (tableLines.length < 3) {
-		// Not a table after all. The lines still have to go through inline
-		// processing: returning them raw drops emphasis and links, which is how
-		// Sanskrit verses lost their italics - a śloka ends in a daṇḍa ("|"),
-		// so the pipe detector claimed the line and this branch handed it back
-		// untouched.
+	if (tableLines.length < 2 || !isTableDelimiter(tableLines[1] ?? "")) {
 		return { tag: "p", children: processInlineMarkdown(tableLines.join("\n")) };
 	}
-
-	// Parse header row
-	const headerLine = tableLines[0];
-	if (!headerLine) {
-		return { tag: "p", children: [tableLines.join("\n")] };
-	}
-	// Split by | but keep empty cells, then remove first and last empty cells
-	const allHeaders = headerLine.split("|").map((cell) => cell.trim());
-	const headers = allHeaders.slice(1, -1).filter((cell) => cell !== "");
-
-	// Skip separator line (tableLines[1])
-
-	// Parse data rows
-	const dataRows = tableLines.slice(2);
-
+	const headers = splitTableRow(tableLines[0]!);
+	const rows = tableLines.slice(2).map(splitTableRow);
+	const width = Math.max(headers.length, splitTableRow(tableLines[1]!).length,
+		...rows.map(row => row.length));
+	const columns = Array.from({ length: width }, (_, i) => headers[i] ?? "");
 	if (asHtmlTable) {
-		// EPUB mode: build a semantic HTML-like table structure
-		const headerCells: TelegraphNode[] = headers.map((header) => ({
-			tag: "th",
-			children: processInlineMarkdown(header),
-		}));
-
-		const bodyRows: TelegraphNode[] = [];
-
-		dataRows.forEach((row) => {
-			const allCells = row.split("|").map((cell) => cell.trim());
-			const cells = allCells.slice(1, -1);
-			if (cells.length === 0) return;
-
-			const cellNodes: TelegraphNode[] = [];
-			const numColumns = headers.length;
-
-			for (let i = 0; i < numColumns; i++) {
-				const value = cells[i] || "";
-				cellNodes.push({
-					tag: "td",
-					children: processInlineMarkdown(value),
-				});
-			}
-
-			bodyRows.push({
-				tag: "tr",
-				children: cellNodes,
-			});
-		});
-
 		return {
 			tag: "table",
 			children: [
-				{
-					tag: "thead",
-					children: [
-						{
-							tag: "tr",
-							children: headerCells,
-						},
-					],
-				},
-				{
-					tag: "tbody",
-					children: bodyRows,
-				},
+				{ tag: "thead", children: [{ tag: "tr", children: columns.map(header => ({
+					tag: "th", children: header ? processInlineMarkdown(header) : [""],
+				})) }] },
+				{ tag: "tbody", children: rows.map(row => ({ tag: "tr", children: columns.map((_, i) => ({
+					tag: "td", children: row[i] ? processInlineMarkdown(row[i]!) : [""],
+				})) })) },
 			],
 		};
 	}
-
-	// Default (Telegraph) mode: convert table into nested ordered list
-	const listItems: TelegraphNode[] = [];
-
-	dataRows.forEach((row, index) => {
-		// Split by | but keep empty cells (don't filter them out)
-		const allCells = row.split("|").map((cell) => cell.trim());
-		// Remove first and last empty cells (they're from leading/trailing |)
-		const cells = allCells.slice(1, -1);
-
-		if (cells.length === 0) return; // Skip empty rows
-
-		// Create nested list for this row
-		const nestedItems: TelegraphNode[] = [];
-
-		// Use the number of headers as the reference
-		const numColumns = headers.length;
-
-		for (let i = 0; i < numColumns; i++) {
-			const header = headers[i] || `Колонка ${i + 1}`;
-			const value = cells[i] || "";
-
-			// Preserve inline formatting (links, bold, etc.) inside table values
-			const headerParts = processInlineMarkdown(header);
-			const valueParts = processInlineMarkdown(value);
-			const combinedChildren: (string | TelegraphNode)[] = [
-				...headerParts,
-				": ",
-				...valueParts,
-			];
-
-			nestedItems.push({
-				tag: "li",
-				children: combinedChildren,
-			});
-		}
-
-		// Create the main list item with number and nested list
-		listItems.push({
-			tag: "li",
-			children: [
-				`${index + 1}`,
-				{
-					tag: "ul",
-					children: nestedItems,
-				},
-			],
-		});
-	});
-
 	return {
 		tag: "ol",
-		children: listItems,
+		children: rows.map((row, index) => ({
+			tag: "li",
+			children: [String(index + 1), { tag: "ul", children: columns.map((header, i) => ({
+				tag: "li",
+				children: [...processInlineMarkdown(header || "—"), ": ",
+					...processInlineMarkdown(row[i] ?? "")],
+			})) }],
+		})),
 	};
 }
 
@@ -472,6 +410,112 @@ function buildParagraphChildren(lines: string[], target: string): (string | Tele
 	return children;
 }
 
+type ListMarker = { indent: number; tag: "ol" | "ul"; number?: number; text: string };
+
+function listIndent(line: string): number {
+	// Preserve the converter's established two-space tab/nesting convention.
+	return (line.match(/^[ \t]*/)?.[0] ?? "").replace(/\t/g, "  ").length;
+}
+
+function matchListMarker(line: string): ListMarker | null {
+	if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) return null;
+	const match = line.match(/^[ \t]*(?:(\d{1,9})[.)]|([-*+]))[ \t]+(.*)$/);
+	if (!match) return null;
+	return { indent: listIndent(line), tag: match[1] ? "ol" : "ul",
+		number: match[1] ? Number(match[1]) : undefined, text: match[3] ?? "" };
+}
+
+/**
+ * Lists own indented continuation blocks; a dedent hands control to their parent.
+ * Telegra.ph only accepts href/src attributes, so non-natural ordered sequences
+ * become explicitly numbered paragraphs, never numbered text inside an <ol>.
+ * EPUB can retain semantic lists using start/value attributes.
+ */
+function parseListBlock(lines: string[], start: number, target: string): { nodes: TelegraphNode[]; next: number } {
+	const first = matchListMarker(lines[start]!)!;
+	const items: TelegraphNode[] = [];
+	const numbers: number[] = [];
+	let cursor = start;
+	while (cursor < lines.length) {
+		const marker = matchListMarker(lines[cursor]!);
+		if (!marker || marker.indent !== first.indent || marker.tag !== first.tag) break;
+		const children: (string | TelegraphNode)[] = [];
+		let paragraph = [marker.text];
+		const flush = () => {
+			if (!paragraph.length) return;
+			// Hard breaks inside lists are meaningful on both targets. Keep the
+			// legacy non-list Telegraph paragraph behavior unchanged.
+			const content = buildParagraphChildren(paragraph, "epub");
+			if (!children.length) children.push(...content);
+			else children.push({ tag: "p", children: content });
+			paragraph = [];
+		};
+		cursor++;
+		while (cursor < lines.length) {
+			const line = lines[cursor]!;
+			if (!line.trim()) {
+				flush();
+				cursor++;
+				continue;
+			}
+			const nested = matchListMarker(line);
+			if (nested && nested.indent > first.indent) {
+				flush();
+				const parsed = parseListBlock(lines, cursor, target);
+				children.push(...parsed.nodes);
+				cursor = parsed.next;
+				continue;
+			}
+			if (listIndent(line) <= first.indent) break;
+			const body = line.trimStart();
+			const fence = body.match(/^(`{3,}|~{3,})/);
+			if (fence) {
+				flush();
+				const code: string[] = [];
+				const indent = line.match(/^[ \t]*/)?.[0].length ?? 0;
+				cursor++;
+				while (cursor < lines.length && !new RegExp(`^${fence[1]![0]}{${fence[1]!.length},}\\s*$`).test(lines[cursor]!.trimStart())) {
+					code.push(lines[cursor]!.slice(indent));
+					cursor++;
+				}
+				if (cursor < lines.length) cursor++;
+				children.push({ tag: "pre", children: [{ tag: "code", children: [code.join("\n").trimEnd()] }] });
+				continue;
+			}
+			paragraph.push(body);
+			cursor++;
+		}
+		flush();
+		items.push({ tag: "li", children });
+		if (marker.number !== undefined) numbers.push(marker.number);
+	}
+	if (first.tag === "ol" && target !== "epub" && numbers.some((number, index) => number !== index + 1)) {
+		const paragraphs: TelegraphNode[] = [];
+		items.forEach((item, index) => {
+			const children = item.children ?? [];
+			const inline: (string | TelegraphNode)[] = [`${numbers[index]}. `];
+			let split = 0;
+			while (split < children.length) {
+				const child = children[split]!;
+				if (typeof child !== "string" && ["p", "ol", "ul", "pre"].includes(child.tag ?? "")) break;
+				inline.push(child);
+				split++;
+			}
+			paragraphs.push({ tag: "p", children: inline });
+			paragraphs.push(...children.slice(split) as TelegraphNode[]);
+		});
+		return { nodes: paragraphs, next: cursor };
+	}
+	const list: TelegraphNode = { tag: first.tag, children: items };
+	if (first.tag === "ol" && target === "epub") {
+		if (numbers[0] !== 1) list.attrs = { start: String(numbers[0]) };
+		numbers.forEach((number, index) => {
+			if (index > 0 && number !== numbers[index - 1]! + 1) items[index]!.attrs = { value: String(number) };
+		});
+	}
+	return { nodes: [list], next: cursor };
+}
+
 /**
  * Removes HTML comments before any other parsing.
  *
@@ -701,48 +745,9 @@ export function convertMarkdownToTelegraphNodes(
 	const lines = markdown.split(/\r?\n/);
 
 	let inCodeBlock = false;
+	let codeFence = "";
 	let codeBlockContent: string[] = [];
 
-	// Nested list support: stack-based approach
-	// Each stack item contains: { tag: "ul"|"ol", items: TelegraphNode[], indent: number }
-	type ListStackItem = { tag: "ul" | "ol"; items: TelegraphNode[]; indent: number };
-	let listStack: ListStackItem[] = [];
-	
-	// Helper to get indentation level (number of leading spaces/tabs)
-	const getIndentLevel = (line: string): number => {
-		const match = line.match(/^(\s*)/);
-		if (!match || !match[1]) return 0;
-		// Normalize: treat 1 tab as 2 spaces, count spaces
-		return match[1].replace(/\t/g, '  ').length;
-	};
-	
-	// Helper to flush the list stack into a single nested structure
-	const flushListStack = (): TelegraphNode | null => {
-		if (listStack.length === 0) return null;
-		
-		// Build from bottom to top
-		while (listStack.length > 1) {
-			const child = listStack.pop();
-			if (!child) break;
-			
-			const parent = listStack[listStack.length - 1];
-			if (!parent) break;
-			
-			const childList: TelegraphNode = { tag: child.tag, children: child.items };
-			
-			// Append child list to the last item of parent
-			if (parent.items.length > 0) {
-				const lastItem = parent.items[parent.items.length - 1];
-				if (lastItem && lastItem.children) {
-					lastItem.children.push(childList);
-				}
-			}
-		}
-		
-		const root = listStack.pop();
-		if (!root) return null;
-		return { tag: root.tag, children: root.items };
-	};
 
 	let inBlockquote = false;
 	let blockquoteContent: string[] = [];
@@ -754,7 +759,8 @@ export function convertMarkdownToTelegraphNodes(
 		const line = lines[i] || "";
 
 		// Handle code blocks first (they have highest priority)
-		if (line.startsWith("```")) {
+		const fenceMatch = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/);
+		if (fenceMatch && (!inCodeBlock || (fenceMatch[1]![0] === codeFence[0] && fenceMatch[1]!.length >= codeFence.length && !fenceMatch[2]!.trim()))) {
 			if (inCodeBlock) {
 				// End of code block
 				// Close any open blocks first
@@ -763,10 +769,6 @@ export function convertMarkdownToTelegraphNodes(
 					nodes.push(parseTable(tableLines, target === "epub"));
 					inTable = false;
 					tableLines = [];
-				}
-				if (listStack.length > 0) {
-					const closedList = flushListStack();
-					if (closedList) nodes.push(closedList);
 				}
 				if (inBlockquote) {
 					nodes.push({
@@ -794,10 +796,6 @@ export function convertMarkdownToTelegraphNodes(
 					inTable = false;
 					tableLines = [];
 				}
-				if (listStack.length > 0) {
-					const closedList = flushListStack();
-					if (closedList) nodes.push(closedList);
-				}
 				if (inBlockquote) {
 					nodes.push({
 						tag: "blockquote",
@@ -807,6 +805,7 @@ export function convertMarkdownToTelegraphNodes(
 					blockquoteContent = [];
 				}
 
+				codeFence = fenceMatch[1]!;
 				inCodeBlock = true;
 			}
 			continue;
@@ -817,27 +816,17 @@ export function convertMarkdownToTelegraphNodes(
 			continue;
 		}
 
-		// Handle table detection and parsing
-		// Separator must include at least one pipe to avoid catching horizontal rules like '---'
-		const isTableSeparator =
-			line.includes("|") && /^\s*\|?[\s\-|:]+\|?\s*$/.test(line);
-		// A pipe alone does not make a table: it is also the daṇḍa that ends a
-		// Sanskrit verse. Require the line that follows to be a header separator,
-		// or that a table is already open.
+		// A header must be immediately followed by a real delimiter. A pipe
+		// alone may be a Sanskrit daṇḍa and does not start a table.
 		const nextLine = lines[i + 1] ?? "";
-		const nextIsSeparator =
-			nextLine.includes("|") && /^\s*\|?[\s\-|:]+\|?\s*$/.test(nextLine);
-		const isTableLine =
-			line.includes("|") && line.trim() !== "" && (inTable || nextIsSeparator);
+		const isTableLine = inTable
+			? line.includes("|") && line.trim() !== ""
+			: line.includes("|") && isTableDelimiter(nextLine);
 
-		if (isTableLine || isTableSeparator) {
+		if (isTableLine) {
 			if (!inTable) {
 				// Close any open blocks first
 				flushParagraph();
-				if (listStack.length > 0) {
-					const closedList = flushListStack();
-					if (closedList) nodes.push(closedList);
-				}
 				if (inBlockquote) {
 					nodes.push({
 						tag: "blockquote",
@@ -866,10 +855,6 @@ export function convertMarkdownToTelegraphNodes(
 			if (!inBlockquote) {
 				// If previously in a list, close it first
 				flushParagraph();
-				if (listStack.length > 0) {
-					const closedList = flushListStack();
-					if (closedList) nodes.push(closedList);
-				}
 				inBlockquote = true;
 				blockquoteContent = [];
 			}
@@ -892,10 +877,6 @@ export function convertMarkdownToTelegraphNodes(
 		if (headingMatch?.[1] && headingMatch[2] !== undefined) {
 			// Close any open blocks before adding a heading
 			flushParagraph();
-			if (listStack.length > 0) {
-				const closedList = flushListStack();
-				if (closedList) nodes.push(closedList);
-			}
 			if (inBlockquote) {
 				nodes.push({
 					tag: "blockquote",
@@ -967,132 +948,19 @@ export function convertMarkdownToTelegraphNodes(
 			continue;
 		}
 
-		// Handle lists (NOW AFTER HEADINGS) with nested list support
-		const unorderedMatch = line.match(/^(\s*)([-*])\s+(.*)/);
-		const orderedMatch = line.match(/^(\s*)(\d+)\.\s+(.*)/);
-
-		if (unorderedMatch || orderedMatch) {
-			// Close any open blocks before starting/continuing list
-			if (listStack.length === 0) {
-				if (inBlockquote) {
-					nodes.push({
-						tag: "blockquote",
-						children: processInlineMarkdown(blockquoteContent.join("\n")),
-					});
-					inBlockquote = false;
-					blockquoteContent = [];
-				}
-				flushParagraph();
-			}
-
-			const currentIndent = getIndentLevel(line);
-			const listType: "ul" | "ol" = unorderedMatch ? "ul" : "ol";
-			const textContent = (unorderedMatch?.[3] || orderedMatch?.[3] || "").trim();
-
-			if (listStack.length === 0) {
-				// Start a new root list
-				listStack.push({ tag: listType, items: [], indent: currentIndent });
-			} else {
-				const topStack = listStack[listStack.length - 1];
-				
-				if (!topStack) {
-					// Safety check: start new list if stack is somehow corrupted
-					listStack.push({ tag: listType, items: [], indent: currentIndent });
-				} else if (currentIndent > topStack.indent) {
-					// Nested list: create new level
-					listStack.push({ tag: listType, items: [], indent: currentIndent });
-				} else if (currentIndent < topStack.indent) {
-					// Dedent: close nested lists until we find the right level
-					while (listStack.length > 1) {
-						const currentTop = listStack[listStack.length - 1];
-						if (!currentTop || currentTop.indent <= currentIndent) break;
-						
-						const child = listStack.pop();
-						if (!child) break;
-						
-						const parent = listStack[listStack.length - 1];
-						if (!parent) break;
-						
-						const childList: TelegraphNode = { tag: child.tag, children: child.items };
-						
-						// Append child list to the last item of parent
-						if (parent.items.length > 0) {
-							const lastItem = parent.items[parent.items.length - 1];
-							if (lastItem && lastItem.children) {
-								lastItem.children.push(childList);
-							}
-						}
-					}
-					
-					// Check if current list type matches after dedent
-					const newTop = listStack[listStack.length - 1];
-					if (newTop && newTop.tag !== listType) {
-						// Different list type at same level: close current and start new
-						const closedList = flushListStack();
-						if (closedList) nodes.push(closedList);
-						listStack.push({ tag: listType, items: [], indent: currentIndent });
-					}
-				} else {
-					// Same indent level: check if list type changed
-					if (topStack.tag !== listType) {
-						// Different list type at same level: close current stack and start new
-						const closedList = flushListStack();
-						if (closedList) nodes.push(closedList);
-						listStack.push({ tag: listType, items: [], indent: currentIndent });
-					}
-				}
-			}
-
-			// Add list item to current (top) stack level
-			if (textContent && listStack.length > 0) {
-				const currentLevel = listStack[listStack.length - 1];
-				if (currentLevel) {
-					currentLevel.items.push({
-						tag: "li",
-						children: processInlineMarkdown(textContent),
-					});
-				}
-			}
+		// Consume the entire list before the outer block parser sees its indented body.
+		if (matchListMarker(line)) {
+			flushParagraph();
+			const parsed = parseListBlock(lines, i, target);
+			nodes.push(...parsed.nodes);
+			i = parsed.next - 1;
 			continue;
-		} else if (listStack.length > 0) {
-			// Not a list item, but we have an active list
-			if (line.trim() === "") {
-				// Empty line: look ahead to see if the list continues after empty line(s)
-				let nextNonEmptyIdx = i + 1;
-				while (nextNonEmptyIdx < lines.length && (lines[nextNonEmptyIdx]?.trim() || "") === "") {
-					nextNonEmptyIdx++;
-				}
-				
-				const nextLine = lines[nextNonEmptyIdx] || "";
-				// Check if next non-empty line is any list item
-				const nextUnorderedMatch = nextLine.match(/^(\s*)([-*])\s+(.*)/);
-				const nextOrderedMatch = nextLine.match(/^(\s*)(\d+)\.\s+(.*)/);
-				
-				if (nextUnorderedMatch || nextOrderedMatch) {
-					// List continues after empty line(s), don't close it yet
-					continue;
-				} else {
-					// List ends here, flush the stack
-					const closedList = flushListStack();
-					if (closedList) nodes.push(closedList);
-					continue; // Don't add empty paragraph for the empty line
-				}
-			} else {
-				// New content, close list and process as new paragraph
-				const closedList = flushListStack();
-				if (closedList) nodes.push(closedList);
-				// Process current line as a new element (paragraph)
-			}
 		}
 
 		// Handle horizontal rules (---, ***, ___ with optional spaces)
 		if (line.match(/^\s*([-*_])(?:\s*\1){2,}\s*$/)) {
 			// Close any open blocks before adding HR
 			flushParagraph();
-			if (listStack.length > 0) {
-				const closedList = flushListStack();
-				if (closedList) nodes.push(closedList);
-			}
 			if (inBlockquote) {
 				nodes.push({
 					tag: "blockquote",
@@ -1108,7 +976,7 @@ export function convertMarkdownToTelegraphNodes(
 		// Handle empty lines or plain paragraphs
 		if (line.trim() === "") {
 			// Empty line ends the current paragraph (if any)
-			if (listStack.length === 0 && !inBlockquote && !inCodeBlock && !inTable) {
+			if (!inBlockquote && !inCodeBlock && !inTable) {
 				flushParagraph();
 			}
 			continue;
@@ -1116,10 +984,6 @@ export function convertMarkdownToTelegraphNodes(
 
 		// If we reach here, it's a plain paragraph line
 		// Close any open blocks (lists, blockquotes) if this line is not part of them
-		if (listStack.length > 0) {
-			const closedList = flushListStack();
-			if (closedList) nodes.push(closedList);
-		}
 		if (inBlockquote) {
 			nodes.push({
 				tag: "blockquote",
@@ -1142,10 +1006,6 @@ export function convertMarkdownToTelegraphNodes(
 				{ tag: "code", children: [codeBlockContent.join("\n").trimEnd()] },
 			],
 		}); // Trim end for final code block
-	}
-	if (listStack.length > 0) {
-		const closedList = flushListStack();
-		if (closedList) nodes.push(closedList);
 	}
 	if (inBlockquote) {
 		nodes.push({

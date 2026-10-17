@@ -1,34 +1,42 @@
-import { marked } from "marked";
+import { convertMarkdownToTelegraphNodes } from "./markdownConverter";
+import type { TelegraphNode } from "./telegraphPublisher";
 
 /**
- * Convert Markdown to HTML
- * Uses the 'marked' library for parsing
+ * Convert Markdown to HTML for PDF and SVG.
+ *
+ * Those exports used to go through a second parser. Four spaces of indent,
+ * which this corpus uses for steps under a numbered item, became an indented
+ * code block there, so `*идам̇…* и *мӯла-мантру…*` was printed with the
+ * asterisks still in the text. PDF and SVG now use the same nodes as EPUB.
  */
 export function convertMarkdownToHtml(markdown: string): string {
-  // Configure marked for better output
-  marked.setOptions({
-    gfm: true,  // GitHub Flavored Markdown
-    breaks: false,  // Don't convert \n to <br>
-  });
+	const nodes = convertMarkdownToTelegraphNodes(markdown, {
+		generateToc: false,
+		target: "epub",
+	});
+	const html = nodes.map(node => nodeToHtml(node)).join("");
+	return wrapBlockquoteContentInCode(html);
+}
 
-  let html: string;
-  const result = marked.parse(markdown);
+function nodeToHtml(node: string | TelegraphNode): string {
+	if (typeof node === "string") return escapeHtml(node);
+	const tag = node.tag || "p";
+	const attrs = Object.entries(node.attrs ?? {})
+		.map(([key, value]) => `${key}="${escapeHtml(String(value))}"`)
+		.join(" ");
+	const children = (node.children ?? []).map(child => nodeToHtml(child)).join("");
+	if (tag === "br" || tag === "hr" || tag === "img") {
+		return `<${tag}${attrs ? ` ${attrs}` : ""} />`;
+	}
+	return `<${tag}${attrs ? ` ${attrs}` : ""}>${children}</${tag}>`;
+}
 
-  // Handle async result (marked can return Promise in some cases)
-  if (typeof result === "string") {
-    html = result;
-  } else {
-    // If it's a promise, we need to handle it synchronously
-    // For simplicity, use the sync version
-    html = marked.parse(markdown, { async: false }) as string;
-  }
-
-  // Wrap text content inside blockquote paragraphs with <code> tags
-  // This matches the structural wrapping done in EPUB's nodeToHtml
-  // and ensures citations/Sanskrit text renders with proper code font.
-  html = wrapBlockquoteContentInCode(html);
-
-  return html;
+function escapeHtml(text: string): string {
+	return text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;");
 }
 
 /**
@@ -36,17 +44,14 @@ export function convertMarkdownToHtml(markdown: string): string {
  * Handles nested markup inside blockquotes (bold, italic, links, etc.)
  */
 function wrapBlockquoteContentInCode(html: string): string {
-  return html.replace(
-    /<blockquote>([\s\S]*?)<\/blockquote>/gi,
-    (_match, content: string) => {
-      // Wrap content of each <p> inside the blockquote with <code>
-      const wrappedContent = content.replace(
-        /<p>([\s\S]*?)<\/p>/gi,
-        '<p><code>$1</code></p>'
-      );
-      return `<blockquote>${wrappedContent}</blockquote>`;
-    }
-  );
+	return html.replace(
+		/<blockquote>([\s\S]*?)<\/blockquote>/gi,
+		(_match, content: string) => {
+			const wrappedContent = content.replace(
+				/<p>([\s\S]*?)<\/p>/gi,
+				"<p><code>$1</code></p>",
+			);
+			return `<blockquote>${wrappedContent}</blockquote>`;
+		},
+	);
 }
-
-
