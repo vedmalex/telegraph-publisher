@@ -247,7 +247,7 @@ program
    • Unified 'pub' command creates/updates metadata and manages cache automatically
    • Use 'pub' for full features, 'publish-legacy' for backward-compatible interface
 
-📖 For more information, visit: https://github.com/your-repo/telegraph-publisher
+📖 See README.md for more information
 `);
 	});
 
